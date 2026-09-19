@@ -101,6 +101,10 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
             "pilot_id": guard.PILOT_ID,
             "lifecycle_id": preflight["lifecycle_id"],
             "ledger_sequence": 5,
+            "final_grant_ledger_sequence": 4,
+            "ledger_terminal": True,
+            "further_grants_allowed": False,
+            "ledger_status": "terminal_closed_no_further_grants",
             "provider_observation_id": "azure-observation-cleanup-001",
             "azure_query_source": "independent_azure_control_plane_reader",
             "observed_at_utc": "2026-09-19T19:35:00Z",
@@ -182,6 +186,9 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
         self.assertEqual(report["status"], "ready_for_single_bounded_pilot")
         self.assertEqual(report["maximum_training_runs"], 1)
         self.assertTrue(report["remote_paid_phase_grant_required"])
+        self.assertTrue(report["azure_vm_resource_id"].endswith(
+            "/virtualMachines/kova-cosmo-t4"
+        ))
         self.assertEqual(
             report["runtime_evidence_sha256"],
             hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -321,6 +328,26 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
         with patch.dict("os.environ", {guard.EVIDENCE_ENV: str(path)}, clear=True):
             report = guard.require_ready(root=self.root, now=NOW)
         self.assertEqual(report["pilot_id"], guard.PILOT_ID)
+
+
+    def test_cleanup_requires_final_terminal_ledger_closure(self):
+        mutations = [
+            lambda value: value.update(final_grant_ledger_sequence=1),
+            lambda value: value.update(ledger_sequence=4),
+            lambda value: value.update(ledger_terminal=False),
+            lambda value: value.update(further_grants_allowed=True),
+            lambda value: value.update(ledger_status="grant_committed_before_response"),
+        ]
+        for index, mutate in enumerate(mutations):
+            payload = self.post_run_payload()
+            mutate(payload)
+            path = self.signed_path(payload, f"nonterminal-{index}.json")
+            with self.subTest(index=index), self.assertRaises(
+                guard.RuntimeGuardError
+            ):
+                guard.verify_post_run(
+                    self.preflight_payload(), path, root=self.root
+                )
 
 
 if __name__ == "__main__":
