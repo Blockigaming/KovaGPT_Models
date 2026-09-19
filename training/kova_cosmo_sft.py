@@ -269,6 +269,7 @@ def execute() -> dict:
         preflight_ledger_sequence=runtime_report[
             "preflight_ledger_sequence"
         ],
+        expected_azure_resource_id=runtime_report["azure_vm_resource_id"],
         runtime_deadline_utc=runtime_report["deadline_utc"],
         context={
             "operation": "single_lora_sft_run",
