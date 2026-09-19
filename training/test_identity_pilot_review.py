@@ -44,16 +44,16 @@ class IdentityPilotReviewTests(unittest.TestCase):
                                     "^identity pilot review rejected$"):
             review.validate(self.root)
 
-    def test_committed_ledger_is_exactly_pending_and_non_authorizing(self):
+    def test_committed_ledger_is_exactly_approved_and_non_authorizing(self):
         report = review.validate(self.root)
-        self.assertEqual(report["status"], "awaiting_owner_review")
+        self.assertEqual(report["status"], "approved")
         self.assertEqual(report["records"], 36)
         self.assertEqual(report["verdict_counts"], {
-            "pending": 36, "approve": 0, "reject": 0,
+            "pending": 0, "approve": 36, "reject": 0,
         })
-        for field in ("human_review_complete", "training_authorized",
-                      "model_weights_downloaded", "training_started",
-                      "phase_b_ready"):
+        self.assertTrue(report["human_review_complete"])
+        for field in ("training_authorized", "model_weights_downloaded",
+                      "training_started", "phase_b_ready"):
             self.assertIs(report[field], False)
         self.assertEqual(report["closed_checklist_ids"], [])
 
@@ -73,7 +73,8 @@ class IdentityPilotReviewTests(unittest.TestCase):
     def test_rejection_blocks_completion_and_requires_final_metadata(self):
         value = self.ledger()
         value.update(status="changes_requested", reviewer="owner-fixture",
-                     reviewed_at="2026-09-19T15:00:00Z")
+                     reviewed_at="2026-09-19T15:00:00Z",
+                     human_review_complete=False)
         for item in value["records"]:
             item["verdict"] = "approve"
         value["records"][4].update(verdict="reject", notes="Incorrect target.")
@@ -84,7 +85,10 @@ class IdentityPilotReviewTests(unittest.TestCase):
 
     def test_partial_review_is_explicitly_in_progress(self):
         value = self.ledger()
-        value.update(status="in_progress", reviewer="owner-fixture")
+        value.update(status="in_progress", reviewer="owner-fixture",
+                     reviewed_at=None, human_review_complete=False)
+        for item in value["records"]:
+            item["verdict"] = "pending"
         value["records"][0]["verdict"] = "approve"
         self.write(value)
         result = review.validate(self.root)
@@ -114,12 +118,12 @@ class IdentityPilotReviewTests(unittest.TestCase):
 
     def test_invalid_status_verdict_notes_and_completion_claims_are_rejected(self):
         mutations = [
-            lambda value: value.update(status="approved"),
-            lambda value: value.update(human_review_complete=True),
+            lambda value: value.update(status="awaiting_owner_review"),
+            lambda value: value.update(human_review_complete=False),
             lambda value: value["records"][0].update(verdict="pass"),
             lambda value: value["records"][0].update(notes=""),
             lambda value: value["records"][0].update(notes="x" * 2001),
-            lambda value: value.update(reviewer="nobody"),
+            lambda value: value.update(reviewer=""),
             lambda value: value.update(reviewed_at="yesterday"),
         ]
         for mutate in mutations:
@@ -149,13 +153,13 @@ class IdentityPilotReviewTests(unittest.TestCase):
             report = review.validate(self.root)
         self.assertFalse(report["training_started"])
 
-    def test_cli_require_complete_fails_for_pending_ledger(self):
+    def test_cli_require_complete_passes_for_approved_ledger(self):
         error = io.StringIO()
         original = review.validate
         with patch.object(review, "validate", side_effect=lambda: original(self.root)), \
              redirect_stderr(error):
-            self.assertEqual(review.main(["--require-complete"]), 1)
-        self.assertEqual(error.getvalue(), "identity pilot review incomplete\n")
+            self.assertEqual(review.main(["--require-complete"]), 0)
+        self.assertEqual(error.getvalue(), "")
 
 
 if __name__ == "__main__":

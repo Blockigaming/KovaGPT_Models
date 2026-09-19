@@ -18,6 +18,26 @@ class KovaCosmoSftTests(unittest.TestCase):
         with patch.object(recipe, "version", side_effect=recipe.EXPECTED_SOFTWARE.__getitem__):
             recipe.verify_installed_software()
 
+    def test_declared_source_commit_must_match_a_clean_checkout(self):
+        clean = [
+            SimpleNamespace(stdout="a" * 40 + "\n", stderr=""),
+            SimpleNamespace(stdout="", stderr=""),
+        ]
+        with patch.object(recipe.subprocess, "run", side_effect=clean) as run:
+            recipe.verify_source_checkout("a" * 40)
+        self.assertEqual(run.call_count, 2)
+
+        for responses in (
+            [SimpleNamespace(stdout="b" * 40 + "\n", stderr=""),
+             SimpleNamespace(stdout="", stderr="")],
+            [SimpleNamespace(stdout="a" * 40 + "\n", stderr=""),
+             SimpleNamespace(stdout=" M training/file.py\n", stderr="")],
+        ):
+            with self.subTest(responses=responses), patch.object(
+                recipe.subprocess, "run", side_effect=responses
+            ), self.assertRaises(recipe.RecipeError):
+                recipe.verify_source_checkout("a" * 40)
+
     def test_each_missing_training_dependency_is_rejected(self):
         for missing in recipe.EXPECTED_SOFTWARE:
             if missing == "python":
@@ -97,7 +117,49 @@ class KovaCosmoSftTests(unittest.TestCase):
         self.assertEqual(report["precision"], "fp16")
         self.assertFalse(report["model_weights_downloaded"])
         self.assertFalse(report["training_started"])
+        self.assertTrue(report["external_output_directory_required"])
+        self.assertFalse(report["adapter_receipt_created"])
         self.assertFalse(report["phase_b_ready"])
+
+    def test_external_output_directory_and_source_commit_are_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "new-run"
+            with patch.dict("os.environ", {
+                "KOVA_COSMO_OUTPUT_DIR": str(output),
+                "KOVA_SOURCE_COMMIT": "a" * 40,
+            }, clear=True):
+                resolved, commit = recipe.resolve_output_directory()
+            self.assertEqual(resolved, output)
+            self.assertEqual(commit, "a" * 40)
+
+            output.mkdir()
+            with patch.dict("os.environ", {
+                "KOVA_COSMO_OUTPUT_DIR": str(output),
+                "KOVA_SOURCE_COMMIT": "a" * 40,
+            }, clear=True), self.assertRaises(recipe.RecipeError):
+                recipe.resolve_output_directory()
+
+        with tempfile.TemporaryDirectory(dir=recipe.ROOT) as directory:
+            internal = Path(directory) / "new-run"
+            with patch.dict("os.environ", {
+                "KOVA_COSMO_OUTPUT_DIR": str(internal),
+                "KOVA_SOURCE_COMMIT": "a" * 40,
+            }, clear=True), self.assertRaises(recipe.RecipeError):
+                recipe.resolve_output_directory()
+
+        invalid = [
+            ("relative-run", "a" * 40),
+            (str(Path(tempfile.gettempdir()) / "new-run"), "A" * 40),
+            (str(Path(tempfile.gettempdir()) / "new-run"), "a" * 39),
+        ]
+        for output, commit in invalid:
+            with self.subTest(output=output, commit=commit), patch.dict(
+                "os.environ", {
+                    "KOVA_COSMO_OUTPUT_DIR": output,
+                    "KOVA_SOURCE_COMMIT": commit,
+                }, clear=True
+            ), self.assertRaises(recipe.RecipeError):
+                recipe.resolve_output_directory()
 
     def test_current_package_versions_are_exact(self):
         self.assertEqual(recipe.load_recipe()["software"], {
@@ -108,6 +170,7 @@ class KovaCosmoSftTests(unittest.TestCase):
             "trl": "1.13.0",
             "accelerate": "1.15.0",
             "datasets": "5.0.1",
+            "cryptography": "50.0.1",
         })
 
     def test_lora_targets_are_explicit_and_stable(self):
@@ -137,16 +200,18 @@ class KovaCosmoSftTests(unittest.TestCase):
         self.assertEqual(training["report_to"], "none")
         self.assertIs(training["push_to_hub"], False)
 
-    def test_quota_and_budget_are_still_unverified(self):
+    def test_approved_pilot_remains_blocked_on_quota_and_runtime(self):
         gates = recipe.load_recipe()["account_gates"]
+        self.assertIs(gates["microsoft_quota_provider_registration_authorized"], True)
         self.assertIs(gates["eastus_ncast4_quota_verified"], False)
-        self.assertIsNone(gates["approved_budget_usd"])
+        self.assertIs(gates["runtime_compatibility_verified"], False)
+        self.assertEqual(gates["approved_budget_usd"], 2.0)
 
-    def test_all_execution_permissions_are_false(self):
+    def test_pilot_permissions_do_not_authorize_deployment(self):
         permissions = recipe.load_recipe()["execution"]
         self.assertEqual(permissions, {
-            "model_download_authorized": False,
-            "training_authorized": False,
+            "model_download_authorized": True,
+            "training_authorized": True,
             "deployment_authorized": False,
         })
 
@@ -159,6 +224,48 @@ class KovaCosmoSftTests(unittest.TestCase):
         }):
             with self.assertRaises(recipe.RecipeError):
                 recipe.execute()
+
+    def test_training_reserves_remote_phase_before_heavy_imports(self):
+        value = deepcopy(recipe.load_recipe())
+        value["account_gates"]["eastus_ncast4_quota_verified"] = True
+        value["account_gates"]["runtime_compatibility_verified"] = True
+        runtime = {
+            "runtime_evidence_sha256": "e" * 64,
+            "deadline_utc": "2026-09-19T19:40:00Z",
+            "lifecycle_id": "lifecycle-001",
+            "preflight_ledger_sequence": 1,
+        }
+        grant = {"phase_grant_sha256": "f" * 64}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / "snapshot"
+            snapshot.mkdir()
+            output = root / "output"
+            with patch.object(recipe, "load_recipe", return_value=value), \
+                 patch.dict("os.environ", {
+                     "KOVA_CONFIRM_PAID_TRAINING": "YES",
+                     "KOVA_COSMO_VERIFIED_SNAPSHOT": str(snapshot),
+                 }, clear=True), \
+                 patch.object(recipe, "require_runtime_ready", return_value=runtime), \
+                 patch.object(recipe, "verify_installed_software"), \
+                 patch.object(recipe, "verify_snapshot", return_value={
+                     "model.safetensors": {"sha256": "0" * 64, "bytes": 1}
+                 }), \
+                 patch.object(
+                     recipe, "resolve_output_directory",
+                     return_value=(output, "a" * 40),
+                 ), \
+                 patch.object(recipe, "verify_source_checkout"), \
+                 patch.object(
+                     recipe, "reserve_training_phase", return_value=grant
+                 ) as acquire, \
+                 patch.dict("sys.modules", {"torch": None}):
+                with self.assertRaises(ModuleNotFoundError):
+                    recipe.execute()
+        self.assertEqual(acquire.call_args.kwargs["phase"], "training")
+        self.assertEqual(
+            acquire.call_args.kwargs["runtime_evidence_sha256"], "e" * 64
+        )
 
     def test_operator_environment_variable_cannot_override_source_guards(self):
         with patch.dict("os.environ", {"KOVA_CONFIRM_PAID_TRAINING": "YES"}):

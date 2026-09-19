@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "status": "authority_provisioning_required",
+  "issuer": "kova-cosmo-lifecycle-authority-v1",
+  "algorithm": "ed25519",
+  "endpoint": null,
+  "public_key_hex": null,
+  "public_key_sha256": null,
+  "bearer_token_file_environment_variable": "KOVA_COSMO_LIFECYCLE_TOKEN_FILE",
+  "append_only_remote_ledger_required": true,
+  "independent_azure_reader_required": true,
+  "runner_ledger_mutation_allowed": false,
+  "checked_in_private_key_allowed": false
+}
