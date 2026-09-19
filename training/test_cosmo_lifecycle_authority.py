@@ -44,6 +44,11 @@ class CosmoLifecycleAuthorityTests(unittest.TestCase):
         self.token = self.directory / "authority-token"
         self.token.write_text("t" * 64, encoding="ascii")
         self.token.chmod(0o600)
+        self.azure_resource_id = (
+            "/subscriptions/11111111-2222-3333-4444-555555555555/"
+            "resourceGroups/kova-cosmo-pilot/providers/Microsoft.Compute/"
+            "virtualMachines/kova-cosmo-t4"
+        )
 
     def write_trust(self, value: dict) -> None:
         (self.root / authority.TRUST_PATH).write_text(
@@ -64,10 +69,12 @@ class CosmoLifecycleAuthorityTests(unittest.TestCase):
             "ledger_commit_id": "append-only-ledger-commit-002",
             "ledger_append_only": True,
             "ledger_status": "grant_committed_before_response",
+            "lifecycle_terminal": False,
             "grant_id": "grant-" + request["phase"],
             "phase": request["phase"],
             "source_commit": request["source_commit"],
             "runtime_evidence_sha256": request["runtime_evidence_sha256"],
+            "azure_resource_id": request["azure_resource_id"],
             "context_sha256": request["context_sha256"],
             "request_nonce": request["request_nonce"],
             "issued_at_utc": "2026-09-19T19:00:00Z",
@@ -102,11 +109,13 @@ class CosmoLifecycleAuthorityTests(unittest.TestCase):
                 runtime_evidence_sha256="b" * 64,
                 lifecycle_id="lifecycle-001",
                 preflight_ledger_sequence=1,
+                expected_azure_resource_id=self.azure_resource_id,
                 runtime_deadline_utc="2026-09-19T19:40:00Z",
                 context={"operation": "single_lora_sft_run"},
                 root=self.root,
                 now=NOW,
                 transport=transport,
+                instance_transport=lambda: self.azure_resource_id,
             )
 
     def test_each_paid_phase_requires_a_nonce_bound_committed_grant(self):
@@ -136,6 +145,7 @@ class CosmoLifecycleAuthorityTests(unittest.TestCase):
                     root=self.root,
                     now=NOW,
                     transport=transport,
+                    instance_transport=lambda: self.azure_resource_id,
                 )
             self.assertEqual(report["phase"], phase)
             self.assertEqual(
@@ -224,6 +234,7 @@ class CosmoLifecycleAuthorityTests(unittest.TestCase):
                     root=self.root,
                     now=NOW,
                     transport=lambda *_arguments: {},
+                    instance_transport=lambda: self.azure_resource_id,
                 )
 
     def test_unprovisioned_source_policy_makes_no_provider_call(self):
@@ -256,6 +267,36 @@ class CosmoLifecycleAuthorityTests(unittest.TestCase):
                 authority.AuthorityError
             ):
                 authority.load_trust_policy(self.root)
+
+
+    def test_executing_vm_must_match_signed_preflight_resource(self):
+        with patch.dict(
+            os.environ, {authority.TOKEN_ENV: str(self.token)}, clear=True
+        ), self.assertRaises(authority.AuthorityError):
+            authority.acquire_phase_grant(
+                phase="training",
+                source_commit="a" * 40,
+                runtime_evidence_sha256="b" * 64,
+                lifecycle_id="lifecycle-001",
+                preflight_ledger_sequence=1,
+                expected_azure_resource_id=self.azure_resource_id,
+                runtime_deadline_utc="2026-09-19T19:40:00Z",
+                context={"operation": "training"},
+                root=self.root,
+                now=NOW,
+                transport=lambda *_arguments: self.fail("authority called"),
+                instance_transport=lambda: self.azure_resource_id.replace(
+                    "kova-cosmo-t4", "unmonitored-t4"
+                ),
+            )
+
+    def test_grant_rejects_terminal_lifecycle_response(self):
+        def transport(_endpoint, _token, request):
+            return self.signed(self.response_payload(
+                request, lifecycle_terminal=True
+            ))
+        with self.assertRaises(authority.AuthorityError):
+            self.acquire(transport)
 
 
 if __name__ == "__main__":
