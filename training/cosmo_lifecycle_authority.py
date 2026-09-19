@@ -39,6 +39,15 @@ UTC_TIMESTAMP = re.compile(
 )
 MONEY = re.compile(r"(?:0|[1-9][0-9]*)\.[0-9]{4}")
 TOKEN = re.compile(r"[A-Za-z0-9._~+/=-]{32,16384}")
+AZURE_RESOURCE_ID = re.compile(
+    r"/subscriptions/[^/]{1,128}/resourceGroups/[^/]{1,128}/providers/"
+    r"Microsoft\.Compute/virtualMachines/[^/]{1,128}",
+    re.IGNORECASE,
+)
+AZURE_IMDS_URL = (
+    "http://169.254.169.254/metadata/instance/compute"
+    "?api-version=2021-02-01"
+)
 
 
 class AuthorityError(ValueError):
@@ -234,11 +243,38 @@ def _https_transport(endpoint: str, token: str, request_value: dict) -> dict:
         ) from None
 
 
+def _executing_azure_resource_id(instance_transport=None) -> str:
+    """Read the executing Azure VM identity from IMDS, never caller input."""
+    try:
+        if instance_transport is not None:
+            resource_id = instance_transport()
+        else:
+            request = urllib.request.Request(
+                AZURE_IMDS_URL, method="GET", headers={"Metadata": "true"}
+            )
+            with urllib.request.urlopen(request, timeout=2) as response:
+                need(response.status == 200)
+                body = response.read(65537)
+            need(0 < len(body) <= 65536)
+            value = json.loads(body.decode("utf-8"))
+            need(type(value) is dict)
+            resource_id = value.get("resourceId")
+        need(type(resource_id) is str and
+             AZURE_RESOURCE_ID.fullmatch(resource_id) is not None)
+        return resource_id.lower()
+    except (OSError, ValueError, TypeError, UnicodeError,
+            urllib.error.URLError, json.JSONDecodeError):
+        raise AuthorityError(
+            "kova cosmo lifecycle authority rejected"
+        ) from None
+
+
 def acquire_phase_grant(
     *, phase: str, source_commit: str, runtime_evidence_sha256: str,
     lifecycle_id: str, preflight_ledger_sequence: int,
+    expected_azure_resource_id: str,
     context: dict, runtime_deadline_utc: str, root: Path = ROOT,
-    now: datetime | None = None, transport=None,
+    now: datetime | None = None, transport=None, instance_transport=None,
 ) -> dict:
     """Reserve one paid phase in the remote append-only budget ledger."""
     try:
@@ -252,6 +288,10 @@ def acquire_phase_grant(
         need(type(lifecycle_id) is str and 0 < len(lifecycle_id) <= 256)
         need(type(preflight_ledger_sequence) is int and
              0 < preflight_ledger_sequence < 2**63)
+        need(type(expected_azure_resource_id) is str and
+             AZURE_RESOURCE_ID.fullmatch(expected_azure_resource_id) is not None)
+        executing_resource_id = _executing_azure_resource_id(instance_transport)
+        need(executing_resource_id == expected_azure_resource_id.lower())
         need(type(context) is dict and 0 < len(context) <= 32)
         current = now or datetime.now(timezone.utc)
         need(current.tzinfo is not None and
@@ -271,6 +311,7 @@ def acquire_phase_grant(
             "phase": phase,
             "source_commit": source_commit,
             "runtime_evidence_sha256": runtime_evidence_sha256,
+            "azure_resource_id": executing_resource_id,
             "context_sha256": context_sha256,
             "runtime_deadline_utc": runtime_deadline_utc,
             "requested_at_utc": current.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -287,8 +328,9 @@ def acquire_phase_grant(
         need(list(payload) == [
             "schema_version", "kind", "issuer", "pilot_id", "lifecycle_id",
             "ledger_sequence", "ledger_commit_id", "ledger_append_only",
-            "ledger_status", "grant_id", "phase", "source_commit",
-            "runtime_evidence_sha256", "context_sha256", "request_nonce",
+            "ledger_status", "lifecycle_terminal", "grant_id", "phase",
+            "source_commit", "runtime_evidence_sha256", "azure_resource_id",
+            "context_sha256", "request_nonce",
             "issued_at_utc", "expires_at_utc", "grant_reserved_seconds",
             "grant_reserved_cost_usd", "phase_grants_committed",
             "training_runs_consumed", "aggregate_reserved_seconds",
@@ -304,9 +346,11 @@ def acquire_phase_grant(
             need(type(payload[field]) is str and 0 < len(payload[field]) <= 256)
         need(payload["ledger_append_only"] is True)
         need(payload["ledger_status"] == "grant_committed_before_response")
+        need(payload["lifecycle_terminal"] is False)
         need(payload["phase"] == phase)
         need(payload["source_commit"] == source_commit)
         need(payload["runtime_evidence_sha256"] == runtime_evidence_sha256)
+        need(payload["azure_resource_id"].lower() == executing_resource_id)
         need(payload["context_sha256"] == context_sha256)
         need(payload["request_nonce"] == nonce)
         issued = timestamp(payload["issued_at_utc"])
@@ -351,6 +395,8 @@ def acquire_phase_grant(
             "ledger_sequence": payload["ledger_sequence"],
             "ledger_commit_id": payload["ledger_commit_id"],
             "phase_grant_sha256": envelope_sha256,
+            "signed_grant_envelope": response,
+            "azure_resource_id": executing_resource_id,
             "aggregate_reserved_seconds": aggregate_seconds,
             "aggregate_reserved_cost_usd":
                 payload["aggregate_reserved_cost_usd"],
