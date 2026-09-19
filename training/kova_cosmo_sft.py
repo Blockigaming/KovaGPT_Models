@@ -99,12 +99,14 @@ def load_recipe(root: Path = ROOT) -> dict:
             "push_to_hub": False,
         })
         need(value["account_gates"] == {
+            "microsoft_quota_provider_registration_authorized": True,
             "eastus_ncast4_quota_verified": False,
-            "approved_budget_usd": None,
+            "runtime_compatibility_verified": False,
+            "approved_budget_usd": 2.0,
         })
         need(value["execution"] == {
-            "model_download_authorized": False,
-            "training_authorized": False,
+            "model_download_authorized": True,
+            "training_authorized": True,
             "deployment_authorized": False,
         })
         need(value["output"] == {
@@ -134,6 +136,7 @@ def dry_run() -> dict:
         "lora": value["lora"],
         "training": value["training"],
         "quota_verified": value["account_gates"]["eastus_ncast4_quota_verified"],
+        "runtime_compatibility_verified": value["account_gates"]["runtime_compatibility_verified"],
         "approved_budget_usd": value["account_gates"]["approved_budget_usd"],
         "model_weights_downloaded": False,
         "training_started": False,
@@ -172,6 +175,7 @@ def execute() -> None:
     # Source control plus an operator acknowledgement are both required. The
     # checked-in config currently makes this branch unreachable.
     need(value["account_gates"]["eastus_ncast4_quota_verified"] is True)
+    need(value["account_gates"]["runtime_compatibility_verified"] is True)
     need(type(value["account_gates"]["approved_budget_usd"]) in (int, float))
     need(value["account_gates"]["approved_budget_usd"] > 0)
     need(value["execution"]["model_download_authorized"] is True)

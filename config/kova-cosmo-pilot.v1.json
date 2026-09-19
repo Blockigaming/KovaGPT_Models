@@ -11,7 +11,7 @@
   "review_path": "data/kova-identity-pilot-review.v1.json",
   "prompt_sha256": "f60816e59a957d2764083bee1d458067323de14b8b7af7774fe190e11de9b92c",
   "dataset_sha256": "6f696ca8d26a1d2cde112a0ce5daf286ca2a2aa7f994885605b514bbb94613a9",
-  "review_sha256": "b17ce061dfe49cac1fb25fe249a7aaa2df48a1c0d5c60f1c3d4ce40aee1d8808",
+  "review_sha256": "f8d796e17a3c6e1ebe9198b6b1f96a258484a0a42bb23b20f23974ebe0873971",
   "provenance": {
     "source": "synthetic_examples_prepared_for_kova",
     "private_customer_data": false,
