@@ -365,6 +365,9 @@ def execute() -> dict:
             lifecycle_id=phase_grant["lifecycle_id"],
             lifecycle_grant_id=phase_grant["grant_id"],
             lifecycle_ledger_commit_id=phase_grant["ledger_commit_id"],
+            signed_training_grant_envelope=phase_grant[
+                "signed_grant_envelope"
+            ],
             global_steps=training_result.global_step,
             training_loss=training_result.training_loss,
         )
