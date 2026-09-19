@@ -196,7 +196,9 @@ def load_evidence_record(path: Path, *,
         )
         need(type(value) is dict and list(value) == [
             "schema_version", "kind", "issuer", "pilot_id", "lifecycle_id",
-            "ledger_sequence", "provider_observation_id",
+            "ledger_sequence", "final_grant_ledger_sequence",
+            "ledger_terminal", "further_grants_allowed", "ledger_status",
+            "provider_observation_id",
             "azure_query_source", "captured_at_utc", "subscription_id",
             "resource_group", "cleanup_scope_resource_group_id",
             "resource_group_exclusive_to_pilot", "vm_name", "region", "vm_size",
@@ -316,6 +318,11 @@ def require_ready(*, root: Path = ROOT, evidence_path: Path | None = None,
     report["runtime_evidence_sha256"] = evidence_sha256
     report["lifecycle_id"] = evidence["lifecycle_id"]
     report["preflight_ledger_sequence"] = evidence["ledger_sequence"]
+    report["azure_vm_resource_id"] = (
+        f'/subscriptions/{evidence["subscription_id"]}/resourceGroups/'
+        f'{evidence["resource_group"]}/providers/Microsoft.Compute/'
+        f'virtualMachines/{evidence["vm_name"]}'
+    )
     return report
 
 
@@ -345,8 +352,13 @@ def verify_post_run(preflight: dict, post_run_path: Path,
         need(value["schema_version"] == 1)
         need(value["pilot_id"] == preflight["pilot_id"] == PILOT_ID)
         need(value["lifecycle_id"] == preflight["lifecycle_id"])
+        need(type(value["final_grant_ledger_sequence"]) is int and
+             value["final_grant_ledger_sequence"] > preflight["ledger_sequence"])
         need(type(value["ledger_sequence"]) is int and
-             value["ledger_sequence"] > preflight["ledger_sequence"])
+             value["ledger_sequence"] > value["final_grant_ledger_sequence"])
+        need(value["ledger_terminal"] is True)
+        need(value["further_grants_allowed"] is False)
+        need(value["ledger_status"] == "terminal_closed_no_further_grants")
         need(nonempty(value["provider_observation_id"]))
         need(value["provider_observation_id"] !=
              preflight["provider_observation_id"])
@@ -468,6 +480,10 @@ def verify_post_run(preflight: dict, post_run_path: Path,
                 "scope_resource_group_id"
             ],
             "resource_group_deleted": True,
+            "final_grant_ledger_sequence": value[
+                "final_grant_ledger_sequence"
+            ],
+            "terminal_ledger_verified": True,
             "post_run_evidence_sha256": evidence_sha256,
             "residual_resource_count": len(resources),
             "billable_residual_resource_count": sum(
