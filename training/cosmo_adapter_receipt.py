@@ -345,12 +345,16 @@ def write_receipt(output: Path, source_commit: str, *,
                   global_steps: int,
                   training_loss: float, root: Path = ROOT) -> dict:
     """Create a new receipt without overwriting any existing evidence."""
+    grant_created = False
+    grant_path = output / TRAINING_GRANT_NAME
     try:
         need(type(signed_training_grant_envelope) is dict)
+        need(not grant_path.exists() and not grant_path.is_symlink())
         grant_raw = serialize(signed_training_grant_envelope)
         need(0 < len(grant_raw) <= MAX_GRANT_BYTES)
-        with (output / TRAINING_GRANT_NAME).open("xb") as stream:
+        with grant_path.open("xb") as stream:
             stream.write(grant_raw)
+        grant_created = True
         value = expected_receipt(
             output, source_commit,
             runtime_evidence_sha256=runtime_evidence_sha256,
@@ -369,10 +373,11 @@ def write_receipt(output: Path, source_commit: str, *,
             stream.write(raw)
         return verify_receipt(output, expected_source_commit=source_commit, root=root)
     except ReceiptError:
-        try:
-            (output / TRAINING_GRANT_NAME).unlink(missing_ok=True)
-        except OSError:
-            pass
+        if grant_created:
+            try:
+                grant_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         raise
     except OSError:
         raise ReceiptError("kova cosmo adapter receipt rejected") from None
