@@ -48,9 +48,10 @@ def need(value: bool) -> None:
         raise RecipeError("kova cosmo sft recipe rejected")
 
 
-def load_recipe() -> dict:
+def load_recipe(root: Path = ROOT) -> dict:
     try:
-        value = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        config_path = root / "config/kova-cosmo-sft.v1.json"
+        value = json.loads(config_path.read_text(encoding="utf-8"))
         ref = MODEL_SOURCE_REFERENCES["work-cosmo"]
         need(value["schema_version"] == 1)
         need(value["status"] == "owner_requested_recipe_not_executed")
@@ -111,7 +112,7 @@ def load_recipe() -> dict:
             "adapter_sha256": None,
         })
         need(value["phase_b_ready"] is False)
-        load_identity_pilot()
+        load_identity_pilot(root)
         return value
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         raise RecipeError("kova cosmo sft recipe rejected") from None

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "status": "awaiting_model_outputs",
+  "model_slot": "work-cosmo",
+  "base_model": "Qwen/Qwen3-0.6B",
+  "base_revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+  "dataset_sha256": "6f696ca8d26a1d2cde112a0ce5daf286ca2a2aa7f994885605b514bbb94613a9",
+  "prompt_sha256": "f60816e59a957d2764083bee1d458067323de14b8b7af7774fe190e11de9b92c",
+  "validation_ids": [
+    "validation-001",
+    "validation-002",
+    "validation-003",
+    "validation-004",
+    "validation-005",
+    "validation-006",
+    "validation-007",
+    "validation-008",
+    "validation-009",
+    "validation-010",
+    "validation-011",
+    "validation-012"
+  ],
+  "variants": [
+    {"id": "base", "kova_system_prompt": false, "adapter_required": false},
+    {"id": "configured_base", "kova_system_prompt": true, "adapter_required": false},
+    {"id": "trained_adapter", "kova_system_prompt": true, "adapter_required": true}
+  ],
+  "score_dimensions": [
+    "identity",
+    "instruction_adherence",
+    "factuality",
+    "format_adherence",
+    "general_quality",
+    "safety_truthfulness"
+  ],
+  "comparison_rules": {
+    "same_cases_required": true,
+    "same_runtime_except_adapter_required": true,
+    "missing_or_failed_attempt_blocks_completion": true,
+    "pending_score_blocks_completion": true,
+    "automatic_release_allowed": false
+  },
+  "actual_model_outputs_evaluated": false,
+  "phase_b_ready": false
+}

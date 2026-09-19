@@ -157,4 +157,20 @@ selected checkpoint weights or training examples and proves nothing about the
 real checkpoint's memory use, quality, FP16 behavior, CUDA, T4 compatibility or
 eventual adapter. Those claims still require the separately approved GPU pilot.
 
+## Three-way evaluation contract
+
+`config/kova-cosmo-evaluation-plan.v1.json` binds all 12 held-out validation
+records to three conditions: untouched base, base plus the reviewed Kova system
+prompt, and the eventual trained adapter plus that prompt. The provider-free
+validator requires the same base revision, software lock, hardware, precision
+and quantization across conditions; only the trained condition may carry the
+single adapter digest. It rejects missing, failed, duplicated, relabeled or
+hash-mismatched attempts and incomplete scores.
+
+The contract records identity, instruction adherence, factuality, formatting,
+general quality and safety/truthfulness separately. A complete measured bundle
+still cannot authorize release, establish the reviewer's identity, mark Phase B
+ready or close a checklist item. No result bundle exists yet, so no real model
+quality comparison is claimed by this source plan.
+
 Reference: https://huggingface.co/docs/trl/sft_trainer
