@@ -44,16 +44,15 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
             "signature": "0" * 128,
         }
         verifier = patch.object(
-            receipt, "verify_envelope", side_effect=self.verify_training_grant
+            receipt, "_verify_training_grant_envelope",
+            side_effect=self.verify_training_grant,
         )
         verifier.start()
         self.addCleanup(verifier.stop)
 
-    def verify_training_grant(self, value, *, expected_kind, root):
-        if expected_kind != "kova_cosmo_paid_phase_grant":
-            raise receipt.AuthorityError("wrong kind")
+    def verify_training_grant(self, value, *, root):
         if value != self.training_grant_envelope:
-            raise receipt.AuthorityError("tampered grant")
+            raise receipt.ReceiptError("tampered grant")
         return value["payload"], self.lifecycle_phase_grant_sha256
 
     def write_receipt(self, output: Path):
