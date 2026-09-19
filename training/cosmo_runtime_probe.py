@@ -92,6 +92,7 @@ def authorize_probe() -> tuple[dict, dict, dict]:
         runtime_evidence_sha256=runtime["runtime_evidence_sha256"],
         lifecycle_id=runtime["lifecycle_id"],
         preflight_ledger_sequence=runtime["preflight_ledger_sequence"],
+        expected_azure_resource_id=runtime["azure_vm_resource_id"],
         runtime_deadline_utc=runtime["deadline_utc"],
         context={
             "operation": "one_batch_compatibility_probe",
