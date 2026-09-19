@@ -15,7 +15,6 @@ import struct
 import sys
 
 from training.cosmo_artifacts import EXPECTED_SHA256
-from training.cosmo_lifecycle_authority import AuthorityError, verify_envelope
 from training import identity_pilot as pilot
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -214,6 +213,21 @@ def _artifact_inventory(output: Path, recipe: dict) -> list[dict]:
     return inventory
 
 
+def _verify_training_grant_envelope(value: object, *, root: Path) -> tuple[dict, str]:
+    """Load crypto verification only when receipt lineage is actually verified."""
+    try:
+        from training.cosmo_lifecycle_authority import (
+            AuthorityError,
+            verify_envelope,
+        )
+        return verify_envelope(
+            value, expected_kind="kova_cosmo_paid_phase_grant", root=root
+        )
+    except (ImportError, ValueError, TypeError, KeyError, AttributeError,
+            UnicodeError, RecursionError) as error:
+        raise ReceiptError("kova cosmo adapter receipt rejected") from error
+
+
 def _verified_training_grant(
     output: Path, *, source_commit: str, runtime_evidence_sha256: str,
     lifecycle_phase_grant_sha256: str, lifecycle_id: str,
@@ -223,8 +237,8 @@ def _verified_training_grant(
     try:
         raw = _read_limited(output / TRAINING_GRANT_NAME, MAX_GRANT_BYTES)
         envelope = parse_json(raw)
-        payload, envelope_sha256 = verify_envelope(
-            envelope, expected_kind="kova_cosmo_paid_phase_grant", root=root
+        payload, envelope_sha256 = _verify_training_grant_envelope(
+            envelope, root=root
         )
         need(envelope_sha256 == lifecycle_phase_grant_sha256)
         need(payload["phase"] == "training")
@@ -237,7 +251,7 @@ def _verified_training_grant(
         need(type(payload["context_sha256"]) is str and
              re.fullmatch(r"[0-9a-f]{64}", payload["context_sha256"]) is not None)
         return payload
-    except (AuthorityError, OSError, ValueError, TypeError, KeyError,
+    except (OSError, ValueError, TypeError, KeyError,
             AttributeError, UnicodeError, RecursionError):
         raise ReceiptError("kova cosmo adapter receipt rejected") from None
 
