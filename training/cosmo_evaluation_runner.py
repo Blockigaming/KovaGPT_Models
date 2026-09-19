@@ -149,6 +149,7 @@ def authorize() -> tuple[dict, dict, Path, Path, Path, object, dict, dict]:
         runtime_evidence_sha256=runtime["runtime_evidence_sha256"],
         lifecycle_id=runtime["lifecycle_id"],
         preflight_ledger_sequence=runtime["preflight_ledger_sequence"],
+        expected_azure_resource_id=runtime["azure_vm_resource_id"],
         runtime_deadline_utc=runtime["deadline_utc"],
         context={
             "operation": "three_way_guarded_generation",
