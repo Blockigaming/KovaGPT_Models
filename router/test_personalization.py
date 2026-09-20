@@ -123,6 +123,33 @@ class PersonalizationTests(unittest.TestCase):
                 value, authenticated_owner_id=OWNER,
                 active_conversation_id=CONVERSATION)
 
+    def test_unhashable_task_source_type_fails_as_execution_error(self):
+        for malformed in ([], {}):
+            value = payload()
+            value["task_context"][0]["source_type"] = malformed
+            with self.subTest(malformed=malformed), self.assertRaises(ExecutionError):
+                build_personalization_context(
+                    value, authenticated_owner_id=OWNER,
+                    active_conversation_id=CONVERSATION)
+
+    def test_section_shape_is_bounded_before_character_counting(self):
+        value = payload()
+        nested = []
+        for _ in range(1200):
+            nested = [nested]
+        value["saved_memory"] = [nested]
+        with self.assertRaises(ExecutionError):
+            build_personalization_context(
+                value, authenticated_owner_id=OWNER,
+                active_conversation_id=CONVERSATION)
+
+        value = payload()
+        value["saved_memory"] = [None] * 65
+        with self.assertRaises(ExecutionError):
+            build_personalization_context(
+                value, authenticated_owner_id=OWNER,
+                active_conversation_id=CONVERSATION)
+
     def test_context_cannot_override_plan_model_effort_or_execution(self):
         for field in ("tier", "model", "provider", "effort", "allowed_routes", "execution_authorized"):
             value = payload()

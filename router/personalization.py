@@ -40,21 +40,11 @@ def _digest(value, label):
     return value
 
 
-def _all_string_characters(value):
-    if type(value) is str:
-        _text(value, "personalization string")
-        return len(value)
-    if type(value) is list:
-        return sum(_all_string_characters(item) for item in value)
-    if type(value) is dict:
-        return sum(_all_string_characters(item) for item in value.values())
-    return 0
-
-
 def _items(items, *, owner_id, active_conversation_id, section):
     require(type(items) is list and len(items) <= LIMITS["maximum_items_per_section"],
             f"invalid {section}")
     result = []
+    string_characters = 0
     for item in items:
         require(type(item) is dict and not FORBIDDEN.intersection(item),
                 f"invalid {section} item")
@@ -77,6 +67,7 @@ def _items(items, *, owner_id, active_conversation_id, section):
             require(item["approved"] is True, "unapproved memory rejected")
         if section == "task_context":
             _text(item["project_id"], "project id")
+            _text(item["source_type"], "task context source type")
             require(item["source_type"] in {"project_file", "tool_result"},
                     "invalid task context source type")
             _text(item["source_id"], "task context source id")
@@ -89,8 +80,14 @@ def _items(items, *, owner_id, active_conversation_id, section):
             require(item["conversation_id"] == active_conversation_id,
                     f"cross-conversation {section} rejected")
             _text(item["conversation_id"], f"{section} conversation id")
+        # The exact item shape is now known and every string has passed the
+        # UTF-8/length check. Count all string values, including attribution,
+        # owner and scope identifiers, without recursively walking attacker-
+        # controlled structures.
+        string_characters += sum(len(field) for field in item.values()
+                                 if type(field) is str)
         result.append(deepcopy({key: item[key] for key in expected if key != "owner_id"}))
-    return result
+    return result, string_characters
 
 
 def build_personalization_context(value, *, authenticated_owner_id, active_conversation_id):
@@ -110,15 +107,17 @@ def build_personalization_context(value, *, authenticated_owner_id, active_conve
             "conversation mismatch")
     _text(value["owner_id"], "owner id")
     _text(value["conversation_id"], "conversation id")
-    require(_all_string_characters(value) <= LIMITS["maximum_total_characters"],
-            "personalization context too large")
-
     result = {"schema_version": value["schema_version"], "owner_id": authenticated_owner_id,
               "conversation_id": active_conversation_id}
+    total_characters = sum(len(result[field]) for field in
+                           ("schema_version", "owner_id", "conversation_id"))
     for section in SECTIONS:
-        result[section] = _items(value[section], owner_id=authenticated_owner_id,
-                                 active_conversation_id=active_conversation_id,
-                                 section=section)
+        result[section], section_characters = _items(
+            value[section], owner_id=authenticated_owner_id,
+            active_conversation_id=active_conversation_id, section=section)
+        total_characters += section_characters
+        require(total_characters <= LIMITS["maximum_total_characters"],
+                "personalization context too large")
     result.update({
         "changes_model_weights": False,
         "may_expand_entitlements": False,
