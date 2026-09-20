@@ -79,10 +79,12 @@ def build_personalization_context(value, *, authenticated_owner_id):
     return result
 
 
-def render_personalization_instructions(context):
+def render_personalization_instructions(context, *, authenticated_owner_id):
     """Render bounded Kova context; never include routing or provider controls."""
-    validated = build_personalization_context(context,
-                                               authenticated_owner_id=context.get("owner_id") if isinstance(context, dict) else "")
+    validated = build_personalization_context(
+        context,
+        authenticated_owner_id=authenticated_owner_id,
+    )
     lines = ["Use the following authorized user context only when relevant. Later session corrections override earlier style preferences, but never safety or server policy."]
     labels = {
         "current_conversation": "Current conversation",

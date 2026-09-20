@@ -38,7 +38,7 @@ class PersonalizationTests(unittest.TestCase):
         self.assertEqual(source, saved)
         self.assertFalse(result["changes_model_weights"])
         self.assertFalse(result["may_expand_entitlements"])
-        rendered = render_personalization_instructions(source)
+        rendered = render_personalization_instructions(source, authenticated_owner_id=OWNER)
         for text in ("short answer", "direct language", "compact explanations",
                      "project specification", "shorter in this chat"):
             self.assertIn(text, rendered)
@@ -55,6 +55,11 @@ class PersonalizationTests(unittest.TestCase):
             mutate(value)
             with self.subTest(value=value), self.assertRaises(ExecutionError):
                 build_personalization_context(value, authenticated_owner_id=OWNER)
+
+    def test_render_requires_independently_authenticated_owner(self):
+        value = payload()
+        with self.assertRaises(ExecutionError):
+            render_personalization_instructions(value, authenticated_owner_id="other")
 
     def test_context_cannot_override_plan_model_effort_or_execution(self):
         for field in ("tier", "model", "provider", "effort", "allowed_routes", "execution_authorized"):
