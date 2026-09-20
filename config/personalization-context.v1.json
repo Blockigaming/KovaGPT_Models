@@ -14,6 +14,11 @@
     "cross_owner_access_forbidden": true,
     "deletion_must_take_effect_before_next_request": true
   },
+  "request_scope_policy": {
+    "active_conversation_id_required": true,
+    "conversation_history_must_match_active_conversation": true,
+    "session_corrections_must_match_active_conversation": true
+  },
   "custom_instruction_policy": {
     "owner_scoped": true,
     "cannot_override_entitlements": true,
@@ -22,7 +27,8 @@
   "task_context_policy": {
     "authorized_references_only": true,
     "project_scope_required": true,
-    "tool_results_must_be_attributed": true
+    "tool_results_must_be_attributed": true,
+    "source_revision_and_sha256_required": true
   },
   "correction_policy": {
     "session_scoped_by_default": true,
@@ -36,7 +42,8 @@
   "limits": {
     "maximum_items_per_section": 64,
     "maximum_item_characters": 4096,
-    "maximum_total_characters": 65536
+    "maximum_total_characters": 65536,
+    "total_includes_every_string_value": true
   },
   "runtime_integrated": false,
   "production_ready": false
