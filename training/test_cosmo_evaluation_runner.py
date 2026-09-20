@@ -133,12 +133,19 @@ class CosmoEvaluationRunnerTests(unittest.TestCase):
             "deadline_utc": "2026-09-19T19:10:00Z",
             "lifecycle_id": "lifecycle-001",
             "preflight_ledger_sequence": 1,
+            "azure_instance": {
+                "resource_id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/kova-cosmo-pilot/providers/Microsoft.Compute/virtualMachines/kova-cosmo-t4",
+                "vm_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                "system_assigned_identity_principal_id":
+                    "99999999-8888-7777-6666-555555555555",
+            },
         }
         receipt = {
             "source_commit": "a" * 40,
             "receipt_sha256": "b" * 64,
             "adapter_sha256": "c" * 64,
             "lifecycle_id": "lifecycle-001",
+            "azure_instance": runtime["azure_instance"],
         }
         grant = {
             "lifecycle_id": "lifecycle-001",
@@ -187,10 +194,23 @@ class CosmoEvaluationRunnerTests(unittest.TestCase):
                      runner, "acquire_phase_grant", return_value=grant
                  ) as acquire:
                 authorized = runner.authorize()
+                receipt["azure_instance"] = dict(
+                    receipt["azure_instance"]
+                )
+                receipt["azure_instance"]["vm_id"] = (
+                    "00000000-1111-2222-3333-444444444444"
+                )
+                with self.assertRaises(runner.EvaluationRunnerError):
+                    runner.authorize()
         self.assertEqual(authorized[-1], grant)
+        self.assertEqual(acquire.call_count, 1)
         self.assertEqual(acquire.call_args.kwargs["phase"], "evaluation")
         self.assertEqual(
             acquire.call_args.kwargs["runtime_evidence_sha256"], "e" * 64
+        )
+        self.assertEqual(
+            acquire.call_args.kwargs["azure_instance"],
+            runtime["azure_instance"],
         )
 
     def test_execute_cli_is_sanitized_and_nonzero_while_blocked(self):

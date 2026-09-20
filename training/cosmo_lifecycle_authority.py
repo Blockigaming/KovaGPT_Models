@@ -39,6 +39,28 @@ UTC_TIMESTAMP = re.compile(
 )
 MONEY = re.compile(r"(?:0|[1-9][0-9]*)\.[0-9]{4}")
 TOKEN = re.compile(r"[A-Za-z0-9._~+/=-]{32,16384}")
+JWT = re.compile(
+    r"[A-Za-z0-9_-]{16,8192}\.[A-Za-z0-9_-]{16,8192}\."
+    r"[A-Za-z0-9_-]{16,8192}"
+)
+AZURE_UUID = re.compile(
+    r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
+    r"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
+)
+AZURE_VM_RESOURCE_ID = re.compile(
+    r"/subscriptions/[0-9A-Fa-f-]{36}/resourceGroups/"
+    r"[A-Za-z0-9_.()-]{1,90}/providers/Microsoft\.Compute/"
+    r"virtualMachines/[A-Za-z0-9_.()-]{1,64}"
+)
+AZURE_COMPUTE_IMDS_URL = (
+    "http://169.254.169.254/metadata/instance/compute"
+    "?api-version=2021-02-01"
+)
+AZURE_IDENTITY_IMDS_URL = (
+    "http://169.254.169.254/metadata/identity/oauth2/token"
+    "?api-version=2018-02-01&resource="
+)
+MAX_IMDS_BYTES = 65536
 
 
 class AuthorityError(ValueError):
@@ -95,6 +117,7 @@ def load_trust_policy(root: Path = ROOT) -> dict:
             "schema_version", "status", "issuer", "algorithm", "endpoint",
             "public_key_hex", "public_key_sha256",
             "bearer_token_file_environment_variable",
+            "azure_managed_identity_token_audience",
             "append_only_remote_ledger_required",
             "independent_azure_reader_required",
             "runner_ledger_mutation_allowed",
@@ -112,11 +135,13 @@ def load_trust_policy(root: Path = ROOT) -> dict:
             need(value["endpoint"] is None)
             need(value["public_key_hex"] is None)
             need(value["public_key_sha256"] is None)
+            need(value["azure_managed_identity_token_audience"] is None)
         else:
             need(value["status"] == "authority_pinned")
             endpoint = value["endpoint"]
             public = value["public_key_hex"]
             fingerprint = value["public_key_sha256"]
+            audience = value["azure_managed_identity_token_audience"]
             need(type(endpoint) is str and len(endpoint) <= 2048)
             parsed = urllib.parse.urlsplit(endpoint)
             need(parsed.scheme == "https" and parsed.hostname is not None)
@@ -128,6 +153,9 @@ def load_trust_policy(root: Path = ROOT) -> dict:
                  HEX64.fullmatch(fingerprint) is not None)
             need(hashlib.sha256(bytes.fromhex(public)).hexdigest() ==
                  fingerprint)
+            need(type(audience) is str and 8 <= len(audience) <= 2048)
+            need(audience.startswith("api://") or
+                 audience.startswith("https://"))
         return value
     except (OSError, ValueError, TypeError, KeyError, AttributeError,
             UnicodeError, RecursionError, json.JSONDecodeError):
@@ -200,6 +228,106 @@ def _load_bearer_token(path: Path, *, repository_root: Path) -> str:
         ) from None
 
 
+def validate_azure_instance(value: object) -> dict:
+    """Validate the exact VM identity observed by the independent preflight."""
+    need(type(value) is dict and list(value) == [
+        "resource_id", "vm_id", "system_assigned_identity_principal_id",
+    ])
+    need(type(value["resource_id"]) is str and
+         AZURE_VM_RESOURCE_ID.fullmatch(value["resource_id"]) is not None)
+    need(type(value["vm_id"]) is str and
+         AZURE_UUID.fullmatch(value["vm_id"]) is not None)
+    need(type(value["system_assigned_identity_principal_id"]) is str and
+         AZURE_UUID.fullmatch(
+             value["system_assigned_identity_principal_id"]
+         ) is not None)
+    return dict(value)
+
+
+def _imds_transport(url: str) -> dict:
+    """Query only Azure's link-local IMDS with proxies and redirects disabled."""
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        need(parsed.scheme == "http" and parsed.hostname == "169.254.169.254")
+        need(parsed.port is None and parsed.username is None and
+             parsed.password is None and parsed.fragment == "")
+        request = urllib.request.Request(
+            url, method="GET", headers={
+                "Metadata": "true",
+                "Accept": "application/json",
+            },
+        )
+
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, request, file_pointer, code, message,
+                                 headers, new_url):
+                raise AuthorityError(
+                    "kova cosmo lifecycle authority rejected"
+                )
+
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), NoRedirect
+        )
+        with opener.open(request, timeout=2) as response:
+            need(response.status == 200 and response.geturl() == url)
+            body = response.read(MAX_IMDS_BYTES + 1)
+        need(0 < len(body) <= MAX_IMDS_BYTES)
+        value = json.loads(body.decode("utf-8"))
+        need(type(value) is dict)
+        return value
+    except (OSError, ValueError, TypeError, UnicodeError,
+            urllib.error.URLError, json.JSONDecodeError):
+        raise AuthorityError(
+            "kova cosmo lifecycle authority rejected"
+        ) from None
+
+
+def _executing_azure_identity(
+    expected_instance: dict, audience: str, current: datetime,
+    *, transport=None,
+) -> tuple[str, str, str]:
+    """Bind the caller to exact IMDS metadata and its managed identity token."""
+    try:
+        get = transport or _imds_transport
+        compute = get(AZURE_COMPUTE_IMDS_URL)
+        need(type(compute) is dict)
+        observed_resource_id = compute.get("resourceId")
+        observed_vm_id = compute.get("vmId")
+        need(type(observed_resource_id) is str and
+             AZURE_VM_RESOURCE_ID.fullmatch(observed_resource_id) is not None)
+        need(type(observed_vm_id) is str and
+             AZURE_UUID.fullmatch(observed_vm_id) is not None)
+        need(observed_resource_id.casefold() ==
+             expected_instance["resource_id"].casefold())
+        need(observed_vm_id.casefold() == expected_instance["vm_id"].casefold())
+
+        identity_url = AZURE_IDENTITY_IMDS_URL + urllib.parse.quote(
+            audience, safe=""
+        )
+        identity = get(identity_url)
+        need(type(identity) is dict)
+        token = identity.get("access_token")
+        need(type(token) is str and JWT.fullmatch(token) is not None)
+        need(identity.get("token_type") == "Bearer")
+        need(identity.get("resource") == audience)
+        expires_on = identity.get("expires_on")
+        need(type(expires_on) is str and expires_on.isascii() and
+             expires_on.isdigit() and 1 <= len(expires_on) <= 12)
+        expiry = datetime.fromtimestamp(int(expires_on), timezone.utc)
+        need(current < expiry <= current + timedelta(days=2))
+        expiry_text = expiry.strftime("%Y-%m-%dT%H:%M:%SZ")
+        return (
+            token,
+            hashlib.sha256(token.encode("ascii")).hexdigest(),
+            expiry_text,
+        )
+    except (OSError, ValueError, TypeError, KeyError, AttributeError,
+            UnicodeError, OverflowError):
+        raise AuthorityError(
+            "kova cosmo lifecycle authority rejected"
+        ) from None
+
+
 def _https_transport(endpoint: str, token: str, request_value: dict) -> dict:
     raw = canonical(request_value)
     request = urllib.request.Request(
@@ -237,8 +365,9 @@ def _https_transport(endpoint: str, token: str, request_value: dict) -> dict:
 def acquire_phase_grant(
     *, phase: str, source_commit: str, runtime_evidence_sha256: str,
     lifecycle_id: str, preflight_ledger_sequence: int,
-    context: dict, runtime_deadline_utc: str, root: Path = ROOT,
-    now: datetime | None = None, transport=None,
+    context: dict, azure_instance: dict, runtime_deadline_utc: str,
+    root: Path = ROOT,
+    now: datetime | None = None, transport=None, instance_transport=None,
 ) -> dict:
     """Reserve one paid phase in the remote append-only budget ledger."""
     try:
@@ -253,6 +382,7 @@ def acquire_phase_grant(
         need(type(preflight_ledger_sequence) is int and
              0 < preflight_ledger_sequence < 2**63)
         need(type(context) is dict and 0 < len(context) <= 32)
+        azure_instance = validate_azure_instance(azure_instance)
         current = now or datetime.now(timezone.utc)
         need(current.tzinfo is not None and
              current.utcoffset() == timedelta(0))
@@ -262,6 +392,16 @@ def acquire_phase_grant(
         ))
         nonce = secrets.token_hex(32)
         context_sha256 = hashlib.sha256(canonical(context)).hexdigest()
+        (
+            azure_identity_token,
+            azure_identity_token_sha256,
+            azure_identity_token_expires_at_utc,
+        ) = _executing_azure_identity(
+            azure_instance,
+            trust["azure_managed_identity_token_audience"],
+            current,
+            transport=instance_transport,
+        )
         request_value = {
             "schema_version": 1,
             "kind": "kova_cosmo_paid_phase_grant_request",
@@ -272,6 +412,13 @@ def acquire_phase_grant(
             "source_commit": source_commit,
             "runtime_evidence_sha256": runtime_evidence_sha256,
             "context_sha256": context_sha256,
+            "azure_instance": azure_instance,
+            "azure_instance_identity_token": azure_identity_token,
+            "azure_instance_identity_token_audience": trust[
+                "azure_managed_identity_token_audience"
+            ],
+            "azure_instance_identity_token_expires_at_utc":
+                azure_identity_token_expires_at_utc,
             "runtime_deadline_utc": runtime_deadline_utc,
             "requested_at_utc": current.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "request_nonce": nonce,
@@ -286,9 +433,12 @@ def acquire_phase_grant(
         )
         need(list(payload) == [
             "schema_version", "kind", "issuer", "pilot_id", "lifecycle_id",
-            "ledger_sequence", "ledger_commit_id", "ledger_append_only",
+            "preflight_ledger_sequence", "ledger_sequence",
+            "ledger_commit_id", "ledger_append_only",
             "ledger_status", "grant_id", "phase", "source_commit",
             "runtime_evidence_sha256", "context_sha256", "request_nonce",
+            "runtime_deadline_utc",
+            "azure_instance", "azure_instance_identity",
             "issued_at_utc", "expires_at_utc", "grant_reserved_seconds",
             "grant_reserved_cost_usd", "phase_grants_committed",
             "training_runs_consumed", "aggregate_reserved_seconds",
@@ -298,6 +448,8 @@ def acquire_phase_grant(
         need(payload["schema_version"] == 1)
         need(payload["pilot_id"] == PILOT_ID)
         need(payload["lifecycle_id"] == lifecycle_id)
+        need(payload["preflight_ledger_sequence"] ==
+             preflight_ledger_sequence)
         need(type(payload["ledger_sequence"]) is int and
              preflight_ledger_sequence < payload["ledger_sequence"] < 2**63)
         for field in ("ledger_commit_id", "grant_id"):
@@ -309,10 +461,32 @@ def acquire_phase_grant(
         need(payload["runtime_evidence_sha256"] == runtime_evidence_sha256)
         need(payload["context_sha256"] == context_sha256)
         need(payload["request_nonce"] == nonce)
+        need(payload["runtime_deadline_utc"] == runtime_deadline_utc)
+        need(payload["azure_instance"] == azure_instance)
+        identity = payload["azure_instance_identity"]
+        need(type(identity) is dict and list(identity) == [
+            "verification_method", "token_sha256", "token_audience",
+            "verified_at_utc", "token_expires_at_utc", "verified",
+        ])
+        need(identity["verification_method"] ==
+             "microsoft_entra_system_assigned_managed_identity_token")
+        need(identity["token_sha256"] == azure_identity_token_sha256)
+        need(identity["token_audience"] ==
+             trust["azure_managed_identity_token_audience"])
+        need(identity["verified"] is True)
         issued = timestamp(payload["issued_at_utc"])
         expires = timestamp(payload["expires_at_utc"])
-        need(issued <= current <= issued + timedelta(minutes=5))
-        need(current < expires == deadline)
+        need(expires == timestamp(payload["runtime_deadline_utc"]))
+        identity_verified = timestamp(identity["verified_at_utc"])
+        token_expires = timestamp(identity["token_expires_at_utc"])
+        need(identity["token_expires_at_utc"] ==
+             azure_identity_token_expires_at_utc)
+        clock_skew = timedelta(minutes=5)
+        need(current - clock_skew <= issued <= current + clock_skew)
+        need(issued < expires == deadline)
+        need(current - clock_skew <= identity_verified <= current + clock_skew)
+        need(issued - clock_skew <= identity_verified <= issued)
+        need(token_expires >= expires)
         reserved_seconds = payload["grant_reserved_seconds"]
         aggregate_seconds = payload["aggregate_reserved_seconds"]
         need(type(reserved_seconds) is int and
@@ -340,7 +514,8 @@ def acquire_phase_grant(
         need(aggregate_seconds == sum(
             PHASE_RESERVED_SECONDS[item] * counts[item] for item in PHASES
         ))
-        need(payload["training_runs_consumed"] == counts["training"])
+        need(type(payload["training_runs_consumed"]) is int and
+             payload["training_runs_consumed"] == counts["training"])
         need(payload["deployment_authorized"] is False)
         return {
             "status": "paid_phase_reserved_in_append_only_ledger",
@@ -351,6 +526,10 @@ def acquire_phase_grant(
             "ledger_sequence": payload["ledger_sequence"],
             "ledger_commit_id": payload["ledger_commit_id"],
             "phase_grant_sha256": envelope_sha256,
+            "phase_grant_envelope": response,
+            "phase_grant_context": context,
+            "azure_instance": azure_instance,
+            "azure_instance_identity_verified": True,
             "aggregate_reserved_seconds": aggregate_seconds,
             "aggregate_reserved_cost_usd":
                 payload["aggregate_reserved_cost_usd"],
@@ -372,6 +551,8 @@ def dry_run(root: Path = ROOT) -> dict:
         "authority_pinned": trust["status"] == "authority_pinned",
         "append_only_remote_ledger_required": True,
         "independent_azure_reader_required": True,
+        "exact_azure_vm_identity_grant_binding_required": True,
+        "direct_proxy_disabled_azure_imds_required": True,
         "paid_phase_grants": list(PHASES),
         "paid_phase_reserved_seconds": dict(PHASE_RESERVED_SECONDS),
         "maximum_grants_per_phase": 1,

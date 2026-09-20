@@ -7,6 +7,7 @@
   "public_key_hex": null,
   "public_key_sha256": null,
   "bearer_token_file_environment_variable": "KOVA_COSMO_LIFECYCLE_TOKEN_FILE",
+  "azure_managed_identity_token_audience": null,
   "append_only_remote_ledger_required": true,
   "independent_azure_reader_required": true,
   "runner_ledger_mutation_allowed": false,

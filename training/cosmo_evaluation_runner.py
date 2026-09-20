@@ -132,6 +132,7 @@ def authorize() -> tuple[dict, dict, Path, Path, Path, object, dict, dict]:
     except ReceiptError:
         raise EvaluationRunnerError("kova cosmo evaluation runner rejected") from None
     need(receipt["lifecycle_id"] == runtime["lifecycle_id"])
+    need(receipt["azure_instance"] == runtime["azure_instance"])
     need(snapshot != adapter_output)
     need(snapshot not in adapter_output.parents and
          adapter_output not in snapshot.parents)
@@ -149,6 +150,7 @@ def authorize() -> tuple[dict, dict, Path, Path, Path, object, dict, dict]:
         runtime_evidence_sha256=runtime["runtime_evidence_sha256"],
         lifecycle_id=runtime["lifecycle_id"],
         preflight_ledger_sequence=runtime["preflight_ledger_sequence"],
+        azure_instance=runtime["azure_instance"],
         runtime_deadline_utc=runtime["deadline_utc"],
         context={
             "operation": "three_way_guarded_generation",

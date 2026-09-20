@@ -45,6 +45,8 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
             "public_key_sha256": hashlib.sha256(bytes.fromhex(public)).hexdigest(),
             "bearer_token_file_environment_variable":
                 "KOVA_COSMO_LIFECYCLE_TOKEN_FILE",
+            "azure_managed_identity_token_audience":
+                "api://kova-cosmo-lifecycle-authority",
             "append_only_remote_ledger_required": True,
             "independent_azure_reader_required": True,
             "runner_ledger_mutation_allowed": False,
@@ -73,6 +75,13 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
                 f"/subscriptions/{subscription}/resourceGroups/{group}",
             "resource_group_exclusive_to_pilot": True,
             "vm_name": "kova-cosmo-t4",
+            "vm_resource_id": (
+                f"/subscriptions/{subscription}/resourceGroups/{group}/"
+                "providers/Microsoft.Compute/virtualMachines/kova-cosmo-t4"
+            ),
+            "vm_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "vm_system_assigned_identity_principal_id":
+                "99999999-8888-7777-6666-555555555555",
             "region": "eastus",
             "vm_size": "Standard_NC4as_T4_v3",
             "family_quota_limit_vcpus": 4,
@@ -101,6 +110,20 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
             "pilot_id": guard.PILOT_ID,
             "lifecycle_id": preflight["lifecycle_id"],
             "ledger_sequence": 5,
+            "ledger_commit_id": "append-only-ledger-terminal-005",
+            "ledger_append_only": True,
+            "ledger_status": "terminal_cleanup_committed_no_future_grants",
+            "last_paid_grant_ledger_sequence": 4,
+            "future_grants_allowed": False,
+            "phase_grants_committed": {
+                "runtime_probe": 1,
+                "training": 1,
+                "evaluation": 1,
+            },
+            "training_runs_consumed": 1,
+            "aggregate_reserved_seconds": 3600,
+            "aggregate_reserved_cost_usd": "0.5260",
+            "ledger_closed_at_utc": "2026-09-19T19:33:00Z",
             "provider_observation_id": "azure-observation-cleanup-001",
             "azure_query_source": "independent_azure_control_plane_reader",
             "observed_at_utc": "2026-09-19T19:35:00Z",
@@ -109,6 +132,8 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
             "subscription_id": preflight["subscription_id"],
             "resource_group": preflight["resource_group"],
             "vm_name": preflight["vm_name"],
+            "vm_resource_id": preflight["vm_resource_id"],
+            "vm_id": preflight["vm_id"],
             "deallocation_deadline_utc":
                 preflight["control_plane_deallocation_deadline_utc"],
             "power_state": "deallocated",
@@ -228,6 +253,10 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
             lambda value: value.update(capacity_confirmed=False),
             lambda value: value.update(compute_usd_per_hour="0.5261"),
             lambda value: value.update(azure_query_source="runner_self_report"),
+            lambda value: value.update(vm_id=
+                                       "00000000-1111-2222-3333-bad"),
+            lambda value: value.update(vm_resource_id=
+                                       value["vm_resource_id"] + "-other"),
         ]
         for index, mutate in enumerate(mutations):
             payload = self.preflight_payload()
@@ -247,6 +276,8 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
         self.assertTrue(report["automatic_deallocation_verified"])
         self.assertTrue(report["automatic_cleanup_verified"])
         self.assertTrue(report["resource_group_deleted"])
+        self.assertTrue(report["terminal_ledger_verified"])
+        self.assertFalse(report["future_grants_allowed"])
         self.assertEqual(report["residual_resource_count"], 0)
         self.assertEqual(
             report["post_run_evidence_sha256"],
@@ -284,6 +315,34 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
             payload[field] = wrong
             path = self.signed_path(payload, f"wrong-{field}.json")
             with self.subTest(field=field), self.assertRaises(
+                guard.RuntimeGuardError
+            ):
+                guard.verify_post_run(
+                    self.preflight_payload(), path, root=self.root
+                )
+
+    def test_cleanup_rejects_stale_or_nonterminal_ledger_closure(self):
+        mutations = [
+            lambda value: value.update(
+                ledger_status="grants_open",
+                future_grants_allowed=True,
+            ),
+            lambda value: value.update(last_paid_grant_ledger_sequence=5),
+            lambda value: value["phase_grants_committed"].update(
+                evaluation=0
+            ),
+            lambda value: value["phase_grants_committed"].update(
+                evaluation=True
+            ),
+            lambda value: value.update(training_runs_consumed=True),
+            lambda value: value.update(ledger_closed_at_utc=
+                                       "2026-09-19T19:31:00Z"),
+        ]
+        for index, mutate in enumerate(mutations):
+            payload = self.post_run_payload()
+            mutate(payload)
+            path = self.signed_path(payload, f"bad-terminal-{index}.json")
+            with self.subTest(index=index), self.assertRaises(
                 guard.RuntimeGuardError
             ):
                 guard.verify_post_run(
