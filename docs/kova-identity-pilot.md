@@ -34,17 +34,20 @@ example is explicitly hypothetical; it is not a live runtime observation.
 
 No private chats, customer records, credentials, external model outputs or
 upstream weight files are included. These examples were synthetically prepared
-for Kova; human review is not yet complete. The corpus is a small starting set,
-not a claim of sufficient training diversity, model quality or independence of
-all paraphrases. Validation prompts are disjoint by normalized exact text, not
-by a proven semantic train/test contamination analysis.
+for Kova, and the owner review ledger now records approval of all 36 examples.
+The corpus is a small starting set, not a claim of sufficient training diversity,
+model quality or independence of all paraphrases. Validation prompts are disjoint
+by normalized exact text, not by a proven semantic train/test contamination
+analysis.
 
 The review ledger contains all 36 source IDs in dataset order and is bound into
-the pilot plan by SHA-256. Every committed verdict remains `pending`; no reviewer
-or completion time is invented. The validator supports explicit in-progress,
-changes-requested and approved states, but even a fully approved ledger cannot
-grant training authorization or Phase B readiness. Complete it only through a
-real owner review of every prompt/answer pair.
+the pilot plan by SHA-256. Its 24 training and 12 validation records are approved,
+with the owner label and completion timestamp recorded in the ledger. The
+validator still supports explicit in-progress and changes-requested states, and
+the completed review cannot grant training authorization, spending release or
+Phase B readiness. The preparation-only plan's non-authorizing provenance flag
+therefore remains false by design; the review ledger is the source of truth for
+corpus-review completion.
 
 ## What is actually verified
 
@@ -87,8 +90,9 @@ weekly usage and release guards are unchanged. No PR is merged into main here.
 
 ## Before a paid pilot
 
-Review the examples; obtain a verified downloadable artifact inventory and its
-notices; validate a pinned tokenizer/template and compatible training environment;
+Preserve the completed example-review ledger; obtain a verified downloadable
+artifact inventory and its notices; validate a pinned tokenizer/template and
+compatible training environment;
 select/review measured-memory-safe hyperparameters; confirm region/quota and the
 actual Azure rate; approve a separate budget and shutdown procedure. The plan
 keeps budget, hyperparameters and trained-adapter digest null. Its download,
@@ -138,8 +142,8 @@ This verification loaded no model weights, constructed no model, ran no forward
 or backward pass and used CPU-only PyTorch. It therefore does not prove that the
 LoRA targets match a loaded checkpoint, that CUDA/PyTorch is compatible with an
 Azure T4, that FP16 training is stable, or that save/reload and evaluation work.
-Those checks, human data review and the base/configured-base/trained comparison
-remain open. The separate CPU probe lock must not be used as a GPU training lock.
+Those compatibility checks and the base/configured-base/trained comparison remain
+open. The separate CPU probe lock must not be used as a GPU training lock.
 
 ## Synthetic Qwen3/PEFT compatibility check
 
