@@ -122,7 +122,14 @@ def validate() -> dict:
             weights_path = adapter_dir / "adapter_model.safetensors"
             require(config_path.is_file() and weights_path.is_file(),
                     "safe adapter files were not written")
-            validate_safetensors(weights_path, recipe, expected_layers=2)
+            validate_safetensors(
+                weights_path, recipe, expected_layers=2,
+                expected_hidden_size=config.hidden_size,
+                expected_intermediate_size=config.intermediate_size,
+                expected_key_value_size=(
+                    config.num_key_value_heads * config.head_dim
+                ),
+            )
             written = json.loads(config_path.read_text())
             require(written["r"] == lora["r"] and written["lora_alpha"] == lora["alpha"],
                     "saved adapter rank or alpha drifted")

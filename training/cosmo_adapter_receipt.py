@@ -320,7 +320,10 @@ def _validate_adapter_config(path: Path, recipe: dict) -> None:
 
 
 def validate_safetensors(path: Path, recipe: dict,
-                         expected_layers: int = 28) -> None:
+                         expected_layers: int = 28, *,
+                         expected_hidden_size: int = EXPECTED_HIDDEN_SIZE,
+                         expected_intermediate_size: int = 3072,
+                         expected_key_value_size: int = 512) -> None:
     """Validate a safe, complete LoRA-only tensor inventory without loading it."""
     need(type(expected_layers) is int and expected_layers > 0)
     raw_size = path.stat().st_size
@@ -342,20 +345,25 @@ def validate_safetensors(path: Path, recipe: dict,
     intervals = []
     item_bytes = {"F16": 2, "BF16": 2, "F32": 4}
     rank = recipe["lora"]["r"]
-    intermediate = 3072
+    need(all(type(item) is int and item > 0 for item in (
+        expected_hidden_size, expected_intermediate_size,
+        expected_key_value_size,
+    )))
+    intermediate = expected_intermediate_size
+    hidden = expected_hidden_size
     output_width = {
-        "q_proj": EXPECTED_HIDDEN_SIZE,
-        "k_proj": EXPECTED_HIDDEN_SIZE // 2,
-        "v_proj": EXPECTED_HIDDEN_SIZE // 2,
-        "o_proj": EXPECTED_HIDDEN_SIZE,
+        "q_proj": hidden,
+        "k_proj": expected_key_value_size,
+        "v_proj": expected_key_value_size,
+        "o_proj": hidden,
         "gate_proj": intermediate,
         "up_proj": intermediate,
-        "down_proj": EXPECTED_HIDDEN_SIZE,
+        "down_proj": hidden,
     }
     input_width = {
-        "q_proj": EXPECTED_HIDDEN_SIZE, "k_proj": EXPECTED_HIDDEN_SIZE,
-        "v_proj": EXPECTED_HIDDEN_SIZE, "o_proj": EXPECTED_HIDDEN_SIZE,
-        "gate_proj": EXPECTED_HIDDEN_SIZE, "up_proj": EXPECTED_HIDDEN_SIZE,
+        "q_proj": hidden, "k_proj": hidden,
+        "v_proj": hidden, "o_proj": hidden,
+        "gate_proj": hidden, "up_proj": hidden,
         "down_proj": intermediate,
     }
     expected_shapes = {}
