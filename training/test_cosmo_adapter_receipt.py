@@ -1,6 +1,7 @@
 """Offline tests for the post-training Cosmo adapter receipt."""
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import socket
@@ -10,7 +11,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from training import cosmo_adapter_receipt as receipt
+from training import cosmo_lifecycle_authority as authority
+from training.cosmo_generation_attestation import public_key_hex
 from training.kova_cosmo_sft import EXPECTED_TARGETS
 
 
@@ -23,69 +28,144 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
     lifecycle_ledger_commit_id = "ledger-commit-002"
 
     def setUp(self):
-        self.azure_resource_id = (
-            "/subscriptions/11111111-2222-3333-4444-555555555555/"
-            "resourceGroups/kova-cosmo-pilot/providers/Microsoft.Compute/"
-            "virtualMachines/kova-cosmo-t4"
-        )
-        self.training_grant_envelope = {
-            "payload": {
-                "kind": "kova_cosmo_paid_phase_grant",
-                "phase": "training",
-                "source_commit": self.source_commit,
-                "runtime_evidence_sha256": self.runtime_evidence_sha256,
-                "lifecycle_id": self.lifecycle_id,
-                "grant_id": self.lifecycle_grant_id,
-                "ledger_commit_id": self.lifecycle_ledger_commit_id,
-                "lifecycle_terminal": False,
-                "context_sha256": "c" * 64,
-                "azure_resource_id": self.azure_resource_id,
-            },
-            "signature": "0" * 128,
+        self.authority_key = Ed25519PrivateKey.from_private_bytes(b"g" * 32)
+        public = public_key_hex(self.authority_key)
+        self.trust = {
+            "schema_version": 1,
+            "status": "authority_pinned",
+            "issuer": authority.ISSUER,
+            "algorithm": "ed25519",
+            "endpoint": "https://authority.example/v1/pilot/grants",
+            "public_key_hex": public,
+            "public_key_sha256": hashlib.sha256(
+                bytes.fromhex(public)
+            ).hexdigest(),
+            "bearer_token_file_environment_variable": authority.TOKEN_ENV,
+            "azure_managed_identity_token_audience":
+                "api://kova-cosmo-lifecycle-authority",
+            "append_only_remote_ledger_required": True,
+            "independent_azure_reader_required": True,
+            "runner_ledger_mutation_allowed": False,
+            "checked_in_private_key_allowed": False,
         }
-        verifier = patch.object(
-            receipt, "_verify_training_grant_envelope",
-            side_effect=self.verify_training_grant,
-        )
-        verifier.start()
-        self.addCleanup(verifier.stop)
 
-    def verify_training_grant(self, value, *, root):
-        if value != self.training_grant_envelope:
-            raise receipt.ReceiptError("tampered grant")
-        return value["payload"], self.lifecycle_phase_grant_sha256
+    def trust_patch(self):
+        return patch.object(
+            authority, "load_trust_policy", return_value=self.trust
+        )
+
+    def grant_context(self, output: Path) -> dict:
+        return {
+            "operation": "single_lora_sft_run",
+            "base_model": "Qwen/Qwen3-0.6B",
+            "base_revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+            "output_directory": str(output),
+            "snapshot_inventory": {
+                name: {
+                    "bytes": receipt.EXPECTED_BYTES[name],
+                    "sha256": digest,
+                }
+                for name, digest in receipt.EXPECTED_SHA256.items()
+            },
+        }
+
+    def grant_envelope(self, context: dict) -> dict:
+        azure_instance = {
+            "resource_id": (
+                "/subscriptions/11111111-2222-3333-4444-555555555555/"
+                "resourceGroups/kova-cosmo-pilot/providers/"
+                "Microsoft.Compute/virtualMachines/kova-cosmo-t4"
+            ),
+            "vm_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "system_assigned_identity_principal_id":
+                "99999999-8888-7777-6666-555555555555",
+        }
+        payload = {
+            "schema_version": 1,
+            "kind": "kova_cosmo_paid_phase_grant",
+            "issuer": authority.ISSUER,
+            "pilot_id": authority.PILOT_ID,
+            "lifecycle_id": self.lifecycle_id,
+            "ledger_sequence": 3,
+            "ledger_commit_id": self.lifecycle_ledger_commit_id,
+            "ledger_append_only": True,
+            "ledger_status": "grant_committed_before_response",
+            "grant_id": self.lifecycle_grant_id,
+            "phase": "training",
+            "source_commit": self.source_commit,
+            "runtime_evidence_sha256": self.runtime_evidence_sha256,
+            "context_sha256": hashlib.sha256(
+                authority.canonical(context)
+            ).hexdigest(),
+            "request_nonce": "d" * 64,
+            "azure_instance": azure_instance,
+            "azure_instance_identity": {
+                "verification_method":
+                    "microsoft_entra_system_assigned_managed_identity_token",
+                "token_sha256": "c" * 64,
+                "token_audience": self.trust[
+                    "azure_managed_identity_token_audience"
+                ],
+                "verified_at_utc": "2026-09-19T19:00:00Z",
+                "token_expires_at_utc": "2026-09-19T20:00:00Z",
+                "verified": True,
+            },
+            "issued_at_utc": "2026-09-19T19:00:00Z",
+            "expires_at_utc": "2026-09-19T19:40:00Z",
+            "grant_reserved_seconds": 2400,
+            "grant_reserved_cost_usd": "0.3507",
+            "phase_grants_committed": {
+                "runtime_probe": 1,
+                "training": 1,
+                "evaluation": 0,
+            },
+            "training_runs_consumed": 1,
+            "aggregate_reserved_seconds": 3000,
+            "aggregate_reserved_cost_usd": "0.4384",
+            "approved_budget_usd": "2.0000",
+            "deployment_authorized": False,
+        }
+        return {
+            "payload": payload,
+            "signature": self.authority_key.sign(
+                authority.canonical(payload)
+            ).hex(),
+        }
 
     def write_receipt(self, output: Path):
-        return receipt.write_receipt(
-            output, self.source_commit,
-            runtime_evidence_sha256=self.runtime_evidence_sha256,
-            lifecycle_phase_grant_sha256=
-                self.lifecycle_phase_grant_sha256,
-            lifecycle_id=self.lifecycle_id,
-            lifecycle_grant_id=self.lifecycle_grant_id,
-            lifecycle_ledger_commit_id=self.lifecycle_ledger_commit_id,
-            signed_training_grant_envelope=self.training_grant_envelope,
-            global_steps=18,
-            training_loss=1.25,
-        )
+        with self.trust_patch():
+            return receipt.write_receipt(
+                output, self.source_commit,
+                global_steps=18,
+                training_loss=1.25,
+            )
 
     def expected_receipt(self, output: Path):
-        return receipt.expected_receipt(
-            output, self.source_commit,
-            runtime_evidence_sha256=self.runtime_evidence_sha256,
-            lifecycle_phase_grant_sha256=
-                self.lifecycle_phase_grant_sha256,
-            lifecycle_id=self.lifecycle_id,
-            lifecycle_grant_id=self.lifecycle_grant_id,
-            lifecycle_ledger_commit_id=self.lifecycle_ledger_commit_id,
-            global_steps=18,
-            training_loss=1.25,
-        )
+        with self.trust_patch():
+            return receipt.expected_receipt(
+                output, self.source_commit,
+                global_steps=18,
+                training_loss=1.25,
+            )
+
+    def verify_receipt(self, output: Path, **arguments):
+        with self.trust_patch():
+            return receipt.verify_receipt(output, **arguments)
 
     def make_output(self, root: Path) -> Path:
         output = root / "run"
+        context = self.grant_context(output)
+        with self.trust_patch():
+            receipt.persist_training_grant(
+                output,
+                source_commit=self.source_commit,
+                runtime_evidence_sha256=self.runtime_evidence_sha256,
+                lifecycle_id=self.lifecycle_id,
+                grant_context=context,
+                grant_envelope=self.grant_envelope(context),
+            )
         adapter = output / receipt.ADAPTER_DIRECTORY
-        adapter.mkdir(parents=True)
+        adapter.mkdir()
         (adapter / "adapter_config.json").write_text(json.dumps({
             "peft_type": "LORA",
             "task_type": "CAUSAL_LM",
@@ -138,17 +218,12 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
                           "lifecycle_trust_sha256",
                           "runtime_evidence_sha256",
                           "lifecycle_phase_grant_sha256",
-                          "training_grant_context_sha256",
                           "evaluation_plan_sha256", "software_lock_sha256"):
                 self.assertRegex(value["lineage"][field], r"^[0-9a-f]{64}$")
             self.assertEqual(value["lineage"]["lifecycle_id"], self.lifecycle_id)
             self.assertEqual(
                 report["lifecycle_ledger_commit_id"],
                 self.lifecycle_ledger_commit_id,
-            )
-            self.assertEqual(
-                report["training_grant_azure_resource_id"],
-                self.azure_resource_id,
             )
             self.assertFalse(value["actual_model_outputs_evaluated"])
             self.assertFalse(value["deployment_authorized"])
@@ -163,7 +238,46 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
             raw[-1] ^= 1
             weights.write_bytes(raw)
             with self.assertRaises(receipt.ReceiptError):
-                receipt.verify_receipt(output)
+                self.verify_receipt(output)
+
+    def test_fake_or_wrong_phase_training_grant_is_rejected(self):
+        for variant in ("fake_signer", "wrong_phase"):
+            with self.subTest(variant=variant), \
+                 tempfile.TemporaryDirectory() as directory:
+                output = self.make_output(Path(directory))
+                path = output / receipt.TRAINING_GRANT_NAME
+                evidence = json.loads(path.read_text(encoding="utf-8"))
+                payload = evidence["grant_envelope"]["payload"]
+                if variant == "fake_signer":
+                    payload["grant_id"] = "invented-grant"
+                    fake = Ed25519PrivateKey.from_private_bytes(b"f" * 32)
+                    signer = fake
+                else:
+                    payload["phase"] = "evaluation"
+                    signer = self.authority_key
+                evidence["grant_envelope"]["signature"] = signer.sign(
+                    authority.canonical(payload)
+                ).hex()
+                path.write_text(json.dumps(evidence), encoding="utf-8")
+                with self.assertRaises(receipt.ReceiptError):
+                    self.write_receipt(output)
+
+    def test_grant_context_or_vm_lineage_tampering_is_rejected(self):
+        for variant in ("context", "vm"):
+            with self.subTest(variant=variant), \
+                 tempfile.TemporaryDirectory() as directory:
+                output = self.make_output(Path(directory))
+                path = output / receipt.TRAINING_GRANT_NAME
+                evidence = json.loads(path.read_text(encoding="utf-8"))
+                if variant == "context":
+                    evidence["context"]["output_directory"] += "-other"
+                else:
+                    evidence["grant_envelope"]["payload"][
+                        "azure_instance"
+                    ]["vm_id"] = "00000000-1111-2222-3333-444444444444"
+                path.write_text(json.dumps(evidence), encoding="utf-8")
+                with self.assertRaises(receipt.ReceiptError):
+                    self.write_receipt(output)
 
     def test_receipt_mutation_and_wrong_expected_commit_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -174,13 +288,15 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
             value["phase_b_ready"] = True
             path.write_text(json.dumps(value), encoding="utf-8")
             with self.assertRaises(receipt.ReceiptError):
-                receipt.verify_receipt(output)
+                self.verify_receipt(output)
 
         with tempfile.TemporaryDirectory() as directory:
             output = self.make_output(Path(directory))
             self.write_receipt(output)
             with self.assertRaises(receipt.ReceiptError):
-                receipt.verify_receipt(output, expected_source_commit="b" * 40)
+                self.verify_receipt(
+                    output, expected_source_commit="b" * 40
+                )
 
     def test_existing_receipt_is_never_overwritten(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -232,18 +348,6 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
                  patch.object(subprocess, "Popen", side_effect=AssertionError("process")):
                 report = self.write_receipt(output)
             self.assertFalse(report["phase_b_ready"])
-
-
-    def test_fabricated_or_tampered_training_grant_is_rejected(self):
-        with tempfile.TemporaryDirectory() as directory:
-            output = self.make_output(Path(directory))
-            self.write_receipt(output)
-            path = output / receipt.TRAINING_GRANT_NAME
-            value = json.loads(path.read_text(encoding="utf-8"))
-            value["payload"]["grant_id"] = "invented-training-grant"
-            path.write_text(json.dumps(value), encoding="utf-8")
-            with self.assertRaises(receipt.ReceiptError):
-                receipt.verify_receipt(output)
 
 
 if __name__ == "__main__":

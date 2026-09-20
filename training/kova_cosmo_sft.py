@@ -14,7 +14,11 @@ import sys
 from importlib.metadata import PackageNotFoundError, version
 
 from release.model_revisions import MODEL_SOURCE_REFERENCES
-from training.cosmo_adapter_receipt import ReceiptError, write_receipt
+from training.cosmo_adapter_receipt import (
+    ReceiptError,
+    persist_training_grant,
+    write_receipt,
+)
 from training.cosmo_artifacts import ArtifactError, verify_snapshot
 from training.cosmo_hardware import HardwareError, verify_nvidia_t4
 from training.identity_pilot import load as load_identity_pilot
@@ -269,7 +273,7 @@ def execute() -> dict:
         preflight_ledger_sequence=runtime_report[
             "preflight_ledger_sequence"
         ],
-        expected_azure_resource_id=runtime_report["azure_vm_resource_id"],
+        azure_instance=runtime_report["azure_instance"],
         runtime_deadline_utc=runtime_report["deadline_utc"],
         context={
             "operation": "single_lora_sft_run",
@@ -279,6 +283,21 @@ def execute() -> dict:
             "snapshot_inventory": snapshot_inventory,
         },
     )
+    try:
+        persisted_grant = persist_training_grant(
+            output,
+            source_commit=source_commit,
+            runtime_evidence_sha256=runtime_report[
+                "runtime_evidence_sha256"
+            ],
+            lifecycle_id=runtime_report["lifecycle_id"],
+            grant_context=phase_grant["phase_grant_context"],
+            grant_envelope=phase_grant["phase_grant_envelope"],
+        )
+    except ReceiptError:
+        raise RecipeError("kova cosmo sft recipe rejected") from None
+    need(persisted_grant["phase_grant_sha256"] ==
+         phase_grant["phase_grant_sha256"])
     os.environ.update({
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
@@ -358,16 +377,6 @@ def execute() -> dict:
     try:
         return write_receipt(
             output, source_commit,
-            runtime_evidence_sha256=runtime_report["runtime_evidence_sha256"],
-            lifecycle_phase_grant_sha256=phase_grant[
-                "phase_grant_sha256"
-            ],
-            lifecycle_id=phase_grant["lifecycle_id"],
-            lifecycle_grant_id=phase_grant["grant_id"],
-            lifecycle_ledger_commit_id=phase_grant["ledger_commit_id"],
-            signed_training_grant_envelope=phase_grant[
-                "signed_grant_envelope"
-            ],
             global_steps=training_result.global_step,
             training_loss=training_result.training_loss,
         )

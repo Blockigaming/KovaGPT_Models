@@ -29,6 +29,8 @@
   },
   "required_controls": {
     "remote_append_only_paid_phase_ledger": true,
+    "exact_azure_vm_identity_grant_binding": true,
+    "terminal_ledger_closure_after_cleanup": true,
     "control_plane_deallocation_deadline": true,
     "independent_watchdog": true,
     "watchdog_permission_test": true,

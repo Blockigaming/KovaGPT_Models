@@ -234,8 +234,18 @@ class KovaCosmoSftTests(unittest.TestCase):
             "deadline_utc": "2026-09-19T19:40:00Z",
             "lifecycle_id": "lifecycle-001",
             "preflight_ledger_sequence": 1,
+            "azure_instance": {
+                "resource_id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/kova-cosmo-pilot/providers/Microsoft.Compute/virtualMachines/kova-cosmo-t4",
+                "vm_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                "system_assigned_identity_principal_id":
+                    "99999999-8888-7777-6666-555555555555",
+            },
         }
-        grant = {"phase_grant_sha256": "f" * 64}
+        grant = {
+            "phase_grant_sha256": "f" * 64,
+            "phase_grant_context": {"operation": "single_lora_sft_run"},
+            "phase_grant_envelope": {"payload": {}, "signature": ""},
+        }
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             snapshot = root / "snapshot"
@@ -259,12 +269,24 @@ class KovaCosmoSftTests(unittest.TestCase):
                  patch.object(
                      recipe, "reserve_training_phase", return_value=grant
                  ) as acquire, \
+                 patch.object(
+                     recipe, "persist_training_grant",
+                     return_value={"phase_grant_sha256": "f" * 64},
+                 ) as persist, \
                  patch.dict("sys.modules", {"torch": None}):
                 with self.assertRaises(ModuleNotFoundError):
                     recipe.execute()
         self.assertEqual(acquire.call_args.kwargs["phase"], "training")
         self.assertEqual(
             acquire.call_args.kwargs["runtime_evidence_sha256"], "e" * 64
+        )
+        self.assertEqual(
+            acquire.call_args.kwargs["azure_instance"],
+            runtime["azure_instance"],
+        )
+        self.assertEqual(
+            persist.call_args.kwargs["grant_envelope"],
+            grant["phase_grant_envelope"],
         )
 
     def test_operator_environment_variable_cannot_override_source_guards(self):

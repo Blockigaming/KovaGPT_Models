@@ -6,20 +6,22 @@ never loads model tensors, contacts a network, or invokes cloud services.
 from __future__ import annotations
 
 import argparse
+from datetime import timedelta
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import struct
 import sys
 
-from training.cosmo_artifacts import EXPECTED_SHA256
+from training.cosmo_artifacts import EXPECTED_BYTES, EXPECTED_SHA256
 from training import identity_pilot as pilot
 
 ROOT = Path(__file__).resolve().parents[1]
 RECEIPT_NAME = "adapter-receipt.v1.json"
-TRAINING_GRANT_NAME = "training-grant-envelope.v1.json"
+TRAINING_GRANT_NAME = "training-grant.v1.json"
 ADAPTER_DIRECTORY = "adapter"
 HEX40 = re.compile(r"[0-9a-f]{40}")
 MAX_RECEIPT_BYTES = 1024 * 1024
@@ -73,6 +75,188 @@ def serialize(value: object) -> bytes:
             value, indent=2, ensure_ascii=True, allow_nan=False
         ) + "\n").encode("ascii")
     except (TypeError, ValueError, UnicodeError, RecursionError):
+        raise ReceiptError("kova cosmo adapter receipt rejected") from None
+
+
+def _verify_training_grant(
+    output: Path, *, expected_source_commit: str | None = None,
+    expected_runtime_evidence_sha256: str | None = None,
+    expected_lifecycle_id: str | None = None, root: Path = ROOT,
+) -> dict:
+    """Verify the persisted authority-signed training grant and its context."""
+    try:
+        # Keep the CPU-only adapter round-trip validator independent of the
+        # cryptography package; paid-lineage verification imports it on demand.
+        from training.cosmo_lifecycle_authority import (
+            PHASE_RESERVED_SECONDS,
+            PHASES,
+            PILOT_ID,
+            canonical,
+            load_trust_policy,
+            money,
+            timestamp,
+            validate_azure_instance,
+            verify_envelope,
+        )
+        evidence = parse_json(_read_limited(
+            output / TRAINING_GRANT_NAME, MAX_GRANT_BYTES
+        ))
+        need(type(evidence) is dict and list(evidence) == [
+            "context", "grant_envelope",
+        ])
+        context = evidence["context"]
+        need(type(context) is dict and list(context) == [
+            "operation", "base_model", "base_revision", "output_directory",
+            "snapshot_inventory",
+        ])
+        recipe, _, _ = _load_sources(root)
+        need(context["operation"] == "single_lora_sft_run")
+        need(context["base_model"] == recipe["base_model"])
+        need(context["base_revision"] == recipe["base_revision"])
+        need(context["output_directory"] == str(output))
+        inventory = context["snapshot_inventory"]
+        need(type(inventory) is dict and
+             list(inventory) == list(EXPECTED_SHA256))
+        for name, item in inventory.items():
+            need(type(item) is dict and list(item) == ["bytes", "sha256"])
+            need(item["bytes"] == EXPECTED_BYTES[name])
+            need(item["sha256"] == EXPECTED_SHA256[name])
+
+        envelope = evidence["grant_envelope"]
+        payload, envelope_sha256 = verify_envelope(
+            envelope, expected_kind="kova_cosmo_paid_phase_grant", root=root
+        )
+        need(type(payload) is dict and list(payload) == [
+            "schema_version", "kind", "issuer", "pilot_id", "lifecycle_id",
+            "ledger_sequence", "ledger_commit_id", "ledger_append_only",
+            "ledger_status", "grant_id", "phase", "source_commit",
+            "runtime_evidence_sha256", "context_sha256", "request_nonce",
+            "azure_instance", "azure_instance_identity",
+            "issued_at_utc", "expires_at_utc", "grant_reserved_seconds",
+            "grant_reserved_cost_usd", "phase_grants_committed",
+            "training_runs_consumed", "aggregate_reserved_seconds",
+            "aggregate_reserved_cost_usd", "approved_budget_usd",
+            "deployment_authorized",
+        ])
+        need(payload["schema_version"] == 1)
+        need(payload["pilot_id"] == PILOT_ID)
+        need(payload["phase"] == "training")
+        source_commit = payload["source_commit"]
+        need(type(source_commit) is str and
+             HEX40.fullmatch(source_commit) is not None)
+        if expected_source_commit is not None:
+            need(source_commit == expected_source_commit)
+        runtime_sha256 = payload["runtime_evidence_sha256"]
+        need(type(runtime_sha256) is str and
+             re.fullmatch(r"[0-9a-f]{64}", runtime_sha256) is not None)
+        if expected_runtime_evidence_sha256 is not None:
+            need(runtime_sha256 == expected_runtime_evidence_sha256)
+        need(payload["context_sha256"] ==
+             hashlib.sha256(canonical(context)).hexdigest())
+        lifecycle_id = payload["lifecycle_id"]
+        need(type(lifecycle_id) is str and 0 < len(lifecycle_id) <= 256)
+        if expected_lifecycle_id is not None:
+            need(lifecycle_id == expected_lifecycle_id)
+        for field in ("ledger_commit_id", "grant_id"):
+            need(type(payload[field]) is str and
+                 0 < len(payload[field]) <= 256)
+        need(type(payload["ledger_sequence"]) is int and
+             0 < payload["ledger_sequence"] < 2**63)
+        need(payload["ledger_append_only"] is True)
+        need(payload["ledger_status"] == "grant_committed_before_response")
+        need(type(payload["request_nonce"]) is str and
+             re.fullmatch(r"[0-9a-f]{64}", payload["request_nonce"]) is not None)
+        need(payload["grant_reserved_seconds"] ==
+             PHASE_RESERVED_SECONDS["training"])
+        issued = timestamp(payload["issued_at_utc"])
+        expires = timestamp(payload["expires_at_utc"])
+        need(issued < expires)
+        counts = payload["phase_grants_committed"]
+        need(type(counts) is dict and list(counts) == list(PHASES))
+        need(all(type(item) is int and 0 <= item <= 1
+                 for item in counts.values()))
+        need(counts["training"] == 1)
+        need(payload["training_runs_consumed"] == 1)
+        aggregate_seconds = payload["aggregate_reserved_seconds"]
+        need(type(aggregate_seconds) is int and
+             aggregate_seconds == sum(
+                 PHASE_RESERVED_SECONDS[phase] * counts[phase]
+                 for phase in PHASES
+             ))
+        reserved_cost = money(payload["grant_reserved_cost_usd"])
+        aggregate_cost = money(payload["aggregate_reserved_cost_usd"])
+        need(reserved_cost >= (
+            money("0.5260") *
+            PHASE_RESERVED_SECONDS["training"] / 3600
+        ))
+        need(reserved_cost <= aggregate_cost <= money("0.5260"))
+        need(money(payload["approved_budget_usd"]) == money("2.0000"))
+        need(payload["deployment_authorized"] is False)
+        azure_instance = validate_azure_instance(payload["azure_instance"])
+        identity = payload["azure_instance_identity"]
+        need(type(identity) is dict and list(identity) == [
+            "verification_method", "token_sha256", "token_audience",
+            "verified_at_utc", "token_expires_at_utc", "verified",
+        ])
+        need(identity["verification_method"] ==
+             "microsoft_entra_system_assigned_managed_identity_token")
+        need(type(identity["token_sha256"]) is str and
+             re.fullmatch(r"[0-9a-f]{64}", identity["token_sha256"]) is not None)
+        need(identity["token_audience"] == load_trust_policy(root)[
+            "azure_managed_identity_token_audience"
+        ])
+        verified_at = timestamp(identity["verified_at_utc"])
+        token_expires = timestamp(identity["token_expires_at_utc"])
+        need(issued - timedelta(minutes=5) <= verified_at <= issued)
+        need(verified_at < token_expires)
+        need(token_expires >= expires)
+        need(identity["verified"] is True)
+        return {
+            "source_commit": source_commit,
+            "runtime_evidence_sha256": runtime_sha256,
+            "lifecycle_id": lifecycle_id,
+            "grant_id": payload["grant_id"],
+            "ledger_sequence": payload["ledger_sequence"],
+            "ledger_commit_id": payload["ledger_commit_id"],
+            "context_sha256": payload["context_sha256"],
+            "phase_grant_sha256": envelope_sha256,
+            "azure_instance": azure_instance,
+        }
+    except (ImportError, OSError, ValueError, TypeError, KeyError,
+            AttributeError, UnicodeError, RecursionError):
+        raise ReceiptError("kova cosmo adapter receipt rejected") from None
+
+
+def persist_training_grant(
+    output: Path, *, source_commit: str, runtime_evidence_sha256: str,
+    lifecycle_id: str, grant_context: dict, grant_envelope: dict,
+    root: Path = ROOT,
+) -> dict:
+    """Persist verified grant evidence before imports or training begin."""
+    try:
+        need(output.is_absolute() and not output.exists() and
+             not output.is_symlink())
+        output.mkdir(mode=0o700)
+        value = {
+            "context": grant_context,
+            "grant_envelope": grant_envelope,
+        }
+        raw = serialize(value)
+        need(len(raw) <= MAX_GRANT_BYTES)
+        with (output / TRAINING_GRANT_NAME).open("xb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        return _verify_training_grant(
+            output,
+            expected_source_commit=source_commit,
+            expected_runtime_evidence_sha256=runtime_evidence_sha256,
+            expected_lifecycle_id=lifecycle_id,
+            root=root,
+        )
+    except ReceiptError:
+        raise
+    except OSError:
         raise ReceiptError("kova cosmo adapter receipt rejected") from None
 
 
@@ -213,81 +397,18 @@ def _artifact_inventory(output: Path, recipe: dict) -> list[dict]:
     return inventory
 
 
-def _verify_training_grant_envelope(value: object, *, root: Path) -> tuple[dict, str]:
-    """Load crypto verification only when receipt lineage is actually verified."""
-    try:
-        from training.cosmo_lifecycle_authority import (
-            AuthorityError,
-            verify_envelope,
-        )
-        return verify_envelope(
-            value, expected_kind="kova_cosmo_paid_phase_grant", root=root
-        )
-    except (ImportError, ValueError, TypeError, KeyError, AttributeError,
-            UnicodeError, RecursionError) as error:
-        raise ReceiptError("kova cosmo adapter receipt rejected") from error
-
-
-def _verified_training_grant(
-    output: Path, *, source_commit: str, runtime_evidence_sha256: str,
-    lifecycle_phase_grant_sha256: str, lifecycle_id: str,
-    lifecycle_grant_id: str, lifecycle_ledger_commit_id: str,
-    root: Path,
-) -> dict:
-    try:
-        raw = _read_limited(output / TRAINING_GRANT_NAME, MAX_GRANT_BYTES)
-        envelope = parse_json(raw)
-        payload, envelope_sha256 = _verify_training_grant_envelope(
-            envelope, root=root
-        )
-        need(envelope_sha256 == lifecycle_phase_grant_sha256)
-        need(payload["phase"] == "training")
-        need(payload["source_commit"] == source_commit)
-        need(payload["runtime_evidence_sha256"] == runtime_evidence_sha256)
-        need(payload["lifecycle_id"] == lifecycle_id)
-        need(payload["grant_id"] == lifecycle_grant_id)
-        need(payload["ledger_commit_id"] == lifecycle_ledger_commit_id)
-        need(payload["lifecycle_terminal"] is False)
-        need(type(payload["context_sha256"]) is str and
-             re.fullmatch(r"[0-9a-f]{64}", payload["context_sha256"]) is not None)
-        return payload
-    except (OSError, ValueError, TypeError, KeyError,
-            AttributeError, UnicodeError, RecursionError):
-        raise ReceiptError("kova cosmo adapter receipt rejected") from None
-
-
 def expected_receipt(output: Path, source_commit: str, *,
-                     runtime_evidence_sha256: str,
-                     lifecycle_phase_grant_sha256: str,
-                     lifecycle_id: str,
-                     lifecycle_grant_id: str,
-                     lifecycle_ledger_commit_id: str,
                      global_steps: int,
                      training_loss: float, root: Path = ROOT) -> dict:
     need(type(source_commit) is str and HEX40.fullmatch(source_commit) is not None)
-    need(type(runtime_evidence_sha256) is str and
-         re.fullmatch(r"[0-9a-f]{64}", runtime_evidence_sha256) is not None)
-    need(type(lifecycle_phase_grant_sha256) is str and
-         re.fullmatch(r"[0-9a-f]{64}",
-                      lifecycle_phase_grant_sha256) is not None)
-    for value in (lifecycle_id, lifecycle_grant_id,
-                  lifecycle_ledger_commit_id):
-        need(type(value) is str and 0 < len(value) <= 256)
     need(type(global_steps) is int and not isinstance(global_steps, bool) and
          0 < global_steps < 2**31)
     need(type(training_loss) in (int, float) and
          not isinstance(training_loss, bool) and
          math.isfinite(training_loss) and training_loss >= 0)
     recipe, identity, evaluation_plan_sha256 = _load_sources(root)
-    grant = _verified_training_grant(
-        output,
-        source_commit=source_commit,
-        runtime_evidence_sha256=runtime_evidence_sha256,
-        lifecycle_phase_grant_sha256=lifecycle_phase_grant_sha256,
-        lifecycle_id=lifecycle_id,
-        lifecycle_grant_id=lifecycle_grant_id,
-        lifecycle_ledger_commit_id=lifecycle_ledger_commit_id,
-        root=root,
+    grant = _verify_training_grant(
+        output, expected_source_commit=source_commit, root=root
     )
     artifacts = _artifact_inventory(output, recipe)
     adapter_sha256 = next(item["sha256"] for item in artifacts
@@ -311,14 +432,14 @@ def expected_receipt(output: Path, source_commit: str, *,
             "lifecycle_trust_sha256": _source_digest(
                 root, "config/kova-cosmo-lifecycle-trust.v1.json"
             ),
-            "runtime_evidence_sha256": runtime_evidence_sha256,
-            "lifecycle_id": lifecycle_id,
-            "lifecycle_grant_id": lifecycle_grant_id,
-            "lifecycle_ledger_commit_id": lifecycle_ledger_commit_id,
-            "lifecycle_phase_grant_sha256":
-                lifecycle_phase_grant_sha256,
-            "training_grant_context_sha256": grant["context_sha256"],
-            "training_grant_azure_resource_id": grant["azure_resource_id"],
+            "runtime_evidence_sha256": grant["runtime_evidence_sha256"],
+            "lifecycle_id": grant["lifecycle_id"],
+            "lifecycle_grant_id": grant["grant_id"],
+            "lifecycle_ledger_sequence": grant["ledger_sequence"],
+            "lifecycle_ledger_commit_id": grant["ledger_commit_id"],
+            "lifecycle_phase_grant_context_sha256": grant["context_sha256"],
+            "lifecycle_phase_grant_sha256": grant["phase_grant_sha256"],
+            "azure_instance": grant["azure_instance"],
             "evaluation_plan_sha256": evaluation_plan_sha256,
             "software_lock_sha256": _source_digest(
                 root, "requirements/kova-cosmo-sft-py312-linux.lock"
@@ -350,33 +471,12 @@ def expected_receipt(output: Path, source_commit: str, *,
 
 
 def write_receipt(output: Path, source_commit: str, *,
-                  runtime_evidence_sha256: str,
-                  lifecycle_phase_grant_sha256: str,
-                  lifecycle_id: str,
-                  lifecycle_grant_id: str,
-                  lifecycle_ledger_commit_id: str,
-                  signed_training_grant_envelope: dict,
                   global_steps: int,
                   training_loss: float, root: Path = ROOT) -> dict:
     """Create a new receipt without overwriting any existing evidence."""
-    grant_created = False
-    grant_path = output / TRAINING_GRANT_NAME
     try:
-        need(type(signed_training_grant_envelope) is dict)
-        need(not grant_path.exists() and not grant_path.is_symlink())
-        grant_raw = serialize(signed_training_grant_envelope)
-        need(0 < len(grant_raw) <= MAX_GRANT_BYTES)
-        with grant_path.open("xb") as stream:
-            stream.write(grant_raw)
-        grant_created = True
         value = expected_receipt(
             output, source_commit,
-            runtime_evidence_sha256=runtime_evidence_sha256,
-            lifecycle_phase_grant_sha256=
-                lifecycle_phase_grant_sha256,
-            lifecycle_id=lifecycle_id,
-            lifecycle_grant_id=lifecycle_grant_id,
-            lifecycle_ledger_commit_id=lifecycle_ledger_commit_id,
             global_steps=global_steps,
             training_loss=training_loss,
             root=root,
@@ -387,11 +487,6 @@ def write_receipt(output: Path, source_commit: str, *,
             stream.write(raw)
         return verify_receipt(output, expected_source_commit=source_commit, root=root)
     except ReceiptError:
-        if grant_created:
-            try:
-                grant_path.unlink(missing_ok=True)
-            except OSError:
-                pass
         raise
     except OSError:
         raise ReceiptError("kova cosmo adapter receipt rejected") from None
@@ -413,15 +508,6 @@ def verify_receipt(output: Path, *, expected_source_commit: str | None = None,
         need(type(lineage) is dict and type(training) is dict)
         expected = expected_receipt(
             output, source_commit,
-            runtime_evidence_sha256=lineage.get("runtime_evidence_sha256"),
-            lifecycle_phase_grant_sha256=lineage.get(
-                "lifecycle_phase_grant_sha256"
-            ),
-            lifecycle_id=lineage.get("lifecycle_id"),
-            lifecycle_grant_id=lineage.get("lifecycle_grant_id"),
-            lifecycle_ledger_commit_id=lineage.get(
-                "lifecycle_ledger_commit_id"
-            ),
             global_steps=training.get("global_steps"),
             training_loss=training.get("training_loss"),
             root=root,
@@ -436,12 +522,6 @@ def verify_receipt(output: Path, *, expected_source_commit: str | None = None,
             "lifecycle_phase_grant_sha256": expected["lineage"][
                 "lifecycle_phase_grant_sha256"
             ],
-            "training_grant_context_sha256": expected["lineage"][
-                "training_grant_context_sha256"
-            ],
-            "training_grant_azure_resource_id": expected["lineage"][
-                "training_grant_azure_resource_id"
-            ],
             "lifecycle_id": expected["lineage"]["lifecycle_id"],
             "lifecycle_grant_id": expected["lineage"][
                 "lifecycle_grant_id"
@@ -449,6 +529,10 @@ def verify_receipt(output: Path, *, expected_source_commit: str | None = None,
             "lifecycle_ledger_commit_id": expected["lineage"][
                 "lifecycle_ledger_commit_id"
             ],
+            "lifecycle_ledger_sequence": expected["lineage"][
+                "lifecycle_ledger_sequence"
+            ],
+            "azure_instance": expected["lineage"]["azure_instance"],
             "artifact_files": len(expected["artifacts"]),
             "actual_model_outputs_evaluated": False,
             "deployment_authorized": False,
@@ -480,6 +564,7 @@ def dry_run(root: Path = ROOT) -> dict:
             root, "requirements/kova-cosmo-sft-py312-linux.lock"
         ),
         "adapter_receipt_created": False,
+        "authority_signed_training_grant_required": True,
         "actual_model_outputs_evaluated": False,
         "deployment_authorized": False,
         "phase_b_ready": False,

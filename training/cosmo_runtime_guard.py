@@ -18,6 +18,8 @@ import sys
 from release.model_revisions import MODEL_SOURCE_REFERENCES
 from training.cosmo_lifecycle_authority import (
     AuthorityError,
+    PHASE_RESERVED_SECONDS,
+    PHASES,
     PILOT_ID,
     load_trust_policy as load_lifecycle_trust_policy,
     read_signed_record,
@@ -147,6 +149,8 @@ def load_policy(root: Path = ROOT) -> dict:
 
         need(value["required_controls"] == {
             "remote_append_only_paid_phase_ledger": True,
+            "exact_azure_vm_identity_grant_binding": True,
+            "terminal_ledger_closure_after_cleanup": True,
             "control_plane_deallocation_deadline": True,
             "independent_watchdog": True,
             "watchdog_permission_test": True,
@@ -196,12 +200,12 @@ def load_evidence_record(path: Path, *,
         )
         need(type(value) is dict and list(value) == [
             "schema_version", "kind", "issuer", "pilot_id", "lifecycle_id",
-            "ledger_sequence", "final_grant_ledger_sequence",
-            "ledger_terminal", "further_grants_allowed", "ledger_status",
-            "provider_observation_id",
+            "ledger_sequence", "provider_observation_id",
             "azure_query_source", "captured_at_utc", "subscription_id",
             "resource_group", "cleanup_scope_resource_group_id",
-            "resource_group_exclusive_to_pilot", "vm_name", "region", "vm_size",
+            "resource_group_exclusive_to_pilot", "vm_name",
+            "vm_resource_id", "vm_id",
+            "vm_system_assigned_identity_principal_id", "region", "vm_size",
             "family_quota_limit_vcpus", "capacity_confirmed",
             "compute_usd_per_hour", "ancillary_cost_bound_usd",
             "preflight_power_state", "public_ip_attached",
@@ -231,6 +235,14 @@ def load_evidence_record(path: Path, *,
              f'/subscriptions/{value["subscription_id"]}/resourceGroups/'
              f'{value["resource_group"]}')
         need(value["resource_group_exclusive_to_pilot"] is True)
+        need(value["vm_resource_id"] ==
+             f'/subscriptions/{value["subscription_id"]}/resourceGroups/'
+             f'{value["resource_group"]}/providers/Microsoft.Compute/'
+             f'virtualMachines/{value["vm_name"]}')
+        need(AZURE_UUID.fullmatch(value["vm_id"]) is not None)
+        need(AZURE_UUID.fullmatch(
+            value["vm_system_assigned_identity_principal_id"]
+        ) is not None)
         need(value["region"] == "eastus")
         need(value["vm_size"] == "Standard_NC4as_T4_v3")
         need(type(value["family_quota_limit_vcpus"]) is int)
@@ -318,11 +330,13 @@ def require_ready(*, root: Path = ROOT, evidence_path: Path | None = None,
     report["runtime_evidence_sha256"] = evidence_sha256
     report["lifecycle_id"] = evidence["lifecycle_id"]
     report["preflight_ledger_sequence"] = evidence["ledger_sequence"]
-    report["azure_vm_resource_id"] = (
-        f'/subscriptions/{evidence["subscription_id"]}/resourceGroups/'
-        f'{evidence["resource_group"]}/providers/Microsoft.Compute/'
-        f'virtualMachines/{evidence["vm_name"]}'
-    )
+    report["azure_instance"] = {
+        "resource_id": evidence["vm_resource_id"],
+        "vm_id": evidence["vm_id"],
+        "system_assigned_identity_principal_id": evidence[
+            "vm_system_assigned_identity_principal_id"
+        ],
+    }
     return report
 
 
@@ -337,11 +351,17 @@ def verify_post_run(preflight: dict, post_run_path: Path,
         )
         need(type(value) is dict and list(value) == [
             "schema_version", "kind", "issuer", "pilot_id", "lifecycle_id",
-            "ledger_sequence", "provider_observation_id",
+            "ledger_sequence", "ledger_commit_id", "ledger_append_only",
+            "ledger_status", "last_paid_grant_ledger_sequence",
+            "future_grants_allowed", "phase_grants_committed",
+            "training_runs_consumed", "aggregate_reserved_seconds",
+            "aggregate_reserved_cost_usd", "ledger_closed_at_utc",
+            "provider_observation_id",
             "azure_query_source", "observed_at_utc",
             "allocation_started_at_utc",
             "deallocated_at_utc", "subscription_id",
-            "resource_group", "vm_name", "deallocation_deadline_utc",
+            "resource_group", "vm_name", "vm_resource_id", "vm_id",
+            "deallocation_deadline_utc",
             "power_state", "public_ip_attached", "allocated_seconds",
             "compute_cost_upper_bound_usd",
             "ancillary_cost_observed_or_bound_usd",
@@ -352,13 +372,28 @@ def verify_post_run(preflight: dict, post_run_path: Path,
         need(value["schema_version"] == 1)
         need(value["pilot_id"] == preflight["pilot_id"] == PILOT_ID)
         need(value["lifecycle_id"] == preflight["lifecycle_id"])
-        need(type(value["final_grant_ledger_sequence"]) is int and
-             value["final_grant_ledger_sequence"] > preflight["ledger_sequence"])
         need(type(value["ledger_sequence"]) is int and
-             value["ledger_sequence"] > value["final_grant_ledger_sequence"])
-        need(value["ledger_terminal"] is True)
-        need(value["further_grants_allowed"] is False)
-        need(value["ledger_status"] == "terminal_closed_no_further_grants")
+             value["ledger_sequence"] > preflight["ledger_sequence"])
+        need(nonempty(value["ledger_commit_id"]))
+        need(value["ledger_append_only"] is True)
+        need(value["ledger_status"] ==
+             "terminal_cleanup_committed_no_future_grants")
+        need(type(value["last_paid_grant_ledger_sequence"]) is int and
+             preflight["ledger_sequence"] <
+             value["last_paid_grant_ledger_sequence"] < 2**63)
+        need(value["ledger_sequence"] ==
+             value["last_paid_grant_ledger_sequence"] + 1)
+        need(value["future_grants_allowed"] is False)
+        counts = value["phase_grants_committed"]
+        need(type(counts) is dict and list(counts) == list(PHASES))
+        need(counts == {phase: 1 for phase in PHASES})
+        need(value["training_runs_consumed"] == 1)
+        need(value["aggregate_reserved_seconds"] == sum(
+            PHASE_RESERVED_SECONDS.values()
+        ))
+        need(money(value["aggregate_reserved_cost_usd"]) ==
+             Decimal("0.5260"))
+        ledger_closed = timestamp(value["ledger_closed_at_utc"])
         need(nonempty(value["provider_observation_id"]))
         need(value["provider_observation_id"] !=
              preflight["provider_observation_id"])
@@ -371,6 +406,8 @@ def verify_post_run(preflight: dict, post_run_path: Path,
         need(value["subscription_id"] == preflight["subscription_id"])
         need(value["resource_group"] == preflight["resource_group"])
         need(value["vm_name"] == preflight["vm_name"])
+        need(value["vm_resource_id"] == preflight["vm_resource_id"])
+        need(value["vm_id"] == preflight["vm_id"])
         need(value["deallocation_deadline_utc"] ==
              preflight["control_plane_deallocation_deadline_utc"])
         need(timestamp(preflight["captured_at_utc"]) <= started)
@@ -437,6 +474,7 @@ def verify_post_run(preflight: dict, post_run_path: Path,
              preflight["cleanup_scope_resource_group_id"])
         cleanup_completed = timestamp(cleanup_execution["completed_at_utc"])
         need(deallocated <= cleanup_completed <= observed)
+        need(cleanup_completed <= ledger_closed <= observed)
         need(nonempty(cleanup_execution["evidence"], 2048))
 
         inventory = value["scoped_inventory"]
@@ -451,6 +489,7 @@ def verify_post_run(preflight: dict, post_run_path: Path,
         need(inventory["query_succeeded"] is True)
         inventory_time = timestamp(inventory["queried_at_utc"])
         need(cleanup_completed <= inventory_time <= observed)
+        need(ledger_closed <= inventory_time)
         need(inventory["resource_group_state"] == "deleted")
         need(inventory["remaining_resource_ids"] == [])
         need(nonempty(inventory["evidence"], 2048))
@@ -469,6 +508,9 @@ def verify_post_run(preflight: dict, post_run_path: Path,
                 "all_in_cost_upper_bound_usd"
             ],
             "within_approved_budget": True,
+            "terminal_ledger_verified": True,
+            "terminal_ledger_sequence": value["ledger_sequence"],
+            "future_grants_allowed": False,
             "automatic_deallocation_verified": True,
             "automatic_cleanup_verified": True,
             "deallocation_execution_id": deallocation_execution[
@@ -480,10 +522,6 @@ def verify_post_run(preflight: dict, post_run_path: Path,
                 "scope_resource_group_id"
             ],
             "resource_group_deleted": True,
-            "final_grant_ledger_sequence": value[
-                "final_grant_ledger_sequence"
-            ],
-            "terminal_ledger_verified": True,
             "post_run_evidence_sha256": evidence_sha256,
             "residual_resource_count": len(resources),
             "billable_residual_resource_count": sum(

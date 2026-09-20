@@ -106,6 +106,12 @@ class CosmoRuntimeProbeTests(unittest.TestCase):
             "deadline_utc": "2026-09-19T19:10:00Z",
             "lifecycle_id": "lifecycle-001",
             "preflight_ledger_sequence": 1,
+            "azure_instance": {
+                "resource_id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/kova-cosmo-pilot/providers/Microsoft.Compute/virtualMachines/kova-cosmo-t4",
+                "vm_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                "system_assigned_identity_principal_id":
+                    "99999999-8888-7777-6666-555555555555",
+            },
         }
         with patch.object(probe, "load_recipe", return_value=value), \
              patch.dict(os.environ, {
@@ -127,6 +133,10 @@ class CosmoRuntimeProbeTests(unittest.TestCase):
         self.assertEqual(acquire.call_args.kwargs["phase"], "runtime_probe")
         self.assertEqual(
             acquire.call_args.kwargs["runtime_evidence_sha256"], "e" * 64
+        )
+        self.assertEqual(
+            acquire.call_args.kwargs["azure_instance"],
+            runtime["azure_instance"],
         )
 
     def test_real_qwen_target_inventory_requires_every_target_per_layer(self):
