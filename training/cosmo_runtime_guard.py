@@ -373,7 +373,7 @@ def verify_post_run(preflight: dict, post_run_path: Path,
         need(value["pilot_id"] == preflight["pilot_id"] == PILOT_ID)
         need(value["lifecycle_id"] == preflight["lifecycle_id"])
         need(type(value["ledger_sequence"]) is int and
-             value["ledger_sequence"] > preflight["ledger_sequence"])
+             preflight["ledger_sequence"] < value["ledger_sequence"] < 2**63)
         need(nonempty(value["ledger_commit_id"]))
         need(value["ledger_append_only"] is True)
         need(value["ledger_status"] ==
@@ -386,9 +386,12 @@ def verify_post_run(preflight: dict, post_run_path: Path,
         need(value["future_grants_allowed"] is False)
         counts = value["phase_grants_committed"]
         need(type(counts) is dict and list(counts) == list(PHASES))
+        need(all(type(counts[phase]) is int for phase in PHASES))
         need(counts == {phase: 1 for phase in PHASES})
-        need(value["training_runs_consumed"] == 1)
-        need(value["aggregate_reserved_seconds"] == sum(
+        need(type(value["training_runs_consumed"]) is int and
+             value["training_runs_consumed"] == 1)
+        need(type(value["aggregate_reserved_seconds"]) is int and
+             value["aggregate_reserved_seconds"] == sum(
             PHASE_RESERVED_SECONDS.values()
         ))
         need(money(value["aggregate_reserved_cost_usd"]) ==

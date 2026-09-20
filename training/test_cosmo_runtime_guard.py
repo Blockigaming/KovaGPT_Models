@@ -331,6 +331,10 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
             lambda value: value["phase_grants_committed"].update(
                 evaluation=0
             ),
+            lambda value: value["phase_grants_committed"].update(
+                evaluation=True
+            ),
+            lambda value: value.update(training_runs_consumed=True),
             lambda value: value.update(ledger_closed_at_utc=
                                        "2026-09-19T19:31:00Z"),
         ]

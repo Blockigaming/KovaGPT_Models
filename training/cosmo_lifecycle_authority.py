@@ -514,7 +514,8 @@ def acquire_phase_grant(
         need(aggregate_seconds == sum(
             PHASE_RESERVED_SECONDS[item] * counts[item] for item in PHASES
         ))
-        need(payload["training_runs_consumed"] == counts["training"])
+        need(type(payload["training_runs_consumed"]) is int and
+             payload["training_runs_consumed"] == counts["training"])
         need(payload["deployment_authorized"] is False)
         return {
             "status": "paid_phase_reserved_in_append_only_ledger",

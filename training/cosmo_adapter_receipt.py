@@ -182,7 +182,8 @@ def _verify_training_grant(
         need(all(type(item) is int and 0 <= item <= 1
                  for item in counts.values()))
         need(counts["training"] == 1)
-        need(payload["training_runs_consumed"] == 1)
+        need(type(payload["training_runs_consumed"]) is int and
+             payload["training_runs_consumed"] == 1)
         aggregate_seconds = payload["aggregate_reserved_seconds"]
         need(type(aggregate_seconds) is int and
              aggregate_seconds == sum(
