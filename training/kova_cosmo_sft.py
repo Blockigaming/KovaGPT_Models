@@ -109,7 +109,7 @@ def load_recipe(root: Path = ROOT) -> dict:
         })
         need(value["account_gates"] == {
             "microsoft_quota_provider_registration_authorized": True,
-            "eastus_ncast4_quota_verified": False,
+            "eastus_ncast4_quota_verified": True,
             "runtime_compatibility_verified": False,
             "approved_budget_usd": 2.0,
         })
