@@ -273,6 +273,10 @@ def execute() -> dict:
         "source_commit": receipt["source_commit"],
         "adapter_sha256": receipt["adapter_sha256"],
         "adapter_receipt_sha256": receipt["receipt_sha256"],
+        "evaluation_grant": {
+            "context": phase_grant["phase_grant_context"],
+            "grant_envelope": phase_grant["phase_grant_envelope"],
+        },
         "runner_attestation": None,
         "attempts": [],
     }

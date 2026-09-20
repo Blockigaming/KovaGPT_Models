@@ -139,7 +139,6 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
             return receipt.write_receipt(
                 output, self.source_commit,
                 global_steps=18,
-                training_loss=1.25,
             )
 
     def expected_receipt(self, output: Path):
@@ -147,7 +146,6 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
             return receipt.expected_receipt(
                 output, self.source_commit,
                 global_steps=18,
-                training_loss=1.25,
             )
 
     def verify_receipt(self, output: Path, **arguments):
@@ -191,16 +189,42 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
         for layer in range(28):
             for target in EXPECTED_TARGETS:
                 for side in ("A", "B"):
-                    name = (f"base_model.model.model.layers.{layer}.{target}."
+                    block = ("self_attn" if target in
+                             ("q_proj", "k_proj", "v_proj", "o_proj") else
+                             "mlp")
+                    name = (f"base_model.model.model.layers.{layer}.{block}."
+                            f"{target}."
                             f"lora_{side}.weight")
+                    rank = 16
+                    hidden = 1024
+                    intermediate = 3072
+                    input_width = {
+                        "q_proj": hidden, "k_proj": hidden,
+                        "v_proj": hidden, "o_proj": hidden,
+                        "gate_proj": hidden, "up_proj": hidden,
+                        "down_proj": intermediate,
+                    }[target]
+                    output_width = {
+                        "q_proj": hidden, "k_proj": hidden // 2,
+                        "v_proj": hidden // 2, "o_proj": hidden,
+                        "gate_proj": intermediate, "up_proj": intermediate,
+                        "down_proj": hidden,
+                    }[target]
+                    shape = ([rank, input_width] if side == "A" else
+                             [output_width, rank])
+                    size = shape[0] * shape[1] * 2
                     header[name] = {
-                        "dtype": "F16", "shape": [1, 1],
-                        "data_offsets": [offset, offset + 2],
+                        "dtype": "F16", "shape": shape,
+                        "data_offsets": [offset, offset + size],
                     }
-                    offset += 2
+                    offset += size
         if omit_last:
             header.popitem()
-            offset -= 2
+            removed = next(reversed(header.values()), None)
+            # popitem above removed the final tensor; trim its encoded bytes.
+            if removed is not None:
+                offset = max(item["data_offsets"][1]
+                             for item in header.values())
         encoded = json.dumps(header, separators=(",", ":")).encode("utf-8")
         path.write_bytes(struct.pack("<Q", len(encoded)) + encoded + bytes(offset))
 
@@ -239,6 +263,19 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
             raw = bytearray(weights.read_bytes())
             raw[-1] ^= 1
             weights.write_bytes(raw)
+            with self.assertRaises(receipt.ReceiptError):
+                self.verify_receipt(output)
+
+    def test_receipt_uses_deterministic_steps_and_omits_unauthenticated_loss(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = self.make_output(Path(directory))
+            self.write_receipt(output)
+            path = output / receipt.RECEIPT_NAME
+            value = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(value["training"]["global_steps"], 18)
+            self.assertNotIn("training_loss", value["training"])
+            value["training"]["global_steps"] = 19
+            path.write_text(json.dumps(value), encoding="utf-8")
             with self.assertRaises(receipt.ReceiptError):
                 self.verify_receipt(output)
 
@@ -345,6 +382,28 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
             )
             with self.assertRaises(receipt.ReceiptError):
                 self.expected_receipt(output)
+
+    def test_duplicate_side_or_wrong_lora_shape_is_rejected(self):
+        for variant in ("duplicate_side", "wrong_shape"):
+            with self.subTest(variant=variant), \
+                 tempfile.TemporaryDirectory() as directory:
+                output = self.make_output(Path(directory))
+                path = output / "adapter/adapter_model.safetensors"
+                raw = path.read_bytes()
+                size = struct.unpack("<Q", raw[:8])[0]
+                header = json.loads(raw[8:8 + size])
+                names = list(header)
+                if variant == "duplicate_side":
+                    old = next(name for name in names if ".lora_B." in name)
+                    new = old.replace(".lora_B.", ".lora_A_duplicate.")
+                    header[new] = header.pop(old)
+                else:
+                    header[names[0]]["shape"][0] += 1
+                encoded = json.dumps(header, separators=(",", ":")).encode()
+                path.write_bytes(struct.pack("<Q", len(encoded)) + encoded +
+                                 raw[8 + size:])
+                with self.assertRaises(receipt.ReceiptError):
+                    self.expected_receipt(output)
 
     def test_symlinked_artifact_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

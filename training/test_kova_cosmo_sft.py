@@ -14,6 +14,13 @@ from training import identity_pilot as pilot
 
 
 class KovaCosmoSftTests(unittest.TestCase):
+    def test_executable_recipe_requires_completed_review_ledger(self):
+        with patch.object(
+            recipe, "validate_identity_review",
+            return_value={"human_review_complete": False},
+        ), self.assertRaises(recipe.RecipeError):
+            recipe.load_recipe()
+
     def test_installed_versions_must_match_every_recipe_pin(self):
         with patch.object(recipe, "version", side_effect=recipe.EXPECTED_SOFTWARE.__getitem__):
             recipe.verify_installed_software()
@@ -288,6 +295,35 @@ class KovaCosmoSftTests(unittest.TestCase):
             persist.call_args.kwargs["grant_envelope"],
             grant["phase_grant_envelope"],
         )
+
+    def test_snapshot_nested_output_is_rejected_before_grant(self):
+        value = deepcopy(recipe.load_recipe())
+        value["account_gates"]["runtime_compatibility_verified"] = True
+        runtime = {
+            "runtime_evidence_sha256": "e" * 64,
+            "deadline_utc": "2026-09-19T19:40:00Z",
+            "lifecycle_id": "lifecycle-001",
+            "preflight_ledger_sequence": 1,
+            "azure_instance": {},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "snapshot"
+            snapshot.mkdir()
+            nested = snapshot / "run"
+            with patch.object(recipe, "load_recipe", return_value=value), \
+                 patch.dict("os.environ", {
+                     "KOVA_CONFIRM_PAID_TRAINING": "YES",
+                     "KOVA_COSMO_VERIFIED_SNAPSHOT": str(snapshot),
+                 }, clear=True), \
+                 patch.object(recipe, "require_runtime_ready", return_value=runtime), \
+                 patch.object(recipe, "verify_installed_software"), \
+                 patch.object(recipe, "verify_snapshot", return_value={}), \
+                 patch.object(recipe, "resolve_output_directory",
+                              return_value=(nested, "a" * 40)), \
+                 patch.object(recipe, "reserve_training_phase") as reserve, \
+                 self.assertRaises(recipe.RecipeError):
+                recipe.execute()
+            reserve.assert_not_called()
 
     def test_operator_environment_variable_cannot_override_source_guards(self):
         with patch.dict("os.environ", {"KOVA_CONFIRM_PAID_TRAINING": "YES"}):

@@ -23,6 +23,7 @@ from training.cosmo_artifacts import ArtifactError, verify_snapshot
 from training.cosmo_hardware import HardwareError, verify_nvidia_t4
 from training.identity_pilot import load as load_identity_pilot
 from training.identity_pilot import format_messages
+from training.identity_pilot_review import validate as validate_identity_review
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "config/kova-cosmo-sft.v1.json"
@@ -124,6 +125,8 @@ def load_recipe(root: Path = ROOT) -> dict:
         })
         need(value["phase_b_ready"] is False)
         load_identity_pilot(root)
+        review = validate_identity_review(root)
+        need(review["human_review_complete"] is True)
         return value
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         raise RecipeError("kova cosmo sft recipe rejected") from None
@@ -264,6 +267,11 @@ def execute() -> dict:
     except ArtifactError:
         raise RecipeError("kova cosmo sft recipe rejected") from None
     output, source_commit = resolve_output_directory()
+    # A paid grant is one-shot. Reject layouts that would mutate the verified
+    # snapshot or make the resulting adapter unevaluable before consuming it.
+    need(output != resolved_snapshot)
+    need(resolved_snapshot not in output.parents and
+         output not in resolved_snapshot.parents)
     verify_source_checkout(source_commit)
     phase_grant = reserve_training_phase(
         phase="training",
@@ -378,7 +386,6 @@ def execute() -> dict:
         return write_receipt(
             output, source_commit,
             global_steps=training_result.global_step,
-            training_loss=training_result.training_loss,
         )
     except ReceiptError:
         raise RecipeError("kova cosmo sft recipe rejected") from None

@@ -120,8 +120,8 @@ def measurement_payload(bundle: dict) -> dict:
     need(type(bundle) is dict)
     expected = [
         "schema_version", "kind", "plan_sha256", "source_commit",
-        "adapter_sha256", "adapter_receipt_sha256", "runner_attestation",
-        "attempts",
+        "adapter_sha256", "adapter_receipt_sha256", "evaluation_grant",
+        "runner_attestation", "attempts",
     ]
     need(list(bundle) == expected)
     attempts = bundle["attempts"]
@@ -139,6 +139,7 @@ def measurement_payload(bundle: dict) -> dict:
         "source_commit": bundle["source_commit"],
         "adapter_sha256": bundle["adapter_sha256"],
         "adapter_receipt_sha256": bundle["adapter_receipt_sha256"],
+        "evaluation_grant": bundle["evaluation_grant"],
         "attempts": protected_attempts,
     }
 

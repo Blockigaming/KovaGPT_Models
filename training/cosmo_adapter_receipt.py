@@ -9,7 +9,6 @@ import argparse
 from datetime import timedelta
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import re
@@ -30,6 +29,8 @@ MAX_CONFIG_BYTES = 1024 * 1024
 MAX_README_BYTES = 4 * 1024 * 1024
 MAX_ADAPTER_BYTES = 512 * 1024 * 1024
 MAX_SAFETENSORS_HEADER_BYTES = 16 * 1024 * 1024
+EXPECTED_GLOBAL_STEPS = 18
+EXPECTED_HIDDEN_SIZE = 1024
 ALLOWED_ARTIFACTS = {
     "README.md": MAX_README_BYTES,
     "adapter_config.json": MAX_CONFIG_BYTES,
@@ -340,19 +341,39 @@ def validate_safetensors(path: Path, recipe: dict,
     need(len(tensors) == expected_count)
     intervals = []
     item_bytes = {"F16": 2, "BF16": 2, "F32": 4}
-    target_counts = {target: 0 for target in recipe["lora"]["target_modules"]}
+    rank = recipe["lora"]["r"]
+    intermediate = 3072
+    output_width = {
+        "q_proj": EXPECTED_HIDDEN_SIZE,
+        "k_proj": EXPECTED_HIDDEN_SIZE // 2,
+        "v_proj": EXPECTED_HIDDEN_SIZE // 2,
+        "o_proj": EXPECTED_HIDDEN_SIZE,
+        "gate_proj": intermediate,
+        "up_proj": intermediate,
+        "down_proj": EXPECTED_HIDDEN_SIZE,
+    }
+    input_width = {
+        "q_proj": EXPECTED_HIDDEN_SIZE, "k_proj": EXPECTED_HIDDEN_SIZE,
+        "v_proj": EXPECTED_HIDDEN_SIZE, "o_proj": EXPECTED_HIDDEN_SIZE,
+        "gate_proj": EXPECTED_HIDDEN_SIZE, "up_proj": EXPECTED_HIDDEN_SIZE,
+        "down_proj": intermediate,
+    }
+    expected_shapes = {}
+    for layer in range(expected_layers):
+        for target in recipe["lora"]["target_modules"]:
+            block = ("self_attn" if target in
+                     ("q_proj", "k_proj", "v_proj", "o_proj") else "mlp")
+            prefix = (f"base_model.model.model.layers.{layer}.{block}."
+                      f"{target}")
+            expected_shapes[f"{prefix}.lora_A.weight"] = [rank, input_width[target]]
+            expected_shapes[f"{prefix}.lora_B.weight"] = [output_width[target], rank]
+    need(set(tensors) == set(expected_shapes))
     for name, metadata in tensors.items():
         need(type(name) is str and type(metadata) is dict)
         need(set(metadata) == {"dtype", "shape", "data_offsets"})
-        matched = [target for target in target_counts
-                   if f".{target}.lora_A.weight" in name or
-                   f".{target}.lora_B.weight" in name]
-        need(len(matched) == 1)
-        target_counts[matched[0]] += 1
         need(metadata.get("dtype") in item_bytes)
         shape = metadata.get("shape")
-        need(type(shape) is list and len(shape) == 2)
-        need(all(type(item) is int and item > 0 for item in shape))
+        need(shape == expected_shapes[name])
         offsets = metadata.get("data_offsets")
         need(type(offsets) is list and len(offsets) == 2)
         need(all(type(item) is int and item >= 0 for item in offsets))
@@ -360,7 +381,6 @@ def validate_safetensors(path: Path, recipe: dict,
         elements = shape[0] * shape[1]
         need(offsets[1] - offsets[0] == elements * item_bytes[metadata["dtype"]])
         intervals.append(tuple(offsets))
-    need(all(count == expected_layers * 2 for count in target_counts.values()))
     ordered = sorted(intervals)
     need(ordered[0][0] == 0)
     need(all(first[1] == second[0] for first, second in zip(ordered, ordered[1:])))
@@ -408,14 +428,10 @@ def _artifact_inventory(output: Path, recipe: dict) -> list[dict]:
 
 
 def expected_receipt(output: Path, source_commit: str, *,
-                     global_steps: int,
-                     training_loss: float, root: Path = ROOT) -> dict:
+                     global_steps: int, root: Path = ROOT) -> dict:
     need(type(source_commit) is str and HEX40.fullmatch(source_commit) is not None)
     need(type(global_steps) is int and not isinstance(global_steps, bool) and
-         0 < global_steps < 2**31)
-    need(type(training_loss) in (int, float) and
-         not isinstance(training_loss, bool) and
-         math.isfinite(training_loss) and training_loss >= 0)
+         global_steps == EXPECTED_GLOBAL_STEPS)
     recipe, identity, evaluation_plan_sha256 = _load_sources(root)
     grant = _verify_training_grant(
         output, expected_source_commit=source_commit, root=root
@@ -463,7 +479,6 @@ def expected_receipt(output: Path, source_commit: str, *,
             "max_length": recipe["training"]["max_length"],
             "completion_only_loss": recipe["training"]["completion_only_loss"],
             "global_steps": global_steps,
-            "training_loss": training_loss,
         },
         "runtime": {
             "region": recipe["hardware"]["region"],
@@ -481,14 +496,12 @@ def expected_receipt(output: Path, source_commit: str, *,
 
 
 def write_receipt(output: Path, source_commit: str, *,
-                  global_steps: int,
-                  training_loss: float, root: Path = ROOT) -> dict:
+                  global_steps: int, root: Path = ROOT) -> dict:
     """Create a new receipt without overwriting any existing evidence."""
     try:
         value = expected_receipt(
             output, source_commit,
             global_steps=global_steps,
-            training_loss=training_loss,
             root=root,
         )
         raw = serialize(value)
@@ -519,7 +532,6 @@ def verify_receipt(output: Path, *, expected_source_commit: str | None = None,
         expected = expected_receipt(
             output, source_commit,
             global_steps=training.get("global_steps"),
-            training_loss=training.get("training_loss"),
             root=root,
         )
         pilot.same(value, expected)

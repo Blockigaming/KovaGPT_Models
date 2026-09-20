@@ -23,6 +23,7 @@ class CosmoGenerationAttestationTests(unittest.TestCase):
             "source_commit": "b" * 40,
             "adapter_sha256": "c" * 64,
             "adapter_receipt_sha256": "d" * 64,
+            "evaluation_grant": {"fixture": True},
             "runner_attestation": None,
             "attempts": [{
                 "id": "case-trained_adapter",

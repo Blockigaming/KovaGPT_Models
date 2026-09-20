@@ -10,6 +10,7 @@ import re
 import sys
 
 from training import identity_pilot as pilot
+from training import cosmo_lifecycle_authority as lifecycle
 from training.cosmo_adapter_receipt import ReceiptError, verify_receipt as verify_adapter_receipt
 from training.cosmo_generation_attestation import (
     AttestationError,
@@ -158,8 +159,8 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
     recipe = load_recipe(root)
     need(type(bundle) is dict and list(bundle) == [
         "schema_version", "kind", "plan_sha256", "source_commit",
-        "adapter_sha256", "adapter_receipt_sha256", "runner_attestation",
-        "attempts",
+        "adapter_sha256", "adapter_receipt_sha256", "evaluation_grant",
+        "runner_attestation", "attempts",
     ])
     need(bundle["schema_version"] == 1)
     need(bundle["kind"] in ("synthetic_fixture", "measured"))
@@ -186,13 +187,43 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
             attestation = verify_runner_attestation(
                 bundle, public_key_hex_value=trust["public_key_hex"],
             )
-        except (ReceiptError, AttestationError, EvaluationError):
+            evidence = bundle["evaluation_grant"]
+            need(type(evidence) is dict and list(evidence) == [
+                "context", "grant_envelope",
+            ])
+            context = evidence["context"]
+            need(type(context) is dict and list(context) == [
+                "operation", "base_model", "base_revision",
+                "adapter_receipt_sha256", "evaluation_output",
+                "expected_attempts",
+            ])
+            need(context["operation"] == "three_way_guarded_generation")
+            need(context["base_model"] == recipe["base_model"])
+            need(context["base_revision"] == recipe["base_revision"])
+            need(context["adapter_receipt_sha256"] ==
+                 bundle["adapter_receipt_sha256"])
+            need(type(context["evaluation_output"]) is str and
+                 Path(context["evaluation_output"]).is_absolute())
+            need(context["expected_attempts"] == 36)
+            payload, grant_sha256 = lifecycle.verify_envelope(
+                evidence["grant_envelope"],
+                expected_kind="kova_cosmo_paid_phase_grant", root=root,
+            )
+            need(payload["phase"] == "evaluation")
+            need(payload["source_commit"] == bundle["source_commit"])
+            need(payload["context_sha256"] == hashlib.sha256(
+                lifecycle.canonical(context)
+            ).hexdigest())
+        except (ReceiptError, AttestationError, EvaluationError, ValueError,
+                TypeError, KeyError):
             raise EvaluationError("cosmo evaluation evidence rejected") from None
         need(receipt["adapter_sha256"] == bundle["adapter_sha256"])
         need(receipt["receipt_sha256"] == bundle["adapter_receipt_sha256"])
+        need(payload["lifecycle_id"] == receipt["lifecycle_id"])
     else:
         need(adapter_output is None)
         need(bundle["runner_attestation"] is None)
+        need(bundle["evaluation_grant"] is None)
         attestation = None
 
     attempts = {}
@@ -234,6 +265,13 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
             need(type(runtime[field]) is str and 0 < len(runtime[field]) <= 256)
         if bundle["kind"] == "measured":
             need(runtime["lifecycle_id"] == receipt["lifecycle_id"])
+            need(runtime["lifecycle_id"] == payload["lifecycle_id"])
+            need(runtime["lifecycle_grant_id"] == payload["grant_id"])
+            need(runtime["lifecycle_ledger_commit_id"] ==
+                 payload["ledger_commit_id"])
+            need(runtime["lifecycle_phase_grant_sha256"] == grant_sha256)
+            need(runtime["runtime_evidence_sha256"] ==
+                 payload["runtime_evidence_sha256"])
         for field in ("hardware", "precision", "quantization"):
             need(type(runtime[field]) is str and 0 < len(runtime[field]) <= 128)
         expected_adapter = bundle["adapter_sha256"] if row["variant"] == "trained_adapter" else None

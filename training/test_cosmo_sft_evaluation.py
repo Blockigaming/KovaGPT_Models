@@ -40,6 +40,15 @@ class CosmoSftEvaluationTests(unittest.TestCase):
         )
         trust_patch.start()
         self.addCleanup(trust_patch.stop)
+        lifecycle_patch = patch.object(
+            evaluation.lifecycle, "verify_envelope",
+            side_effect=self.verify_evaluation_grant,
+        )
+        lifecycle_patch.start()
+        self.addCleanup(lifecycle_patch.stop)
+
+    def verify_evaluation_grant(self, envelope, **_arguments):
+        return envelope["payload"], "f" * 64
 
     def bundle(self, kind="synthetic_fixture"):
         return {
@@ -49,6 +58,7 @@ class CosmoSftEvaluationTests(unittest.TestCase):
             "source_commit": "b" * 40,
             "adapter_sha256": self.adapter_sha256,
             "adapter_receipt_sha256": self.adapter_receipt_sha256,
+            "evaluation_grant": None,
             "runner_attestation": None,
             "attempts": [],
         }
@@ -95,6 +105,28 @@ class CosmoSftEvaluationTests(unittest.TestCase):
             for variant in evaluation.VARIANTS
         ]
         if kind == "measured":
+            context = {
+                "operation": "three_way_guarded_generation",
+                "base_model": self.plan["base_model"],
+                "base_revision": self.plan["base_revision"],
+                "adapter_receipt_sha256": self.adapter_receipt_sha256,
+                "evaluation_output": "/external/evaluation-run",
+                "expected_attempts": 36,
+            }
+            value["evaluation_grant"] = {
+                "context": context,
+                "grant_envelope": {"payload": {
+                    "phase": "evaluation",
+                    "source_commit": value["source_commit"],
+                    "context_sha256": evaluation.hashlib.sha256(
+                        evaluation.lifecycle.canonical(context)
+                    ).hexdigest(),
+                    "lifecycle_id": "lifecycle-001",
+                    "grant_id": "grant-evaluation-001",
+                    "ledger_commit_id": "ledger-commit-003",
+                    "runtime_evidence_sha256": "e" * 64,
+                }},
+            }
             for row in value["attempts"]:
                 row["scores"] = {
                     dimension: "pending"
@@ -205,6 +237,28 @@ class CosmoSftEvaluationTests(unittest.TestCase):
             verified[field] = wrong
             with self.subTest(field=field), patch.object(
                 evaluation, "verify_adapter_receipt", return_value=verified
+            ), self.assertRaises(evaluation.EvaluationError):
+                evaluation.analyze(
+                    bundle, adapter_output=Path("/external/adapter-run"),
+                )
+
+    def test_measured_bundle_rejects_wrong_or_tampered_evaluation_grant(self):
+        receipt = {
+            "adapter_sha256": self.adapter_sha256,
+            "receipt_sha256": self.adapter_receipt_sha256,
+            "lifecycle_id": "lifecycle-001",
+        }
+        for mutation in ("phase", "context", "grant_id"):
+            bundle = self.complete_bundle("measured")
+            payload = bundle["evaluation_grant"]["grant_envelope"]["payload"]
+            if mutation == "phase":
+                payload["phase"] = "training"
+            elif mutation == "context":
+                bundle["evaluation_grant"]["context"]["operation"] = "other"
+            else:
+                payload["grant_id"] = "other-grant"
+            with self.subTest(mutation=mutation), patch.object(
+                evaluation, "verify_adapter_receipt", return_value=receipt
             ), self.assertRaises(evaluation.EvaluationError):
                 evaluation.analyze(
                     bundle, adapter_output=Path("/external/adapter-run"),
