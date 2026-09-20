@@ -433,9 +433,11 @@ def acquire_phase_grant(
         )
         need(list(payload) == [
             "schema_version", "kind", "issuer", "pilot_id", "lifecycle_id",
-            "ledger_sequence", "ledger_commit_id", "ledger_append_only",
+            "preflight_ledger_sequence", "ledger_sequence",
+            "ledger_commit_id", "ledger_append_only",
             "ledger_status", "grant_id", "phase", "source_commit",
             "runtime_evidence_sha256", "context_sha256", "request_nonce",
+            "runtime_deadline_utc",
             "azure_instance", "azure_instance_identity",
             "issued_at_utc", "expires_at_utc", "grant_reserved_seconds",
             "grant_reserved_cost_usd", "phase_grants_committed",
@@ -446,6 +448,8 @@ def acquire_phase_grant(
         need(payload["schema_version"] == 1)
         need(payload["pilot_id"] == PILOT_ID)
         need(payload["lifecycle_id"] == lifecycle_id)
+        need(payload["preflight_ledger_sequence"] ==
+             preflight_ledger_sequence)
         need(type(payload["ledger_sequence"]) is int and
              preflight_ledger_sequence < payload["ledger_sequence"] < 2**63)
         for field in ("ledger_commit_id", "grant_id"):
@@ -457,6 +461,7 @@ def acquire_phase_grant(
         need(payload["runtime_evidence_sha256"] == runtime_evidence_sha256)
         need(payload["context_sha256"] == context_sha256)
         need(payload["request_nonce"] == nonce)
+        need(payload["runtime_deadline_utc"] == runtime_deadline_utc)
         need(payload["azure_instance"] == azure_instance)
         identity = payload["azure_instance_identity"]
         need(type(identity) is dict and list(identity) == [
@@ -471,6 +476,7 @@ def acquire_phase_grant(
         need(identity["verified"] is True)
         issued = timestamp(payload["issued_at_utc"])
         expires = timestamp(payload["expires_at_utc"])
+        need(expires == timestamp(payload["runtime_deadline_utc"]))
         identity_verified = timestamp(identity["verified_at_utc"])
         token_expires = timestamp(identity["token_expires_at_utc"])
         need(identity["token_expires_at_utc"] ==

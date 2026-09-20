@@ -128,9 +128,11 @@ def _verify_training_grant(
         )
         need(type(payload) is dict and list(payload) == [
             "schema_version", "kind", "issuer", "pilot_id", "lifecycle_id",
-            "ledger_sequence", "ledger_commit_id", "ledger_append_only",
+            "preflight_ledger_sequence", "ledger_sequence",
+            "ledger_commit_id", "ledger_append_only",
             "ledger_status", "grant_id", "phase", "source_commit",
             "runtime_evidence_sha256", "context_sha256", "request_nonce",
+            "runtime_deadline_utc",
             "azure_instance", "azure_instance_identity",
             "issued_at_utc", "expires_at_utc", "grant_reserved_seconds",
             "grant_reserved_cost_usd", "phase_grants_committed",
@@ -160,8 +162,11 @@ def _verify_training_grant(
         for field in ("ledger_commit_id", "grant_id"):
             need(type(payload[field]) is str and
                  0 < len(payload[field]) <= 256)
+        preflight_sequence = payload["preflight_ledger_sequence"]
+        need(type(preflight_sequence) is int and
+             0 < preflight_sequence < 2**63)
         need(type(payload["ledger_sequence"]) is int and
-             0 < payload["ledger_sequence"] < 2**63)
+             preflight_sequence < payload["ledger_sequence"] < 2**63)
         need(payload["ledger_append_only"] is True)
         need(payload["ledger_status"] == "grant_committed_before_response")
         need(type(payload["request_nonce"]) is str and
@@ -170,6 +175,7 @@ def _verify_training_grant(
              PHASE_RESERVED_SECONDS["training"])
         issued = timestamp(payload["issued_at_utc"])
         expires = timestamp(payload["expires_at_utc"])
+        need(expires == timestamp(payload["runtime_deadline_utc"]))
         need(issued < expires)
         counts = payload["phase_grants_committed"]
         need(type(counts) is dict and list(counts) == list(PHASES))
@@ -190,6 +196,9 @@ def _verify_training_grant(
             PHASE_RESERVED_SECONDS["training"] / 3600
         ))
         need(reserved_cost <= aggregate_cost <= money("0.5260"))
+        need(aggregate_cost >= (
+            money("0.5260") * aggregate_seconds / 3600
+        ))
         need(money(payload["approved_budget_usd"]) == money("2.0000"))
         need(payload["deployment_authorized"] is False)
         azure_instance = validate_azure_instance(payload["azure_instance"])

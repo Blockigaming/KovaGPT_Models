@@ -86,6 +86,7 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
             "issuer": authority.ISSUER,
             "pilot_id": authority.PILOT_ID,
             "lifecycle_id": self.lifecycle_id,
+            "preflight_ledger_sequence": 1,
             "ledger_sequence": 3,
             "ledger_commit_id": self.lifecycle_ledger_commit_id,
             "ledger_append_only": True,
@@ -98,6 +99,7 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
                 authority.canonical(context)
             ).hexdigest(),
             "request_nonce": "d" * 64,
+            "runtime_deadline_utc": "2026-09-19T19:40:00Z",
             "azure_instance": azure_instance,
             "azure_instance_identity": {
                 "verification_method":
@@ -241,7 +243,10 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
                 self.verify_receipt(output)
 
     def test_fake_or_wrong_phase_training_grant_is_rejected(self):
-        for variant in ("fake_signer", "wrong_phase"):
+        for variant in (
+            "fake_signer", "wrong_phase", "wrong_pilot", "uncommitted",
+            "stale_sequence", "under_reserved_aggregate",
+        ):
             with self.subTest(variant=variant), \
                  tempfile.TemporaryDirectory() as directory:
                 output = self.make_output(Path(directory))
@@ -252,8 +257,20 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
                     payload["grant_id"] = "invented-grant"
                     fake = Ed25519PrivateKey.from_private_bytes(b"f" * 32)
                     signer = fake
-                else:
+                elif variant == "wrong_phase":
                     payload["phase"] = "evaluation"
+                    signer = self.authority_key
+                elif variant == "wrong_pilot":
+                    payload["pilot_id"] = "other-pilot"
+                    signer = self.authority_key
+                elif variant == "uncommitted":
+                    payload["ledger_status"] = "pending_commit"
+                    signer = self.authority_key
+                elif variant == "stale_sequence":
+                    payload["preflight_ledger_sequence"] = 3
+                    signer = self.authority_key
+                else:
+                    payload["aggregate_reserved_cost_usd"] = "0.3507"
                     signer = self.authority_key
                 evidence["grant_envelope"]["signature"] = signer.sign(
                     authority.canonical(payload)

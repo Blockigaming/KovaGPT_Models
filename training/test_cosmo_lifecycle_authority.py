@@ -92,6 +92,9 @@ class CosmoLifecycleAuthorityTests(unittest.TestCase):
             "issuer": authority.ISSUER,
             "pilot_id": authority.PILOT_ID,
             "lifecycle_id": "lifecycle-001",
+            "preflight_ledger_sequence": request[
+                "preflight_ledger_sequence"
+            ],
             "ledger_sequence": 2,
             "ledger_commit_id": "append-only-ledger-commit-002",
             "ledger_append_only": True,
@@ -102,6 +105,7 @@ class CosmoLifecycleAuthorityTests(unittest.TestCase):
             "runtime_evidence_sha256": request["runtime_evidence_sha256"],
             "context_sha256": request["context_sha256"],
             "request_nonce": request["request_nonce"],
+            "runtime_deadline_utc": request["runtime_deadline_utc"],
             "azure_instance": request["azure_instance"],
             "azure_instance_identity": {
                 "verification_method":
@@ -240,12 +244,14 @@ class CosmoLifecycleAuthorityTests(unittest.TestCase):
 
         invalid = (
             ("lifecycle_id", "different-lifecycle"),
+            ("preflight_ledger_sequence", 0),
             ("ledger_sequence", 1),
             ("ledger_append_only", False),
             ("ledger_status", "pending_commit"),
             ("training_count", 2),
             ("aggregate_reserved_seconds", 3601),
             ("aggregate_reserved_cost_usd", "0.5261"),
+            ("runtime_deadline_utc", "2026-09-19T19:39:59Z"),
             ("deployment_authorized", True),
         )
         for field, wrong in invalid:
