@@ -61,7 +61,7 @@
   },
   "account_gates": {
     "microsoft_quota_provider_registration_authorized": true,
-    "eastus_ncast4_quota_verified": false,
+    "eastus_ncast4_quota_verified": true,
     "runtime_compatibility_verified": false,
     "approved_budget_usd": 2.0
   },

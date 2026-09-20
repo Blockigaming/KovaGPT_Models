@@ -200,10 +200,10 @@ class KovaCosmoSftTests(unittest.TestCase):
         self.assertEqual(training["report_to"], "none")
         self.assertIs(training["push_to_hub"], False)
 
-    def test_approved_pilot_remains_blocked_on_quota_and_runtime(self):
+    def test_approved_pilot_records_quota_and_remains_blocked_on_runtime(self):
         gates = recipe.load_recipe()["account_gates"]
         self.assertIs(gates["microsoft_quota_provider_registration_authorized"], True)
-        self.assertIs(gates["eastus_ncast4_quota_verified"], False)
+        self.assertIs(gates["eastus_ncast4_quota_verified"], True)
         self.assertIs(gates["runtime_compatibility_verified"], False)
         self.assertEqual(gates["approved_budget_usd"], 2.0)
 

@@ -60,19 +60,26 @@ class CosmoRuntimeProbeTests(unittest.TestCase):
         }
         return directory, expected_hashes, expected_bytes
 
-    def test_current_probe_is_blocked_before_runtime_or_dependencies(self):
-        with patch.object(probe, "require_ready",
-                          side_effect=AssertionError("runtime called")), \
+    def test_current_probe_reaches_runtime_guard_before_dependencies(self):
+        with patch.dict(os.environ, {probe.CONFIRMATION_ENV: "YES",
+                                     "KOVA_SOURCE_COMMIT": "a" * 40}), \
+             patch.object(probe, "verify_source_checkout"), \
+             patch.object(probe, "require_ready",
+                          side_effect=probe.RuntimeGuardError("runtime called")), \
              patch.object(probe, "verify_installed_software",
                           side_effect=AssertionError("dependencies called")):
-            with self.assertRaises(probe.RuntimeProbeError):
+            with self.assertRaisesRegex(probe.RuntimeGuardError, "runtime called"):
                 probe.authorize_probe()
 
-    def test_operator_environment_cannot_override_quota_gate(self):
-        with patch.dict(os.environ, {probe.CONFIRMATION_ENV: "YES"}), \
-             patch.object(probe, "require_ready",
-                          side_effect=AssertionError("runtime called")):
-            with self.assertRaises(probe.RuntimeProbeError):
+    def test_operator_confirmation_cannot_bypass_runtime_guard(self):
+        with patch.object(probe, "require_ready",
+                          side_effect=probe.RuntimeGuardError("runtime called")), \
+             patch.object(probe, "verify_installed_software",
+                          side_effect=AssertionError("dependencies called")), \
+             patch.dict(os.environ, {probe.CONFIRMATION_ENV: "YES",
+                                     "KOVA_SOURCE_COMMIT": "a" * 40}), \
+             patch.object(probe, "verify_source_checkout"):
+            with self.assertRaisesRegex(probe.RuntimeGuardError, "runtime called"):
                 probe.authorize_probe()
 
     def test_released_source_must_still_pass_external_runtime_guard(self):
@@ -196,7 +203,7 @@ class CosmoRuntimeProbeTests(unittest.TestCase):
     def test_dry_run_makes_no_runtime_claims(self):
         report = probe.dry_run()
         self.assertEqual(report["status"], "blocked")
-        self.assertFalse(report["quota_verified"])
+        self.assertTrue(report["quota_verified"])
         self.assertFalse(report["model_weights_downloaded"])
         self.assertFalse(report["pilot_training_started"])
         self.assertFalse(report["phase_b_ready"])
