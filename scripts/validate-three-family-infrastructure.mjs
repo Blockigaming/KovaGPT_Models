@@ -22,6 +22,8 @@ export function validateSource() {
   assert.match(watchdog, /frequency: 'Minute'/);
   assert.match(watchdog, /interval: 1/);
   assert.match(watchdog, /param deadlineUtc string/);
+  assert.match(watchdog, /param pilotSuffix string/);
+  assert.match(watchdog, /virtualMachines\/kova-t4-\$\{pilotSuffix\}\/deallocate/);
   assert.match(watchdog, /greaterOrEquals\(ticks\(utcNow\(\)\), ticks\(parameters/);
   assert.match(watchdog, /allowSharedKeyAccess: false/);
   assert.match(watchdog, /allowBlobPublicAccess: false/);
