@@ -1,4 +1,4 @@
-"""Offline, exact-inventory verification for a previously downloaded snapshot."""
+"""Offline, exact-inventory verification for previously downloaded snapshots."""
 
 from __future__ import annotations
 
@@ -38,13 +38,26 @@ def verify_snapshot(snapshot: Path, manifest: dict) -> dict:
     return {"verified": True, "offline_load_required": True, "files": len(expected)}
 
 
+def _manifest(family: str) -> dict:
+    return load_json(Path(__file__).parents[1] / "config" / MANIFESTS[family])
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--family", choices=MANIFESTS, required=True)
+    family = parser.add_mutually_exclusive_group(required=True)
+    family.add_argument("--family", choices=MANIFESTS)
+    family.add_argument("--all-families", action="store_true")
     parser.add_argument("--root", type=Path, required=True)
     args = parser.parse_args(argv)
-    manifest = load_json(Path(__file__).parents[1] / "config" / MANIFESTS[args.family])
-    print(json.dumps(verify_snapshot(args.root, manifest), sort_keys=True))
+    if args.all_families:
+        results = {
+            name: verify_snapshot(args.root / name, _manifest(name))
+            for name in MANIFESTS
+        }
+        report = {"verified": all(item["verified"] for item in results.values()), "families": results}
+    else:
+        report = verify_snapshot(args.root, _manifest(args.family))
+    print(json.dumps(report, sort_keys=True))
     return 0
 
 
