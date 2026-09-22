@@ -24,6 +24,7 @@ def command_plan() -> list[dict]:
         "suffix=${WATCHDOG_SUFFIX}",
         "subscriptionId=${SUBSCRIPTION_ID}",
         "pilotResourceGroupName=${PILOT_RESOURCE_GROUP}",
+        "pilotSuffix=${PILOT_SUFFIX}",
         "controllerPrincipalObjectId=${CONTROLLER_PRINCIPAL_OBJECT_ID}",
         "deadlineUtc=${PILOT_DEADLINE_UTC}",
     ]
