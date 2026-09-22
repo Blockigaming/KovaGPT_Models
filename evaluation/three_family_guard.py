@@ -17,6 +17,15 @@ PROFILES = {"light", "medium", "high", "extra-high", "max", "ultra"}
 SCHEMA = "kova-three-family-evaluation-evidence.v1"
 _CONFIG = json.loads((ROOT / "config/kova-three-family-evaluation.v1.json").read_text(encoding="utf-8"))
 PINNED_RUNNER_PUBLIC_KEY_B64 = _CONFIG["answer_binding"]["runner_public_key_ed25519_b64"]
+_REQUIRED_DIMENSIONS = _CONFIG.get("required_dimensions")
+if (
+    type(_REQUIRED_DIMENSIONS) is not list
+    or len(_REQUIRED_DIMENSIONS) != 12
+    or any(type(value) is not str or not value for value in _REQUIRED_DIMENSIONS)
+    or len(set(_REQUIRED_DIMENSIONS)) != len(_REQUIRED_DIMENSIONS)
+):
+    raise RuntimeError("invalid required evaluation dimensions")
+REQUIRED_DIMENSIONS = frozenset(_REQUIRED_DIMENSIONS)
 
 
 def _canonical(value: dict) -> bytes:
@@ -44,6 +53,31 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _validated_dimensions(dimensions) -> tuple[str, ...]:
+    if type(dimensions) is not list or not dimensions:
+        raise ValueError("invalid_evaluation_dimensions")
+    if any(type(value) is not str or value not in REQUIRED_DIMENSIONS for value in dimensions):
+        raise ValueError("invalid_evaluation_dimensions")
+    if len(set(dimensions)) != len(dimensions):
+        raise ValueError("duplicate_evaluation_dimensions")
+    return tuple(dimensions)
+
+
+def validate_verified_dimension_coverage(payloads: list[dict]) -> tuple[str, ...]:
+    """Require full configured coverage across payloads already returned by verify_evidence."""
+    if type(payloads) is not list or not payloads:
+        raise ValueError("missing_evaluation_evidence")
+    covered = set()
+    for payload in payloads:
+        if type(payload) is not dict:
+            raise ValueError("invalid_evaluation_payload")
+        covered.update(_validated_dimensions(payload.get("dimensions")))
+    missing = REQUIRED_DIMENSIONS - covered
+    if missing:
+        raise ValueError("missing_required_dimensions:" + ",".join(sorted(missing)))
+    return tuple(sorted(covered))
+
+
 def create_evidence(*, source_commit: str, family: str, base_revision: str,
                     base_manifest_sha256: str, adapter_sha256: str,
                     runner_sha256: str, case_id: str, prompt: str, answer: str,
@@ -62,8 +96,9 @@ def create_evidence(*, source_commit: str, family: str, base_revision: str,
         raise ValueError("invalid_evaluation_context")
     if runtime_profile not in PROFILES:
         raise ValueError("invalid_runtime_profile")
-    if not isinstance(prompt, str) or not prompt or not isinstance(answer, str) or not answer or not dimensions:
+    if not isinstance(prompt, str) or not prompt or not isinstance(answer, str) or not answer:
         raise ValueError("empty_evaluation_binding")
+    dimensions = list(_validated_dimensions(dimensions))
     payload = {
         "schema": SCHEMA,
         "source_commit": source_commit,
@@ -133,6 +168,7 @@ def verify_evidence(evidence: dict, *, expected_source_commit: str,
         raise ValueError("evidence_binding_mismatch:prompt_sha256")
     if not isinstance(answer, str) or payload.get("answer_sha256") != _sha256_text(answer):
         raise ValueError("evidence_binding_mismatch:answer_sha256")
+    _validated_dimensions(payload.get("dimensions"))
     try:
         signature = base64.b64decode(evidence["signature_ed25519_b64"], validate=True)
         _trusted_runner_public_key().verify(signature, _canonical(payload))
