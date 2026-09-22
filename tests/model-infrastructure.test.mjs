@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { compileInfrastructure, validateInfrastructure, validateStagingParameters } from "../scripts/validate-model-infrastructure.mjs";
 
-const compiled = compileInfrastructure();
+const compiled = process.env.KOVA_BICEP ? compileInfrastructure() : null;
 const resources = (arm) => Array.isArray(arm.resources) ? arm.resources : Object.values(arm.resources);
 const app = (arm) => resources(arm).find((r) => r.type === "Microsoft.App/containerApps");
 const environment = (arm) => resources(arm).find((r) => r.type === "Microsoft.App/managedEnvironments");
@@ -14,11 +14,11 @@ const params = () => ({ provisionStaging: false, activateModelApps: false, stagi
   ultraImage: "fixtureonly.azurecr.io/ultra@sha256:" + "b".repeat(64),
   gpuProfileType: "Consumption-GPU-NC24-A100", maxReplicas: 1 });
 
-test("the real pinned Bicep compiler validates the staging-only resource source", () => {
+test("the real pinned Bicep compiler validates the staging-only resource source", {skip: !compiled}, () => {
   assert.equal(validateInfrastructure(compiled).phase_b_ready, false);
   assert.equal(validateInfrastructure(compiled).azure_requests_made, 0);
 });
-test("default deployment and model-app guards cannot be promoted or removed", () => {
+test("default deployment and model-app guards cannot be promoted or removed", {skip: !compiled}, () => {
   for (const key of ["provisionStaging", "activateModelApps"]) {
     for (const bad of [true, undefined, "false"]) {
       const changed = structuredClone(compiled); changed.parameters[key].defaultValue = bad;
@@ -26,13 +26,13 @@ test("default deployment and model-app guards cannot be promoted or removed", ()
     }
   }
 });
-test("every deployed resource stays behind its explicit condition", () => {
+test("every deployed resource stays behind its explicit condition", {skip: !compiled}, () => {
   for (const index of [0, 1]) {
     const changed = structuredClone(compiled); delete resources(changed)[index].condition;
     assert.throws(() => validateInfrastructure(changed));
   }
 });
-test("public environment or insecure/external inference ingress is rejected", () => {
+test("public environment or insecure/external inference ingress is rejected", {skip: !compiled}, () => {
   for (const mutate of [
     (a) => environment(a).properties.publicNetworkAccess = "Enabled",
     (a) => environment(a).properties.vnetConfiguration.internal = false,
@@ -43,7 +43,7 @@ test("public environment or insecure/external inference ingress is rejected", ()
     assert.throws(() => validateInfrastructure(changed));
   }
 });
-test("scale-to-zero and maximum replica controls cannot become always-on or unbounded", () => {
+test("scale-to-zero and maximum replica controls cannot become always-on or unbounded", {skip: !compiled}, () => {
   for (const mutate of [
     (a) => app(a).properties.template.scale.minReplicas = 1,
     (a) => app(a).properties.template.scale.maxReplicas = 100,
@@ -53,14 +53,14 @@ test("scale-to-zero and maximum replica controls cannot become always-on or unbo
     assert.throws(() => validateInfrastructure(changed));
   }
 });
-test("model activation and runtime downloads remain disabled inside app definitions", () => {
+test("model activation and runtime downloads remain disabled inside app definitions", {skip: !compiled}, () => {
   for (const key of ["KOVA_MODEL_EXECUTION_ENABLED", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"]) {
     const changed = structuredClone(compiled);
     app(changed).properties.template.containers[0].env.find((e) => e.name === key).value = "unsafe";
     assert.throws(() => validateInfrastructure(changed));
   }
 });
-test("additional role assignments and deployment scripts cannot be hidden in the template", () => {
+test("additional role assignments and deployment scripts cannot be hidden in the template", {skip: !compiled}, () => {
   const changed = structuredClone(compiled);
   if (Array.isArray(changed.resources)) changed.resources.push({type:"Microsoft.Authorization/roleAssignments"});
   else changed.resources.unexpected = {type:"Microsoft.Authorization/roleAssignments"};

@@ -1,7 +1,9 @@
 {
   "schema_version": 1,
-  "status": "source_only_versioned_bridge",
+  "status": "superseded_non_authoritative_history",
   "selection_schema": "kova-models.v1",
+  "superseded_by": "config/current-product-policy.v3.json",
+  "must_not_drive_current_routing": true,
   "application_source": {
     "repository": "Blockigaming/KovaGPT",
     "commit": "b964d1bc9fcd81fcfc70e97a22cbf4a516605c94",

@@ -82,11 +82,20 @@ def _resolve_request(request):
     if "route_id" in request:
         _require(set(request) == {"request_id", "route_id"} | content_fields,
                  "Ultra request contains unsupported fields")
-        policy = resolve_route({"surface": "chat", "route_id": request["route_id"]})
+        route_id = request["route_id"]
+        if isinstance(route_id, str) and route_id.startswith("chat:"):
+            parts = route_id.split(":")
+            _require(len(parts) == 3, "invalid canonical Chat Ultra route")
+            policy = resolve_route({"surface": "chat", "family": parts[1],
+                                    "effort": parts[2].replace("-", " ").title()})
+        else:
+            policy = resolve_route({"surface": "chat", "route_id": route_id})
     else:
         expected = {"request_id", "surface", "family", "effort"} | content_fields
-        _require(set(request) == expected and request.get("surface") == "work", "Ultra request contains unsupported fields")
-        policy = resolve_route({"surface": "work", "family": request["family"], "effort": request["effort"]})
+        _require(set(request) == expected and request.get("surface") in ("chat", "work"),
+                 "Ultra request contains unsupported fields")
+        policy = resolve_route({"surface": request["surface"], "family": request["family"],
+                                "effort": request["effort"]})
     _require(policy["engine"] == "kova-ultra", "route is not eligible for Kova Ultra")
     return policy
 

@@ -90,6 +90,10 @@ for family in ROUTE_POLICY["work"]["families"]:
             WORK_ROUTE_REQUESTS[route_id] = {
                 "surface": "work", "family": family, "effort": effort["name"],
             }
+            if family in ("cosmo", "orion"):
+                chat_route_id = f"chat:{family}:{effort['name'].lower().replace(' ', '-')}"
+                CORE_ROUTE_STAGES[chat_route_id] = _stage_ids(effort)
+                CORE_ROUTE_EFFORTS[chat_route_id] = effort["reasoning_effort"]
 
 
 def _validated_message(message):

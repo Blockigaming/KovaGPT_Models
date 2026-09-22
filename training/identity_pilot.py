@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import sys
 
-from release.model_revisions import MODEL_SOURCE_REFERENCES
+from release.model_revisions import LEGACY_WORK_COSMO_REFERENCE
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAN_PATH = 'config/kova-cosmo-pilot.v1.json'
@@ -73,7 +73,7 @@ def load(root: Path = ROOT) -> tuple[dict, str, list]:
         data_bytes = read_asset(root, DATA_PATH)
         review_bytes = read_asset(root, REVIEW_PATH)
         plan = parse(read_asset(root, PLAN_PATH).decode('utf-8'))
-        ref = MODEL_SOURCE_REFERENCES['work-cosmo']
+        ref = LEGACY_WORK_COSMO_REFERENCE
         same(plan, {
             'schema_version': 1, 'status': 'source_preparation_only',
             'display_name': 'Kova Cosmo', 'model_slot': 'work-cosmo', 'method': 'lora',

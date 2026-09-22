@@ -1,0 +1,12 @@
+{
+  "schema_version":1,
+  "families":["kova-cosmo","kova-orion","kova-nova"],
+  "variants":["configured_base","trained_adapter"],
+  "required_dimensions":["kova_identity_consistency","kovagpt_ownership_behavior","ordinary_upstream_name_suppression","instruction_following","response_quality","refusal_and_safety","cross_user_isolation","conversation_session_isolation","tampered_evidence_rejection","exact_adapter_base_binding","family_separation","runtime_profile_behavior"],
+  "generated_answer_cases_per_variant":7,
+  "isolation_integrity_cases_per_variant":7,
+  "runtime_profile_cases_per_variant":6,
+  "required_attempts_per_family":40,
+  "answer_binding":{"algorithm":"Ed25519","runner_owned_private_key":true,"source_pinned_public_key_required":true,"binds":["source_commit","family","base_revision","adapter_sha256","case_id","prompt_sha256","answer_sha256","runtime_profile","conversation_id","session_id"]},
+  "human_review_required":true,"all_critical_cases_must_pass":true,"evaluation_execution_authorized":false,"deployment_authorized":false
+}

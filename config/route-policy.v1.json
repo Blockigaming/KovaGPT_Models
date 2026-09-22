@@ -1,11 +1,13 @@
 {
   "schema_version": 1,
-  "status": "source_only",
+  "status": "superseded_non_authoritative_history",
+  "superseded_by": "config/current-product-policy.v3.json",
+  "must_not_drive_current_routing": true,
   "shared_core_weights": true,
   "chat": [
-    { "id": "instant", "name": "Kova 5.6 Cosmo", "engine": "kova-core", "profile": "cosmo", "reasoning_effort": "low", "thinking_enabled": false, "planning_passes": 0, "answer_passes": 1, "critic_passes": 0, "verification_passes": 0, "activity_updates": false, "behavior_contract_id": "chat_instant_direct" },
-    { "id": "medium", "name": "Kova 5.6 Orion", "engine": "kova-core", "profile": "orion", "reasoning_effort": "medium", "thinking_enabled": true, "planning_passes": 1, "answer_passes": 1, "critic_passes": 0, "verification_passes": 1, "activity_updates": false, "behavior_contract_id": "chat_medium_balanced" },
-    { "id": "high", "name": "Kova 5.6 Nova", "engine": "kova-core", "profile": "nova", "reasoning_effort": "xhigh", "thinking_enabled": true, "planning_passes": 1, "answer_passes": 1, "critic_passes": 1, "verification_passes": 1, "activity_updates": true, "behavior_contract_id": "chat_high_rigorous" },
+    { "id": "instant", "name": "Kova Cosmo", "engine": "kova-core", "profile": "cosmo", "reasoning_effort": "low", "thinking_enabled": false, "planning_passes": 0, "answer_passes": 1, "critic_passes": 0, "verification_passes": 0, "activity_updates": false, "behavior_contract_id": "chat_instant_direct" },
+    { "id": "medium", "name": "Kova Orion", "engine": "kova-core", "profile": "orion", "reasoning_effort": "medium", "thinking_enabled": true, "planning_passes": 1, "answer_passes": 1, "critic_passes": 0, "verification_passes": 1, "activity_updates": false, "behavior_contract_id": "chat_medium_balanced" },
+    { "id": "high", "name": "Kova Nova", "engine": "kova-core", "profile": "nova", "reasoning_effort": "xhigh", "thinking_enabled": true, "planning_passes": 1, "answer_passes": 1, "critic_passes": 1, "verification_passes": 1, "activity_updates": true, "behavior_contract_id": "chat_high_rigorous" },
     { "id": "extra-high", "name": "Nova Extra High", "engine": "kova-core", "profile": "nova", "reasoning_effort": "xhigh", "thinking_enabled": true, "planning_passes": 2, "answer_passes": 2, "critic_passes": 2, "verification_passes": 2, "activity_updates": true, "behavior_contract_id": "chat_extra_high_deep" },
     { "id": "max", "name": "Nova Max", "engine": "kova-core", "profile": "nova", "reasoning_effort": "xhigh", "thinking_enabled": true, "planning_passes": 2, "answer_passes": 3, "critic_passes": 2, "verification_passes": 3, "activity_updates": true, "behavior_contract_id": "chat_max_single_engine" },
     { "id": "ultra", "name": "Kova Ultra", "engine": "kova-ultra", "profile": "ultra", "reasoning_effort": "xhigh", "thinking_enabled": true, "dynamic_agent_minimum": 2, "dynamic_agent_maximum": 5, "judge": true, "synthesis": true, "activity_updates": true, "behavior_contract_id": "chat_ultra_multi_specialist" }
@@ -13,9 +15,9 @@
   "work": {
     "families": ["cosmo", "orion", "nova"],
     "family_profiles": [
-      { "id": "cosmo", "display_name": "Kova 5.6 Cosmo", "behavior_contract_id": "work_cosmo_action_first", "answer_style": "concise_action_first", "tool_posture": "minimum_necessary" },
-      { "id": "orion", "display_name": "Kova 5.6 Orion", "behavior_contract_id": "work_orion_balanced", "answer_style": "balanced_explanatory", "tool_posture": "verify_when_material" },
-      { "id": "nova", "display_name": "Kova 5.6 Nova", "behavior_contract_id": "work_nova_rigorous", "answer_style": "rigorous_comprehensive", "tool_posture": "evidence_first" }
+      { "id": "cosmo", "display_name": "Kova Cosmo", "behavior_contract_id": "work_cosmo_action_first", "answer_style": "concise_action_first", "tool_posture": "minimum_necessary" },
+      { "id": "orion", "display_name": "Kova Orion", "behavior_contract_id": "work_orion_balanced", "answer_style": "balanced_explanatory", "tool_posture": "verify_when_material" },
+      { "id": "nova", "display_name": "Kova Nova", "behavior_contract_id": "work_nova_rigorous", "answer_style": "rigorous_comprehensive", "tool_posture": "evidence_first" }
     ],
     "efforts": ["Light", "Medium", "High", "Extra High", "Max", "Ultra"],
     "effort_profiles": [

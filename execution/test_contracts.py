@@ -9,8 +9,8 @@ from execution.test_support import IDENTITY, grant_for, make_plan, make_spec
 
 
 class ExecutionContractTests(unittest.TestCase):
-    def test_all_24_explicit_routes_keep_names_and_original_budgets(self):
-        self.assertEqual(len(ALL_ROUTES), 24)
+    def test_all_36_explicit_and_migration_routes_keep_bounded_budgets(self):
+        self.assertEqual(len(ALL_ROUTES), 36)
         for route in sorted(ALL_ROUTES):
             with self.subTest(route=route):
                 spec = make_spec(route)
@@ -43,7 +43,7 @@ class ExecutionContractTests(unittest.TestCase):
         copy = spec.plan
         copy["display_name"] = "changed again"
         self.assertEqual(spec.fingerprint, fingerprint)
-        self.assertEqual(spec.plan["display_name"], "Kova 5.6 Nova")
+        self.assertEqual(spec.plan["display_name"], "Kova Orion — High")
         self.assertNotIn("PRIVATE", repr(spec))
 
     def test_every_stage_needs_explicit_cost_bounds_and_total_admission(self):
@@ -82,15 +82,10 @@ class ExecutionContractTests(unittest.TestCase):
                 with self.subTest(tier=tier, route=route), self.assertRaises(ExecutionBlocked):
                     grant_for(spec, tier=tier).authorize("fixture-owner", route)
 
-    def test_free_thinking_alias_is_narrow_and_still_needs_exact_route_grant(self):
+    def test_superseded_free_thinking_alias_is_rejected(self):
         grant = ExecutionGrant("fixture-owner", "free", frozenset(("medium",)), True)
-        grant.authorize("fixture-owner", "medium", application_mode_id="thinking")
-        for app_mode in (None, "medium", "instant", "THINKING"):
-            with self.subTest(app_mode=app_mode), self.assertRaises(ExecutionBlocked):
-                grant.authorize("fixture-owner", "medium", application_mode_id=app_mode)
         with self.assertRaises(ExecutionBlocked):
-            ExecutionGrant("fixture-owner", "free", frozenset(("instant",)), True).authorize(
-                "fixture-owner", "medium", application_mode_id="thinking")
+            grant.authorize("fixture-owner", "medium", application_mode_id="thinking")
 
     def test_complete_work_matrix_and_exact_route_allowlist_are_both_required(self):
         efforts = ("light", "medium", "high", "extra-high", "max", "ultra")
@@ -99,7 +94,7 @@ class ExecutionContractTests(unittest.TestCase):
                 for effort in efforts:
                     route = f"work:{family}:{effort}"
                     grant = ExecutionGrant("fixture-owner", tier, frozenset((route,)), True)
-                    expected = tier == "pro" or (tier == "plus" and effort in ("light", "medium", "high"))
+                    expected = tier in ("plus", "pro")
                     with self.subTest(tier=tier, route=route):
                         if expected:
                             grant.authorize("fixture-owner", route)

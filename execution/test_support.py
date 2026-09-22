@@ -29,16 +29,16 @@ def make_plan(route="high", *, agents=3, task="Prove this equation."):
         if route == "ultra":
             request["route_id"] = route
         else:
-            _, family, _ = route.split(":")
-            request.update(surface="work", family=family, effort="Ultra")
+            surface, family, _ = route.split(":")
+            request.update(surface=surface, family=family, effort="Ultra")
         return build_ultra_plan(request, admission={
             "entitlement": "pro", "ultra_authorized": True, "remaining_usd": 1,
             "estimated_max_usd": 0.5, "max_agents": agents, "max_total_tokens": 65536,
         }, token_counter=lambda msgs: tokens(IDENTITY["model"], msgs))
     request = {"request_id": "fixture-correlation", "messages": [{"role": "user", "content": "PRIVATE input text"}]}
-    if route.startswith("work:"):
-        _, family, effort = route.split(":")
-        request.update(surface="work", family=family, effort=effort.replace("-", " ").title())
+    if route.startswith(("work:", "chat:")):
+        surface, family, effort = route.split(":")
+        request.update(surface=surface, family=family, effort=effort.replace("-", " ").title())
     else:
         request["route_id"] = route
     return build_core_plan(request, candidate_model=IDENTITY["model"], token_counter=tokens)

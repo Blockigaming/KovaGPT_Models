@@ -1,0 +1,18 @@
+{
+  "schema_version":1,
+  "status":"source_only_execution_blocked",
+  "families":["kova-cosmo","kova-orion","kova-nova"],
+  "single_shared_vm":{"provider":"Azure","region":"eastus","sku":"Standard_NC4as_T4_v3","expected_gpu":"NVIDIA T4","public_ip_allowed":false},
+  "sequential_order":["kova-cosmo","kova-orion","kova-nova"],
+  "combined_hard_ceiling_usd":"6.0000",
+  "preserve_successful_adapters_if_later_family_fails":true,
+  "nova_runs_only_if_runtime_probe_memory_time_and_budget_admit":true,
+  "no_automatic_continuation_after_safety_failure":true,
+  "dataset":"config/kova-three-family-dataset.v2.json",
+  "training_stack":"config/kova-three-family-training-stack.v1.json",
+  "compatibility":"config/kova-t4-compatibility.v1.json",
+  "cost_guard":"config/kova-three-family-cost-guard.v1.json",
+  "lifecycle":"config/kova-three-family-lifecycle.v1.json",
+  "evaluation":"config/kova-three-family-evaluation.v1.json",
+  "resource_creation_authorized":false,"spending_authorized":false,"model_download_authorized":false,"training_authorized":false,"evaluation_execution_authorized":false,"deployment_authorized":false,"production_routing_enabled":false
+}

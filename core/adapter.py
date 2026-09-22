@@ -61,11 +61,20 @@ def _resolved_policy(value):
     keys = set(value)
     if "route_id" in value:
         _require(keys == {"request_id", "messages", "route_id"}, "request contains unsupported or server-controlled fields")
-        policy = resolve_route({"surface": "chat", "route_id": value["route_id"]})
+        route_id = value["route_id"]
+        if isinstance(route_id, str) and route_id.startswith("chat:"):
+            parts = route_id.split(":")
+            _require(len(parts) == 3, "invalid canonical chat route")
+            effort = parts[2].replace("-", " ").title()
+            policy = resolve_route({"surface": "chat", "family": parts[1], "effort": effort})
+        else:
+            policy = resolve_route({"surface": "chat", "route_id": route_id})
     else:
         expected = {"request_id", "messages", "surface", "family", "effort"}
-        _require(keys == expected and value.get("surface") == "work", "request contains unsupported or server-controlled fields")
-        policy = resolve_route({"surface": "work", "family": value["family"], "effort": value["effort"]})
+        _require(keys == expected and value.get("surface") in ("chat", "work"),
+                 "request contains unsupported or server-controlled fields")
+        policy = resolve_route({"surface": value["surface"], "family": value["family"],
+                                "effort": value["effort"]})
     _require(policy["engine"] == "kova-core", "route is not eligible for Kova Core")
     return policy
 

@@ -7,14 +7,24 @@ class RoutePolicyTests(unittest.TestCase):
     def test_instant_is_one_pass_core_without_activity(self):
         route = resolve_route({"surface": "chat", "route_id": "instant"})
         self.assertEqual(route["engine"], "kova-core")
-        self.assertEqual(route["display_name"], "Kova 5.6 Cosmo")
+        self.assertEqual(route["display_name"], "Kova Cosmo")
         self.assertEqual(route["passes"], (0, 1, 0, 0))
         self.assertFalse(route["activity_updates"])
 
     def test_max_is_still_single_core_engine(self):
         route = resolve_route({"surface": "chat", "route_id": "max"})
         self.assertEqual(route["engine"], "kova-core")
-        self.assertEqual(route["profile"], "nova")
+        self.assertEqual(route["profile"], "orion")
+
+    def test_canonical_chat_has_twelve_cosmo_orion_combinations(self):
+        routes = {
+            resolve_route({"surface": "chat", "family": family, "effort": effort})["route_id"]
+            for family in ("cosmo", "orion")
+            for effort in ("Light", "Medium", "High", "Extra High", "Max", "Ultra")
+        }
+        self.assertEqual(len(routes), 12)
+        with self.assertRaisesRegex(ValueError, "invalid chat family"):
+            resolve_route({"surface": "chat", "family": "nova", "effort": "High"})
 
     def test_ultra_changes_engine_and_requires_judged_synthesis(self):
         route = resolve_route({"surface": "chat", "route_id": "ultra"})

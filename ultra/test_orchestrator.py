@@ -26,7 +26,7 @@ class UltraPlannerTests(unittest.TestCase):
 
     def test_plan_uses_dynamic_bounded_specialists(self):
         plan = self.build()
-        self.assertEqual(plan["display_name"], "Kova Ultra")
+        self.assertEqual(plan["display_name"], "Kova Orion — Ultra")
         specialists = [operation for operation in plan["operations"] if operation.get("parallel_group") == "specialists"]
         self.assertGreaterEqual(len(specialists), 2)
         self.assertLessEqual(len(specialists), 5)

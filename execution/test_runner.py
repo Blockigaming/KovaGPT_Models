@@ -31,7 +31,7 @@ class RunnerTests(unittest.TestCase):
         status = runner.run(job, max_stages=max_stages)
         return spec, fixture, job, runner, status
 
-    def test_all_twenty_core_profiles_execute_all_113_stages(self):
+    def test_all_current_core_profiles_execute_all_171_stages(self):
         from execution.contracts import ALL_ROUTES
         count = 0
         for route in sorted(ALL_ROUTES - {r for r in ALL_ROUTES if r == "ultra" or r.endswith(":ultra")}):
@@ -51,7 +51,7 @@ class RunnerTests(unittest.TestCase):
                     else:
                         self.assertIsNone(record["time_to_first_token_ms"])
                 count += len(spec.stages)
-        self.assertEqual(count, 113)
+        self.assertEqual(count, 171)
 
     def test_all_four_ultra_routes_execute_both_conditional_branches(self):
         for route in ("ultra", "work:cosmo:ultra", "work:orion:ultra", "work:nova:ultra"):

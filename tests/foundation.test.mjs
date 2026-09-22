@@ -77,7 +77,7 @@ test("model catalog keeps both unselected engines and all public profiles blocke
     assert.equal(profile.deployment_ready, false, profile.id);
   }
   assert.deepEqual(catalog.user_facing_hierarchy.map((mode) => mode.display_name), [
-    "Kova Auto", "Kova 5.6 Cosmo", "Kova 5.6 Orion", "Kova 5.6 Nova",
+    "Kova Auto", "Kova Cosmo", "Kova Orion", "Kova Nova",
     "Nova Extra High", "Nova Max", "Kova Ultra",
   ]);
 });
@@ -91,7 +91,7 @@ test("price floor targets a 42.6% gross margin before rounding", () => {
 test("product target contains six chat modes and eighteen Work combinations", () => {
   const surface = JSON.parse(readFileSync(join(root, "config/product-surface.v1.json"), "utf8"));
   assert.deepEqual(surface.chat_modes.map((mode) => mode.display_name), [
-    "Kova 5.6 Cosmo", "Kova 5.6 Orion", "Kova 5.6 Nova",
+    "Kova Cosmo", "Kova Orion", "Kova Nova",
     "Nova Extra High", "Nova Max", "Kova Ultra",
   ]);
   assert.equal(surface.work_families.length * surface.work_efforts.length, 18);

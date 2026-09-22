@@ -203,7 +203,9 @@ if (
   ultra.hidden_chain_of_thought_exposed !== false
 ) throw new Error("both_runpod_engines_must_be_unselected_scale_to_zero_and_blocked");
 if (
-  coreServing.status !== "source_only_selection_blocked" || coreServing.engine !== "kova-core" ||
+  coreServing.status !== "superseded_non_authoritative_history" ||
+  coreServing.superseded_by !== "config/kova-three-family-pilot.v1.json" ||
+  coreServing.must_not_drive_current_routing !== true || coreServing.engine !== "kova-core" ||
   coreServing.provider !== "runpod_serverless" || coreServing.endpoint_name_reserved !== "kova-core" ||
   coreServing.endpoint_deployed !== false || coreServing.selected_serving_engine !== null ||
   coreServing.selected_candidate_id !== null || coreServing.selected_gpu !== null ||
@@ -327,7 +329,7 @@ if (
 if (surface.chat_modes.map((mode) => mode.id).join(",") !== expectedChatModes.join(",")) throw new Error("six_ordered_chat_modes_required");
 if (
   surface.chat_modes.map((mode) => mode.display_name).join(",") !==
-  "Kova 5.6 Cosmo,Kova 5.6 Orion,Kova 5.6 Nova,Nova Extra High,Nova Max,Kova Ultra"
+  "Kova Cosmo,Kova Orion,Kova Nova,Nova Extra High,Nova Max,Kova Ultra"
 ) throw new Error("product_surface_kova_names_invalid");
 if (surface.chat_modes.slice(0, 5).some((mode) => mode.engine !== "kova-core")) throw new Error("auto_through_max_must_use_core");
 if (surface.chat_modes.find((mode) => mode.id === "ultra").engine !== "kova-ultra") throw new Error("ultra_must_change_engine");
@@ -336,7 +338,7 @@ for (const id of ["high", "extra-high", "max", "ultra"]) {
   if (surface.chat_modes.find((mode) => mode.id === id).activity_updates !== true) throw new Error(`deep_mode_requires_activity:${id}`);
 }
 if (surface.chat_modes.some((mode) => mode.deployment_ready !== false)) throw new Error("all_chat_modes_must_stay_blocked");
-if (surface.work_families.map((family) => family.display_name).join(",") !== "Kova 5.6 Cosmo,Kova 5.6 Orion,Kova 5.6 Nova") {
+if (surface.work_families.map((family) => family.display_name).join(",") !== "Kova Cosmo,Kova Orion,Kova Nova") {
   throw new Error("three_kova_work_families_required");
 }
 if (surface.work_efforts.length !== 6 || surface.work_families.length * surface.work_efforts.length !== 18) {
@@ -425,7 +427,7 @@ if (catalog.public_profiles.some((profile) => profile.deployment_ready !== false
 }
 if (
   catalog.user_facing_hierarchy.map((mode) => mode.display_name).join(",") !==
-  "Kova Auto,Kova 5.6 Cosmo,Kova 5.6 Orion,Kova 5.6 Nova,Nova Extra High,Nova Max,Kova Ultra"
+  "Kova Auto,Kova Cosmo,Kova Orion,Kova Nova,Nova Extra High,Nova Max,Kova Ultra"
 ) throw new Error("final_kova_mode_hierarchy_required");
 
 console.log("Validated Kova two-engine planning stack; paid execution and production routing remain blocked.");

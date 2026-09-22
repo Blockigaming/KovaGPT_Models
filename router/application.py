@@ -10,11 +10,10 @@ from dataclasses import dataclass
 
 from execution.contracts import ExecutionBlocked, ExecutionError, ExecutionGrant, require
 from router.auto import classify_auto
-from router.entitlements import FREE_THINKING_MODE_ID, FREE_THINKING_ROUTE
-from router.policy import CHAT_POLICIES, WORK_EFFORTS, WORK_FAMILIES, resolve_route
+from router.policy import CHAT_FAMILIES, CHAT_POLICIES, WORK_EFFORTS, WORK_FAMILIES, resolve_route
 
 
-SELECTION_SCHEMA = "kova-models.v1"
+SELECTION_SCHEMA = "kova-models.v2"
 EXTRA_HIGH_ALIASES = frozenset(("extra_high", "extra-high"))
 AUTO_ALIASES = frozenset(("auto", "kova-auto"))
 WORK_EFFORT_ALIASES = {effort: effort for effort in WORK_EFFORTS}
@@ -38,6 +37,10 @@ class ResolvedSelection:
 
     def policy(self):
         if self.surface == "chat":
+            if self.route_id.startswith("chat:"):
+                _, family, effort = self.route_id.split(":")
+                return resolve_route({"surface": "chat", "family": family,
+                                      "effort": WORK_EFFORT_ALIASES[effort]})
             return resolve_route({"surface": "chat", "route_id": self.route_id})
         _, family, effort = self.route_id.split(":")
         return resolve_route({"surface": "work", "family": family,
@@ -55,8 +58,7 @@ class ResolvedSelection:
 def resolve_application_selection(value, *, grant, prompt=None, auto_budget=None, auto_enabled=False):
     """Resolve a new versioned selection under current explicit server permissions.
 
-    Free Thinking is the approved Free application alias for medium/Orion; direct
-    Free `medium` remains disallowed. Auto is a router, and its output must pass
+    Auto is a router, and its output must pass
     both the tier cap and exact route allowlist. An allowed route does NOT enable
     execution, GPU capacity or production routing. Existing execution and Azure
     runtime guards still apply independently.
@@ -72,15 +74,20 @@ def resolve_application_selection(value, *, grant, prompt=None, auto_budget=None
     surface = value.get("surface")
     require(isinstance(surface, str) and surface in ("chat", "work"), "invalid selection surface")
     if surface == "chat":
-        require(set(value) == {"schema_version", "surface", "mode_id"}, "unsupported selection fields")
+        if set(value) == {"schema_version", "surface", "family", "effort"}:
+            family, raw_effort = value["family"], value["effort"]
+            require(isinstance(family, str) and family in CHAT_FAMILIES, "invalid Chat family")
+            require(isinstance(raw_effort, str) and raw_effort in WORK_EFFORT_ALIASES,
+                    "invalid Chat effort")
+            effort = WORK_EFFORT_ALIASES[raw_effort]
+            policy = resolve_route({"surface": "chat", "family": family, "effort": effort})
+            grant.authorize(grant.owner_id, policy["route_id"])
+            return ResolvedSelection(policy["route_id"], "chat", None, False, ())
+        require(set(value) == {"schema_version", "surface", "mode_id"},
+                "unsupported selection fields")
         mode = value["mode_id"]
         require(isinstance(mode, str), "invalid Chat mode")
-        if mode == FREE_THINKING_MODE_ID:
-            if grant.tier != "free":
-                raise ExecutionBlocked("Thinking is the Free application alias")
-            route_id = FREE_THINKING_ROUTE
-            by_auto, features = False, ()
-        elif mode in AUTO_ALIASES:
+        if mode in AUTO_ALIASES:
             if not auto_enabled:
                 raise ExecutionBlocked("Auto is not enabled by the server for this request")
             route = classify_auto(prompt, entitlement=grant.tier, budget=auto_budget)
@@ -93,10 +100,7 @@ def resolve_application_selection(value, *, grant, prompt=None, auto_budget=None
             by_auto, features = False, ()
         grant.authorize(grant.owner_id, route_id,
                         application_mode_id=mode if not by_auto else None)
-        if mode == FREE_THINKING_MODE_ID:
-            application_id = FREE_THINKING_MODE_ID
-        else:
-            application_id = "extra_high" if route_id == "extra-high" else route_id
+        application_id = "extra_high" if route_id == "extra-high" else route_id
         return ResolvedSelection(route_id, "chat", application_id, by_auto, features)
     require(set(value) == {"schema_version", "surface", "family", "effort"}, "unsupported selection fields")
     family, raw_effort = value["family"], value["effort"]

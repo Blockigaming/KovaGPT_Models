@@ -13,7 +13,7 @@ import subprocess
 import sys
 from importlib.metadata import PackageNotFoundError, version
 
-from release.model_revisions import MODEL_SOURCE_REFERENCES
+from release.model_revisions import LEGACY_WORK_COSMO_REFERENCE
 from training.cosmo_adapter_receipt import (
     ReceiptError,
     persist_training_grant,
@@ -61,7 +61,7 @@ def load_recipe(root: Path = ROOT) -> dict:
     try:
         config_path = root / "config/kova-cosmo-sft.v1.json"
         value = json.loads(config_path.read_text(encoding="utf-8"))
-        ref = MODEL_SOURCE_REFERENCES["work-cosmo"]
+        ref = LEGACY_WORK_COSMO_REFERENCE
         need(value["schema_version"] == 1)
         need(value["status"] == "owner_requested_recipe_not_executed")
         need(value["display_name"] == "Kova Cosmo")

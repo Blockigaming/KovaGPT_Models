@@ -27,7 +27,7 @@ class CoreAdapterTests(unittest.TestCase):
         self.assertEqual(len(plan["operations"]), 1)
         operation = plan["operations"][0]
         self.assertEqual(operation["stage_id"], "answer-1")
-        self.assertEqual(plan["display_name"], "Kova 5.6 Cosmo")
+        self.assertEqual(plan["display_name"], "Kova Cosmo")
         self.assertTrue(operation["public_response"])
         self.assertTrue(operation["request_template"]["stream"])
         self.assertFalse(operation["activity_event_allowed_after_start"])

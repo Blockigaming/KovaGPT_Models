@@ -75,7 +75,7 @@ class ConversationTests(unittest.TestCase):
                     self.assertEqual(request["messages"][3:3 + len(HISTORY)], HISTORY)
                 self.assertEqual(store.result(OWNER, job)["content"], "Kova final response")
                 count += len(spec.stages)
-        self.assertEqual(count, 113)
+        self.assertEqual(count, 171)
 
     def test_all_ultra_routes_keep_conversation_through_both_debate_branches(self):
         for route in ("ultra", "work:cosmo:ultra", "work:orion:ultra", "work:nova:ultra"):
