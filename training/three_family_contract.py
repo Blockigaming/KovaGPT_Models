@@ -186,11 +186,38 @@ def validate_dataset():
     return {"records": 42, "train": 27, "validation": 15, "approval_complete": True}
 
 
+def _locked_package_versions(stack: dict) -> dict[str, str]:
+    versions = {}
+    for lock in stack["locks"]:
+        text = (ROOT / lock["path"]).read_text(encoding="utf-8", errors="strict")
+        for match in re.finditer(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)==([^\\s\\\\]+)", text, re.MULTILINE):
+            name = match.group(1).lower().replace("_", "-")
+            version = match.group(2)
+            need(name not in versions or versions[name] == version,
+                 f"conflicting locked package version:{name}")
+            versions[name] = version
+    return versions
+
+
 def validate_training():
     stack = load_json(ROOT / "config/kova-three-family-training-stack.v1.json")
     need(stack["gpu_name"] == "NVIDIA T4" and stack["compute_capability"] == "7.5")
+    need(stack.get("python") == "3.12" and stack.get("cuda") == "12.8",
+         "training runtime version drift")
+    expected_packages = {
+        "torch": "2.8.0",
+        "transformers": "5.17.0",
+        "trl": "1.13.0",
+        "peft": "0.21.0",
+        "accelerate": "1.15.0",
+        "bitsandbytes": "0.48.2",
+    }
+    need(stack.get("packages") == expected_packages, "training package declaration drift")
     for lock in stack["locks"]:
         need(sha256(ROOT / lock["path"]) == lock["sha256"])
+    locked = _locked_package_versions(stack)
+    for package, version in expected_packages.items():
+        need(locked.get(package) == version, f"training package lock mismatch:{package}")
     expected = {"kova-cosmo": (1024, 1800, "1.2500"),
                 "kova-orion": (1024, 2700, "1.5000"),
                 "kova-nova": (768, 4500, "1.7500")}
