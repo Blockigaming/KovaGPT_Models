@@ -13,6 +13,10 @@ export function validateSource() {
   assert.match(vm, /param provisionPilot bool = false/);
   assert.match(vm, /Standard_NC4as_T4_v3/);
   assert.match(vm, /disablePasswordAuthentication: true/);
+  assert.match(vm, /publisher: 'Microsoft\.HpcCompute'/);
+  assert.match(vm, /type: 'NvidiaGpuDriverLinux'/);
+  assert.match(vm, /typeHandlerVersion: '1\.10'/);
+  assert.match(vm, /enableAutomaticUpgrade: false/);
   assert.doesNotMatch(vm, /publicIPAddresses|publicIPAddress/);
   assert.match(watchdog, /param provisionWatchdog bool = false/);
   assert.match(watchdog, /frequency: 'Minute'/);
