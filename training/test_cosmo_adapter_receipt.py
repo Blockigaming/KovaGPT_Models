@@ -205,7 +205,8 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
         self.write_safetensors(adapter / "adapter_model.safetensors")
         return output
 
-    def write_safetensors(self, path: Path, *, omit_last: bool = False) -> None:
+    def write_safetensors(self, path: Path, *, omit_last: bool = False,
+                          output_projection_input_width: int = 16 * 128) -> None:
         header = {}
         offset = 0
         for layer in range(28):
@@ -222,7 +223,7 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
                     intermediate = 3072
                     input_width = {
                         "q_proj": hidden, "k_proj": hidden,
-                        "v_proj": hidden, "o_proj": hidden,
+                        "v_proj": hidden, "o_proj": output_projection_input_width,
                         "gate_proj": hidden, "up_proj": hidden,
                         "down_proj": intermediate,
                     }[target]
@@ -249,6 +250,23 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
                              for item in header.values())
         encoded = json.dumps(header, separators=(",", ":")).encode("utf-8")
         path.write_bytes(struct.pack("<Q", len(encoded)) + encoded + bytes(offset))
+
+    def test_output_projection_requires_all_attention_heads(self):
+        recipe = {"lora": {"r": 16, "target_modules": EXPECTED_TARGETS}}
+        with tempfile.TemporaryDirectory() as directory:
+            weights = Path(directory) / "synthetic.safetensors"
+            self.write_safetensors(weights)
+            raw = weights.read_bytes()
+            header_size = struct.unpack("<Q", raw[:8])[0]
+            header = json.loads(raw[8:8 + header_size])
+            name = "base_model.model.model.layers.0.self_attn.o_proj.lora_A.weight"
+            self.assertEqual(header[name]["shape"], [16, 16 * 128])
+            receipt.validate_safetensors(weights, recipe)
+            # Rebuild every byte offset and the payload for the old width.
+            # Rejection must be dimensional, not caused by a corrupt layout.
+            self.write_safetensors(weights, output_projection_input_width=1024)
+            with self.assertRaises(receipt.ReceiptError):
+                receipt.validate_safetensors(weights, recipe)
 
     def test_receipt_binds_source_lineage_recipe_lock_and_adapter(self):
         with tempfile.TemporaryDirectory() as directory:

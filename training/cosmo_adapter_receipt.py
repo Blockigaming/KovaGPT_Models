@@ -364,7 +364,7 @@ def validate_safetensors(path: Path, recipe: dict,
     }
     input_width = {
         "q_proj": hidden, "k_proj": hidden,
-        "v_proj": hidden, "o_proj": hidden,
+        "v_proj": hidden, "o_proj": expected_query_size,
         "gate_proj": hidden, "up_proj": hidden,
         "down_proj": intermediate,
     }
