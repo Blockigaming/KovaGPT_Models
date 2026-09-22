@@ -46,6 +46,8 @@ class ThreeFamilyContractTests(unittest.TestCase):
             "expected_adapter_sha256": "b" * 64,
             "expected_runner_sha256": "c" * 64,
             "expected_case_id": "case-1",
+            "expected_variant": "trained_adapter",
+            "expected_case_category": "generated_answer",
             "expected_runtime_profile": "high",
             "expected_conversation_id": "conversation-1",
             "expected_session_id": "session-1",
@@ -57,6 +59,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
             prompt="Who are you?", answer="I am Kova.", runtime_profile="high",
             conversation_id="conversation-1", session_id="session-1",
             dimensions=["kova_identity_consistency"], private_key=private_key,
+            variant="trained_adapter", case_category="generated_answer",
             created_at="2026-09-21T00:00:00+00:00",
         )
         self.assertNotIn("public_key_ed25519_b64", evidence)
@@ -79,17 +82,37 @@ class ThreeFamilyContractTests(unittest.TestCase):
             "runner_sha256": "c" * 64, "case_id": "case-1", "prompt": "p", "answer": "a",
             "runtime_profile": "light", "conversation_id": "conversation-1",
             "session_id": "session-1", "private_key": private_key,
+            "variant": "trained_adapter", "case_category": "generated_answer",
         }
         for dimensions in (["not-a-required-dimension"], ["kova_identity_consistency"] * 2, [1]):
             with self.subTest(dimensions=dimensions), self.assertRaises(ValueError):
                 guard.create_evidence(**kwargs, dimensions=dimensions)
-        payloads = [{"dimensions": [dimension]} for dimension in sorted(guard.REQUIRED_DIMENSIONS)]
+        payloads = [
+            {"family": family, "variant": variant, "case_category": category,
+             "case_id": f"{family}:{variant}:{category}:{index}",
+             "runtime_profile": (
+                 guard.PROFILE_ORDER[index - 1] if category == "runtime_profile" else "light"),
+             "dimensions": ["kova_identity_consistency"]}
+            for family in sorted(guard.FAMILIES) for variant in guard.VARIANTS
+            for category, count in guard.CASE_CATEGORIES.items()
+            for index in range(1, count + 1)
+        ]
+        for index, dimension in enumerate(sorted(guard.REQUIRED_DIMENSIONS)):
+            payloads[index]["dimensions"] = [dimension]
         self.assertEqual(
             set(guard.validate_verified_dimension_coverage(payloads)),
             set(guard.REQUIRED_DIMENSIONS),
         )
-        with self.assertRaisesRegex(ValueError, "missing_required_dimensions"):
+        with self.assertRaisesRegex(ValueError, "incomplete_evaluation_matrix"):
             guard.validate_verified_dimension_coverage(payloads[:-1])
+        with self.assertRaisesRegex(ValueError, "duplicate_evaluation_case"):
+            guard.validate_verified_dimension_coverage(payloads[:-1] + [payloads[0]])
+        for field, value in (("variant", "fake"), ("family", "kova-unknown"),
+                             ("case_id", "other"), ("runtime_profile", "unknown")):
+            changed = deepcopy(payloads)
+            changed[0][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                guard.validate_verified_dimension_coverage(changed)
 
     def test_unconfigured_runner_key_fails_closed(self):
         private_key = Ed25519PrivateKey.generate()
@@ -99,6 +122,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
             runner_sha256="c" * 64, case_id="case-1", prompt="p", answer="a",
             runtime_profile="light", conversation_id="conversation-1", session_id="session-1",
             dimensions=["kova_identity_consistency"], private_key=private_key,
+            variant="trained_adapter", case_category="generated_answer",
         )
         with patch.object(guard, "PINNED_RUNNER_PUBLIC_KEY_B64", None), self.assertRaisesRegex(
                 ValueError, "trusted_runner_key_not_configured"):
@@ -107,8 +131,74 @@ class ThreeFamilyContractTests(unittest.TestCase):
                 expected_base_revision="e" * 40, expected_base_manifest_sha256="a" * 64,
                 expected_adapter_sha256="b" * 64, expected_runner_sha256="c" * 64,
                 expected_case_id="case-1", expected_runtime_profile="light",
+                expected_variant="trained_adapter", expected_case_category="generated_answer",
                 expected_conversation_id="conversation-1", expected_session_id="session-1",
             )
+
+    def test_signed_evaluation_matrix_rejects_missing_replayed_and_substituted_cases(self):
+        private_key = Ed25519PrivateKey.generate()
+        trusted_public = base64.b64encode(private_key.public_key().public_bytes_raw()).decode("ascii")
+        families = {
+            family: {"base_revision": "e" * 40, "base_manifest_sha256": "a" * 64,
+                     "adapter_sha256": "b" * 64, "runner_sha256": "c" * 64}
+            for family in guard.FAMILIES
+        }
+        case_pins, envelopes = {}, []
+        for family in sorted(guard.FAMILIES):
+            for variant in guard.VARIANTS:
+                for category, count in guard.CASE_CATEGORIES.items():
+                    for index in range(1, count + 1):
+                        case_id = f"{family}:{variant}:{category}:{index}"
+                        profile = (guard.PROFILE_ORDER[index - 1]
+                                   if category == "runtime_profile" else "light")
+                        prompt = f"Question {case_id}"
+                        case_pins[case_id] = {
+                            "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+                            "runtime_profile": profile,
+                            "conversation_id": f"conversation-{index}",
+                            "session_id": f"session-{index}",
+                        }
+                        envelopes.append(guard.create_evidence(
+                            source_commit="d" * 40, family=family,
+                            base_revision="e" * 40, base_manifest_sha256="a" * 64,
+                            adapter_sha256="b" * 64, runner_sha256="c" * 64,
+                            variant=variant, case_category=category, case_id=case_id,
+                            prompt=prompt, answer="I am Kova.", runtime_profile=profile,
+                            conversation_id=f"conversation-{index}", session_id=f"session-{index}",
+                            dimensions=[sorted(guard.REQUIRED_DIMENSIONS)[len(envelopes) % 12]],
+                            private_key=private_key,
+                        ))
+        with patch.object(guard, "PINNED_RUNNER_PUBLIC_KEY_B64", trusted_public):
+            self.assertEqual(set(guard.validate_evidence_matrix(
+                envelopes, source_commit="d" * 40, family_bindings=families,
+                case_bindings=case_pins)), guard.REQUIRED_DIMENSIONS)
+            with self.assertRaisesRegex(ValueError, "incomplete_evaluation_matrix"):
+                guard.validate_evidence_matrix(envelopes[:-1], source_commit="d" * 40,
+                                               family_bindings=families, case_bindings=case_pins)
+            with self.assertRaisesRegex(ValueError, "duplicate_or_unconfigured_evaluation_case"):
+                guard.validate_evidence_matrix(envelopes[:-1] + [envelopes[0]],
+                                               source_commit="d" * 40,
+                                               family_bindings=families, case_bindings=case_pins)
+            altered = deepcopy(envelopes)
+            altered[0]["payload"]["prompt"] = "substituted"
+            altered[0]["payload"]["prompt_sha256"] = hashlib.sha256(b"substituted").hexdigest()
+            with self.assertRaisesRegex(ValueError, "invalid_evidence_signature"):
+                guard.validate_evidence_matrix(altered, source_commit="d" * 40,
+                                               family_bindings=families, case_bindings=case_pins)
+            changed_pins = deepcopy(case_pins)
+            changed_pins[envelopes[0]["payload"]["case_id"]]["prompt_sha256"] = "f" * 64
+            with self.assertRaisesRegex(ValueError, "substituted_evaluation_prompt"):
+                guard.validate_evidence_matrix(envelopes, source_commit="d" * 40,
+                                               family_bindings=families, case_bindings=changed_pins)
+            signed_substitution = deepcopy(envelopes)
+            first = signed_substitution[0]["payload"]
+            first["prompt"] = "A different signed case under the same ID"
+            first["prompt_sha256"] = hashlib.sha256(first["prompt"].encode()).hexdigest()
+            signed_substitution[0]["signature_ed25519_b64"] = base64.b64encode(
+                private_key.sign(guard._canonical(first))).decode("ascii")
+            with self.assertRaisesRegex(ValueError, "substituted_evaluation_prompt"):
+                guard.validate_evidence_matrix(signed_substitution, source_commit="d" * 40,
+                                               family_bindings=families, case_bindings=case_pins)
 
     def test_authoritative_policy_cannot_drift(self):
         self.assertEqual(
@@ -163,7 +253,8 @@ class ThreeFamilyContractTests(unittest.TestCase):
         lineage = {"families": {family: {"manifest": "ignored"} for family in contract.FAMILIES}}
         def fake_load(path, **_):
             return lineage if path.name == "kova-private-lineage.v1.json" else manifest
-        with tempfile.TemporaryDirectory() as folder, patch.object(contract, "load_json", fake_load):
+        with tempfile.TemporaryDirectory() as folder, patch.object(contract, "load_json", fake_load), patch.object(
+                contract, "_pinned_manifest", return_value=manifest):
             root = Path(folder)
             (root / "config.json").write_bytes(b"{}")
             contract.verify_snapshot("kova-cosmo", root)
@@ -191,13 +282,133 @@ class ThreeFamilyContractTests(unittest.TestCase):
             path.write_text(json.dumps({"Items": [{
                 "armSkuName": "Standard_NC4as_T4_v3", "armRegionName": "eastus",
                 "currencyCode": "USD", "unitOfMeasure": "1 Hour", "retailPrice": 0.526,
+                "unitPrice": 0.526, "tierMinimumUnits": 0, "type": "Consumption",
+                "serviceName": "Virtual Machines", "serviceFamily": "Compute",
+                "productName": "Virtual Machines NCasT4 v3 Series",
+                "skuName": "NC4as T4 v3", "meterName": "NC4as T4 v3",
+                "isPrimaryMeterRegion": True,
             }]}))
             self.assertEqual(contract.validate_live_price_evidence(path)["status"], "live_price_admitted")
             value = json.loads(path.read_text())
             value["Items"][0]["retailPrice"] = 1.0
+            value["Items"][0]["unitPrice"] = 1.0
             path.write_text(json.dumps(value))
             with self.assertRaisesRegex(contract.ContractError, "six-dollar"):
                 contract.validate_live_price_evidence(path)
+
+    def test_live_price_rejects_discounted_secondary_incomplete_and_ambiguous_meters(self):
+        valid = {
+            "armSkuName": "Standard_NC4as_T4_v3", "armRegionName": "eastus",
+            "currencyCode": "USD", "unitOfMeasure": "1 Hour",
+            "retailPrice": 0.526, "unitPrice": 0.526, "tierMinimumUnits": 0,
+            "type": "Consumption", "serviceName": "Virtual Machines",
+            "serviceFamily": "Compute", "productName": "Virtual Machines NCasT4 v3 Series",
+            "skuName": "NC4as T4 v3", "meterName": "NC4as T4 v3",
+            "isPrimaryMeterRegion": True,
+        }
+        mutations = (
+            {"skuName": "NC4as T4 v3 Spot", "meterName": "NC4as T4 v3 Spot"},
+            {"skuName": "NC4as T4 v3 Low Priority", "meterName": "NC4as T4 v3 Low Priority"},
+            {"productName": "Virtual Machines NCasT4 v3 Series Windows"},
+            {"type": "DevTestConsumption"}, {"type": "Reservation"},
+            {"isPrimaryMeterRegion": False}, {"currencyCode": "EUR"},
+            {"unitOfMeasure": "1 Month"}, {"armRegionName": "westus"},
+            {"unitPrice": 0.105}, {"tierMinimumUnits": 1},
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "price.json"
+            for changed in mutations:
+                with self.subTest(changed=changed):
+                    path.write_text(json.dumps({"Items": [{**valid, **changed}]}))
+                    with self.assertRaises(contract.ContractError):
+                        contract.validate_live_price_evidence(path)
+            for response in (
+                {"Items": [valid, valid]},
+                {"Items": [valid], "NextPageLink": "https://prices.azure.com/next"},
+                {"Items": [valid], "Count": 2},
+                {"Items": [valid, "malformed"]},
+            ):
+                with self.subTest(response=response):
+                    path.write_text(json.dumps(response))
+                    with self.assertRaises(contract.ContractError):
+                        contract.validate_live_price_evidence(path)
+
+    def test_approval_pin_rejects_coordinated_dataset_contract_review_edits(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "config").mkdir()
+            (root / "data").mkdir()
+            source = contract.ROOT
+            cfg = contract.load_json(source / "config/kova-three-family-dataset.v2.json")
+            data_path = root / cfg["dataset_path"]
+            review_path = root / cfg["review_path"]
+            data_path.write_bytes((source / cfg["dataset_path"]).read_bytes() + b"\n")
+            review = contract.load_json(source / cfg["review_path"])
+            cfg["dataset_sha256"] = hashlib.sha256(data_path.read_bytes()).hexdigest()
+            cfg["approval"]["approved_dataset_sha256"] = cfg["dataset_sha256"]
+            review["approved_dataset_sha256"] = cfg["dataset_sha256"]
+            review["current_reconstructed_dataset_sha256"] = cfg["dataset_sha256"]
+            review_path.write_text(json.dumps(review))
+            (root / "config/kova-three-family-dataset.v2.json").write_text(json.dumps(cfg))
+            with patch.object(contract, "ROOT", root), self.assertRaises(contract.ContractError):
+                contract.validate_dataset()
+
+    def test_complete_manifest_pins_reject_coordinated_substitution_for_each_family(self):
+        original = contract.load_json
+        for family in contract.FAMILIES:
+            lineage = original(contract.ROOT / "config/kova-private-lineage.v1.json")["families"][family]
+            self.assertEqual(contract._pinned_manifest(family, lineage)["revision"],
+                             lineage["immutable_revision"])
+            with tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                target = root / contract.MANIFEST_PATHS[family]
+                target.parent.mkdir(parents=True)
+                manifest = original(contract.ROOT / contract.MANIFEST_PATHS[family])
+                manifest["files"][0]["sha256"] = "0" * 64
+                target.write_text(json.dumps(manifest))
+                with self.subTest(family=family), patch.object(contract, "ROOT", root), self.assertRaisesRegex(
+                        contract.ContractError, "complete manifest digest mismatch"):
+                    contract._pinned_manifest(family, lineage)
+
+    def test_qlora_recipe_rejects_swapped_manifest_and_dataset_for_each_family(self):
+        original = contract.load_json
+        for family in contract.FAMILIES:
+            name = f"{family}-qlora.v1.json"
+            source = original(contract.ROOT / "config" / name)
+            for field, bad in (
+                ("manifest", contract.MANIFEST_PATHS[next(f for f in contract.FAMILIES if f != family)]),
+                ("dataset", "config/kova-cosmo-sft.v1.json"),
+                ("output_directory", f"outputs/{next(f for f in contract.FAMILIES if f != family)}"),
+                ("upstream_repository", "Qwen/Other"),
+                ("immutable_revision", "0" * 40),
+            ):
+                changed = deepcopy(source)
+                changed[field] = bad
+                def fake_load(path, **kwargs):
+                    return changed if path.name == name else original(path, **kwargs)
+                with self.subTest(family=family, field=field), patch.object(
+                        contract, "load_json", side_effect=fake_load), self.assertRaises(contract.ContractError):
+                    contract.validate_training()
+
+    def test_json_numeric_overflow_is_rejected_at_any_depth(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "value.json"
+            for value in ("1e999", "-1e999", '{"deep":[{"value":1e999}]}',
+                          '{"deep":[{"value":-1e999}]}'):
+                path.write_text(value)
+                with self.subTest(value=value), self.assertRaises(contract.ContractError):
+                    contract.load_json(path)
+            path.write_text('{"value":1.25}')
+            self.assertEqual(contract.load_json(path)["value"], 1.25)
+
+    def test_familyless_grants_cannot_advance_ledger(self):
+        state = {"sequence": 0, "terminal": False, "family_order": [], "events": []}
+        for family in (None, "", "other"):
+            for event in ({"kind": "training_grant"}, {"kind": "training_grant", "family": family}):
+                with self.subTest(event=event), self.assertRaises(contract.ContractError):
+                    contract.append_ledger_event(state, event, expected_sequence=0)
+                self.assertEqual(state["sequence"], 0)
+                self.assertEqual(state["family_order"], [])
 
     def test_training_stack_versions_are_bound_to_hash_locked_requirements(self):
         base = contract.load_json(contract.ROOT / "config/kova-three-family-training-stack.v1.json")

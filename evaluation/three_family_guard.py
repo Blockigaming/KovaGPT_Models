@@ -14,6 +14,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 ROOT = Path(__file__).resolve().parents[1]
 FAMILIES = {"kova-cosmo", "kova-orion", "kova-nova"}
 PROFILES = {"light", "medium", "high", "extra-high", "max", "ultra"}
+VARIANTS = ("configured_base", "trained_adapter")
+CASE_CATEGORIES = {"generated_answer": 7, "isolation_integrity": 7, "runtime_profile": 6}
+PROFILE_ORDER = ("light", "medium", "high", "extra-high", "max", "ultra")
 SCHEMA = "kova-three-family-evaluation-evidence.v1"
 _CONFIG = json.loads((ROOT / "config/kova-three-family-evaluation.v1.json").read_text(encoding="utf-8"))
 PINNED_RUNNER_PUBLIC_KEY_B64 = _CONFIG["answer_binding"]["runner_public_key_ed25519_b64"]
@@ -64,18 +67,91 @@ def _validated_dimensions(dimensions) -> tuple[str, ...]:
 
 
 def validate_verified_dimension_coverage(payloads: list[dict]) -> tuple[str, ...]:
-    """Require full configured coverage across payloads already returned by verify_evidence."""
+    """Require every configured case from already verified runner payloads."""
     if type(payloads) is not list or not payloads:
         raise ValueError("missing_evaluation_evidence")
     covered = set()
+    observed = set()
     for payload in payloads:
         if type(payload) is not dict:
             raise ValueError("invalid_evaluation_payload")
+        family = payload.get("family")
+        variant = payload.get("variant")
+        category = payload.get("case_category")
+        case_id = payload.get("case_id")
+        profile = payload.get("runtime_profile")
+        if (type(family) is not str or family not in FAMILIES
+                or type(variant) is not str or variant not in VARIANTS
+                or type(category) is not str or category not in CASE_CATEGORIES):
+            raise ValueError("invalid_evaluation_matrix_cell")
+        if type(profile) is not str or profile not in PROFILES:
+            raise ValueError("invalid_evaluation_profile")
+        index = (PROFILE_ORDER.index(profile) + 1) if category == "runtime_profile" else None
+        valid_ids = {f"{family}:{variant}:{category}:{n}" for n in range(1, CASE_CATEGORIES[category] + 1)}
+        if type(case_id) is not str or case_id not in valid_ids:
+            raise ValueError("invalid_evaluation_case")
+        if index is not None and case_id != f"{family}:{variant}:{category}:{index}":
+            raise ValueError("runtime_profile_case_mismatch")
+        key = (family, variant, category, case_id, profile if category == "runtime_profile" else "")
+        if key in observed or any(row[:4] == key[:4] for row in observed):
+            raise ValueError("duplicate_evaluation_case")
+        observed.add(key)
         covered.update(_validated_dimensions(payload.get("dimensions")))
+    expected = {
+        (family, variant, category, f"{family}:{variant}:{category}:{n}")
+        for family in FAMILIES for variant in VARIANTS
+        for category, count in CASE_CATEGORIES.items() for n in range(1, count + 1)
+    }
+    if {row[:4] for row in observed} != expected or len(payloads) != 120:
+        raise ValueError("incomplete_evaluation_matrix")
     missing = REQUIRED_DIMENSIONS - covered
     if missing:
         raise ValueError("missing_required_dimensions:" + ",".join(sorted(missing)))
     return tuple(sorted(covered))
+
+
+def validate_evidence_matrix(envelopes: list[dict], *, source_commit: str,
+                             family_bindings: dict, case_bindings: dict) -> tuple[str, ...]:
+    """Verify signed answers against trusted per-family and per-case input pins."""
+    if type(envelopes) is not list or len(envelopes) != 120:
+        raise ValueError("incomplete_evaluation_matrix")
+    expected_cases = {
+        f"{family}:{variant}:{category}:{n}"
+        for family in FAMILIES for variant in VARIANTS
+        for category, count in CASE_CATEGORIES.items() for n in range(1, count + 1)
+    }
+    if set(family_bindings) != FAMILIES or set(case_bindings) != expected_cases:
+        raise ValueError("untrusted_or_incomplete_evaluation_inputs")
+    verified = []
+    seen = set()
+    for envelope in envelopes:
+        if type(envelope) is not dict or type(envelope.get("payload")) is not dict:
+            raise ValueError("invalid_evaluation_envelope")
+        claimed = envelope["payload"]
+        case_id = claimed.get("case_id")
+        if type(case_id) is not str or case_id not in expected_cases or case_id in seen:
+            raise ValueError("duplicate_or_unconfigured_evaluation_case")
+        seen.add(case_id)
+        family, variant, category, _ = case_id.split(":")
+        pin = case_bindings[case_id]
+        family_pin = family_bindings[family]
+        if type(pin) is not dict or type(family_pin) is not dict:
+            raise ValueError("invalid_evaluation_input_pin")
+        payload = verify_evidence(
+            envelope, expected_source_commit=source_commit, expected_family=family,
+            expected_base_revision=family_pin["base_revision"],
+            expected_base_manifest_sha256=family_pin["base_manifest_sha256"],
+            expected_adapter_sha256=family_pin["adapter_sha256"],
+            expected_runner_sha256=family_pin["runner_sha256"],
+            expected_case_id=case_id, expected_variant=variant,
+            expected_case_category=category, expected_runtime_profile=pin["runtime_profile"],
+            expected_conversation_id=pin["conversation_id"],
+            expected_session_id=pin["session_id"],
+        )
+        if payload["prompt_sha256"] != pin["prompt_sha256"]:
+            raise ValueError("substituted_evaluation_prompt")
+        verified.append(payload)
+    return validate_verified_dimension_coverage(verified)
 
 
 def create_evidence(*, source_commit: str, family: str, base_revision: str,
@@ -83,7 +159,7 @@ def create_evidence(*, source_commit: str, family: str, base_revision: str,
                     runner_sha256: str, case_id: str, prompt: str, answer: str,
                     runtime_profile: str, conversation_id: str, session_id: str,
                     dimensions: list[str], private_key: Ed25519PrivateKey,
-                    created_at: str | None = None) -> dict:
+                    variant: str, case_category: str, created_at: str | None = None) -> dict:
     if family not in FAMILIES:
         raise ValueError("unknown_family")
     if not _hex(source_commit, 40) or not _hex(base_revision, 40):
@@ -96,6 +172,8 @@ def create_evidence(*, source_commit: str, family: str, base_revision: str,
         raise ValueError("invalid_evaluation_context")
     if runtime_profile not in PROFILES:
         raise ValueError("invalid_runtime_profile")
+    if variant not in VARIANTS or case_category not in CASE_CATEGORIES:
+        raise ValueError("invalid_evaluation_matrix_cell")
     if not isinstance(prompt, str) or not prompt or not isinstance(answer, str) or not answer:
         raise ValueError("empty_evaluation_binding")
     dimensions = list(_validated_dimensions(dimensions))
@@ -108,6 +186,8 @@ def create_evidence(*, source_commit: str, family: str, base_revision: str,
         "adapter_sha256": adapter_sha256,
         "runner_sha256": runner_sha256,
         "case_id": case_id,
+        "variant": variant,
+        "case_category": case_category,
         "prompt": prompt,
         "prompt_sha256": _sha256_text(prompt),
         "answer": answer,
@@ -142,7 +222,8 @@ def verify_evidence(evidence: dict, *, expected_source_commit: str,
                     expected_base_manifest_sha256: str, expected_adapter_sha256: str,
                     expected_runner_sha256: str, expected_case_id: str,
                     expected_runtime_profile: str, expected_conversation_id: str,
-                    expected_session_id: str) -> dict:
+                    expected_session_id: str, expected_variant: str,
+                    expected_case_category: str) -> dict:
     if set(evidence) != {"payload", "signature_ed25519_b64"}:
         raise ValueError("invalid_evidence_shape")
     payload = evidence["payload"]
@@ -154,6 +235,8 @@ def verify_evidence(evidence: dict, *, expected_source_commit: str,
         "adapter_sha256": expected_adapter_sha256,
         "runner_sha256": expected_runner_sha256,
         "case_id": expected_case_id,
+        "variant": expected_variant,
+        "case_category": expected_case_category,
         "runtime_profile": expected_runtime_profile,
         "conversation_id": expected_conversation_id,
         "session_id": expected_session_id,

@@ -25,6 +25,19 @@ FALSE_GATES = (
     "evaluation_execution_authorized", "deployment_authorized",
     "production_routing_enabled",
 )
+APPROVED_DATASET_SHA256 = "fa6406b2be2e607f8a40565bf9340db226a6fb8def4d5342d30dc38105696051"
+APPROVED_REVIEW_SHA256 = "618afd809876d1b51b38f58999df6b8b492c823ab158c6e472083643c4004bf9"
+APPROVED_PROMPT_SHA256 = "ed1b503f947cabc6a7c24a9395bd63b9eff2dd55d57570a0d5a8fd51df3c5bc8"
+MANIFEST_SHA256 = {
+    "kova-cosmo": "d1dd63b2ee120b0944a58021a21608a46bb03074f87adbafb067b2aedccaf162",
+    "kova-orion": "d4eb95e29eef9a92445e3b7622d17f066678e5dc0915fd5a3c40189167c5e746",
+    "kova-nova": "8fd1bac2209b5f1c4f1412fc1797b29e0bdc4609025bdd176660dd560fa97566",
+}
+MANIFEST_PATHS = {
+    "kova-cosmo": "config/qwen3-0.6b-download-manifest.v1.json",
+    "kova-orion": "config/qwen3-1.7b-download-manifest.v1.json",
+    "kova-nova": "config/qwen3-4b-download-manifest.v1.json",
+}
 
 
 class ContractError(ValueError):
@@ -49,9 +62,17 @@ def load_json(path: Path, *, maximum_bytes: int = 256 * 1024):
         raw = path.read_bytes()
         need(0 < len(raw) <= maximum_bytes, "invalid JSON size")
         return json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=_unique,
-                          parse_constant=lambda _: need(False, "nonfinite JSON"))
+                          parse_constant=lambda _: need(False, "nonfinite JSON"),
+                          parse_float=_finite_json_float)
     except (OSError, UnicodeError, json.JSONDecodeError, RecursionError, TypeError):
         raise ContractError("invalid UTF-8 JSON contract") from None
+
+
+def _finite_json_float(value: str) -> float:
+    parsed = float(value)
+    need(Decimal(value).is_finite() and parsed != float("inf") and parsed != float("-inf"),
+         "nonfinite JSON")
+    return parsed
 
 
 def sha256(path: Path) -> str:
@@ -113,7 +134,7 @@ def validate_lineage_and_manifests():
     for family, (repository, revision, file_count) in expected.items():
         item = lineage["families"][family]
         need(item["upstream_repository"] == repository and item["immutable_revision"] == revision)
-        manifest = load_json(ROOT / item["manifest"])
+        manifest = _pinned_manifest(family, item)
         need(manifest["model"] == repository and manifest["revision"] == revision)
         files = manifest["files"]
         need(len(files) == file_count)
@@ -132,11 +153,18 @@ def validate_lineage_and_manifests():
     return totals
 
 
+def _pinned_manifest(family: str, lineage_item: dict) -> dict:
+    need(lineage_item["manifest"] == MANIFEST_PATHS[family], "family manifest path mismatch")
+    path = ROOT / MANIFEST_PATHS[family]
+    need(sha256(path) == MANIFEST_SHA256[family], "complete manifest digest mismatch")
+    return load_json(path)
+
+
 def verify_snapshot(family: str, directory: Path) -> None:
     """Reject every missing, extra, substituted, or modified model file."""
     lineage = load_json(ROOT / "config/kova-private-lineage.v1.json")
     need(family in FAMILIES, "unknown family")
-    manifest = load_json(ROOT / lineage["families"][family]["manifest"])
+    manifest = _pinned_manifest(family, lineage["families"][family])
     expected = {entry["path"]: entry for entry in manifest["files"]}
     actual = {path.relative_to(directory).as_posix(): path for path in directory.rglob("*") if path.is_file()}
     need(set(actual) == set(expected), "snapshot allowlist mismatch")
@@ -148,11 +176,18 @@ def verify_snapshot(family: str, directory: Path) -> None:
 
 def validate_dataset():
     contract = load_json(ROOT / "config/kova-three-family-dataset.v2.json")
+    need(contract["dataset_path"] == "data/kova-identity-shared.v2.jsonl")
+    need(contract["prompt_path"] == "prompts/kova-identity.v3.txt")
+    need(contract["review_path"] == "data/kova-identity-shared-review.v2.json")
+    need(contract["dataset_sha256"] == APPROVED_DATASET_SHA256, "unapproved dataset digest")
     dataset = ROOT / contract["dataset_path"]
     prompt = ROOT / contract["prompt_path"]
+    need(sha256(ROOT / contract["review_path"]) == APPROVED_REVIEW_SHA256,
+         "owner review ledger digest mismatch")
     review = load_json(ROOT / contract["review_path"])
-    need(sha256(dataset) == contract["dataset_sha256"])
-    need(sha256(prompt) == contract["prompt_sha256"])
+    need(sha256(dataset) == APPROVED_DATASET_SHA256, "unapproved dataset bytes")
+    need(contract["prompt_sha256"] == APPROVED_PROMPT_SHA256
+         and sha256(prompt) == APPROVED_PROMPT_SHA256, "approved prompt mismatch")
     rows = []
     for raw in dataset.read_bytes().splitlines():
         try:
@@ -224,6 +259,20 @@ def validate_training():
     for family, (sequence, elapsed, allowance) in expected.items():
         cfg = load_json(ROOT / f"config/{family}-qlora.v1.json")
         need(cfg["family"] == family and cfg["method"] == "four_bit_qlora_lora_sft")
+        need(cfg["manifest"] == MANIFEST_PATHS[family], "recipe manifest mismatch")
+        need(cfg["dataset"] == "config/kova-three-family-dataset.v2.json",
+             "recipe dataset mismatch")
+        need(cfg.get("output_directory") == f"outputs/{family}",
+             "recipe output boundary mismatch")
+        lineage_item = load_json(ROOT / "config/kova-private-lineage.v1.json")["families"][family]
+        manifest = _pinned_manifest(family, lineage_item)
+        need(cfg.get("upstream_repository") == lineage_item["upstream_repository"]
+             and cfg.get("immutable_revision") == lineage_item["immutable_revision"]
+             and manifest["model"] == cfg["upstream_repository"]
+             and manifest["revision"] == cfg["immutable_revision"],
+             "recipe model lineage mismatch")
+        need(load_json(ROOT / cfg["dataset"])["dataset_sha256"] == APPROVED_DATASET_SHA256,
+             "recipe dataset digest mismatch")
         need(cfg["quantization"] == {"bits": 4, "type": "nf4", "double_quant": True,
                                      "compute_dtype": "float16"})
         need(cfg["training"]["maximum_sequence_length"] == sequence)
@@ -283,21 +332,48 @@ def admit_bootstrap(hourly_compute_rate: Decimal) -> Decimal:
 def validate_live_price_evidence(path: Path) -> dict:
     """Consume an already-captured Azure Retail Prices response and fail closed."""
     value = load_json(path, maximum_bytes=64 * 1024)
+    need(type(value) is dict and value.get("NextPageLink") in (None, ""),
+         "incomplete live-price response")
     items = value.get("Items")
-    need(type(items) is list and len(items) == 1, "live-price evidence must contain exactly one item")
-    item = items[0]
-    need(type(item) is dict, "invalid live-price item")
-    need(item.get("armSkuName") == "Standard_NC4as_T4_v3", "live-price SKU mismatch")
-    need(item.get("armRegionName") == "eastus", "live-price region mismatch")
-    need(item.get("currencyCode") == "USD", "live-price currency mismatch")
-    need(item.get("unitOfMeasure") == "1 Hour", "live-price unit mismatch")
+    need(type(items) is list and items, "empty live-price response")
+    need(value.get("Count", len(items)) == len(items), "live-price response count mismatch")
+    need(all(type(entry) is dict for entry in items), "invalid live-price item")
+    for entry in items:
+        need(entry.get("armSkuName") == "Standard_NC4as_T4_v3"
+             and entry.get("armRegionName") == "eastus"
+             and entry.get("currencyCode") == "USD"
+             and entry.get("serviceName") == "Virtual Machines"
+             and entry.get("serviceFamily") == "Compute"
+             and entry.get("unitOfMeasure") == "1 Hour"
+             and type(entry.get("productName")) is str
+             and type(entry.get("skuName")) is str
+             and type(entry.get("meterName")) is str
+             and entry.get("type") in ("Consumption", "DevTestConsumption", "Reservation")
+             and type(entry.get("isPrimaryMeterRegion")) is bool,
+             "malformed or unrelated live-price meter")
+    matches = [entry for entry in items
+               if entry.get("armSkuName") == "Standard_NC4as_T4_v3"
+               and entry.get("armRegionName") == "eastus"
+               and entry.get("currencyCode") == "USD"
+               and entry.get("serviceName") == "Virtual Machines"
+               and entry.get("serviceFamily") == "Compute"
+               and entry.get("productName") == "Virtual Machines NCasT4 v3 Series"
+               and entry.get("skuName") == "NC4as T4 v3"
+               and entry.get("meterName") == "NC4as T4 v3"
+               and entry.get("type") == "Consumption"
+               and entry.get("isPrimaryMeterRegion") is True
+               and entry.get("unitOfMeasure") == "1 Hour"]
+    need(len(matches) == 1, "missing or ambiguous Linux pay-as-you-go meter")
+    item = matches[0]
+    need(item.get("tierMinimumUnits") == 0, "tiered live price")
     raw_rate = item.get("retailPrice")
     need(type(raw_rate) in (int, float, str) and not isinstance(raw_rate, bool), "invalid live price")
     try:
         rate = Decimal(str(raw_rate))
+        unit_rate = Decimal(str(item.get("unitPrice")))
     except (InvalidOperation, ValueError):
         raise ContractError("invalid live price") from None
-    need(rate.is_finite() and rate >= 0, "invalid live price")
+    need(rate.is_finite() and rate > 0 and unit_rate == rate, "invalid live price")
     total = admit_bootstrap(rate)
     return {
         "status": "live_price_admitted",
@@ -394,6 +470,7 @@ def append_ledger_event(state: dict, event: dict, *, expected_sequence: int) -> 
             need(family not in order, "duplicate family grant")
             need(family == FAMILIES[len(order)], "out-of-order family grant")
             order.append(family)
+    need(kind != "training_grant" or family in FAMILIES, "training grant requires a family")
     assigned = expected_sequence + 1
     committed = json.loads(json.dumps(event))
     committed["sequence"] = assigned
