@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
@@ -32,6 +33,24 @@ def _load(path: Path) -> dict:
     return json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=_unique)
 
 
+def _policy_routes(policy: dict, surface: str, tier: str) -> frozenset[str]:
+    return frozenset(
+        f"{surface}:{family}:{level}"
+        for family, levels in policy["entitlements"][surface][tier].items()
+        for level in levels
+    )
+
+
+def _runtime_entitlements(root: Path):
+    path = root / "router/entitlements.py"
+    spec = importlib.util.spec_from_file_location("_kova_source_policy_runtime_entitlements", path)
+    if spec is None or spec.loader is None:
+        raise ValueError("runtime_entitlements_unloadable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.CHAT_ALLOWED_BY_TIER, module.WORK_ALLOWED_BY_TIER
+
+
 def validate(root: Path = ROOT) -> dict:
     policy = _load(root / "config/current-product-policy.v3.json")
     expected = {"free": (1, 0), "plus": (6, 18), "pro": (12, 18)}
@@ -42,6 +61,15 @@ def validate(root: Path = ROOT) -> dict:
         actual_work = sum(len(levels) for levels in policy["entitlements"]["work"][tier].values())
         if actual_chat != chat or actual_work != work:
             raise ValueError(f"entitlement_drift:{tier}")
+
+    runtime_chat, runtime_work = _runtime_entitlements(root)
+    for surface, runtime in (("chat", runtime_chat), ("work", runtime_work)):
+        if set(runtime) != set(expected):
+            raise ValueError(f"entitlement_runtime_tier_drift:{surface}")
+        for tier in expected:
+            if frozenset(runtime[tier]) != _policy_routes(policy, surface, tier):
+                raise ValueError(f"entitlement_runtime_drift:{surface}:{tier}")
+
     if policy["processing_levels_are_separate_models"] is not False:
         raise ValueError("runtime_profiles_must_not_be_models")
     for name in ARCHIVED:
@@ -51,9 +79,9 @@ def validate(root: Path = ROOT) -> dict:
         if value.get("must_not_drive_current_routing") is not True:
             raise ValueError(f"legacy_file_can_drive_routing:{name}")
     for relative in PUBLIC_SOURCE:
-        text = (root / relative).read_text("utf-8", errors="strict")
+        source = (root / relative).read_text("utf-8", errors="strict")
         for token in FORBIDDEN_PUBLIC:
-            if token in text:
+            if token in source:
                 raise ValueError(f"private_upstream_leak:{Path(relative).name}:{token}")
     gate_names = (
         "resource_creation_authorized", "spending_authorized", "model_download_authorized",
