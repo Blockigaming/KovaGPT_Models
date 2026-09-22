@@ -28,6 +28,14 @@ class SourcePolicyDriftTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "nova_must_be_work_only"):
             validate(self.root)
 
+    def test_same_total_entitlement_cell_swap_fails(self):
+        path = self.root / "config/current-product-policy.v3.json"
+        value = json.loads(path.read_text())
+        value["entitlements"]["chat"]["plus"]["cosmo"] = ["light", "medium", "max"]
+        path.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, "entitlement_runtime_drift:chat:plus"):
+            validate(self.root)
+
     def test_legacy_file_cannot_regain_authority(self):
         path = self.root / "config/product-surface.v1.json"
         value = json.loads(path.read_text())
