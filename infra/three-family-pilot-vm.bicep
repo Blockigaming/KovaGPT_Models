@@ -105,6 +105,19 @@ resource vm 'Microsoft.Compute/virtualMachines@2024-07-01' = if (provisionPilot)
   }
 }
 
+resource nvidiaGpuDriver 'Microsoft.Compute/virtualMachines/extensions@2024-03-01' = if (provisionPilot) {
+  parent: vm
+  name: 'NvidiaGpuDriverLinux'
+  location: location
+  properties: {
+    publisher: 'Microsoft.HpcCompute'
+    type: 'NvidiaGpuDriverLinux'
+    typeHandlerVersion: '1.10'
+    autoUpgradeMinorVersion: false
+    enableAutomaticUpgrade: false
+  }
+}
+
 output resourceCreationAuthorized bool = false
 output publicIpCreated bool = false
 output deploymentAuthorized bool = false
