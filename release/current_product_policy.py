@@ -1,4 +1,5 @@
 """Validate the owner-approved three-family product policy without enabling it."""
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -9,30 +10,28 @@ ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / "config/current-product-policy.v3.json"
 MAX_POLICY_BYTES = 64 * 1024
 CurrentPolicyError = ContractError
-CANONICAL_POLICY = load_json(POLICY_PATH, maximum_bytes=MAX_POLICY_BYTES)
+# Canonical SHA-256 of the separately reviewed v3 policy. The expected value is
+# intentionally independent of POLICY_PATH so changing that file alone cannot
+# redefine the accepted policy at process start.
+CANONICAL_POLICY_SHA256 = "39bc4ac719eb8939ad3680314e4e55f891771693c7973732196f683059ed098a"
 
 
-def _exact(actual, expected):
-    if type(actual) is not type(expected):
-        raise CurrentPolicyError("current product policy rejected")
-    if isinstance(expected, dict):
-        if set(actual) != set(expected):
-            raise CurrentPolicyError("current product policy rejected")
-        for key in expected:
-            _exact(actual[key], expected[key])
-    elif isinstance(expected, list):
-        if len(actual) != len(expected):
-            raise CurrentPolicyError("current product policy rejected")
-        for left, right in zip(actual, expected, strict=True):
-            _exact(left, right)
-    elif actual != expected:
-        raise CurrentPolicyError("current product policy rejected")
+def _canonical_digest(value) -> str:
+    try:
+        encoded = json.dumps(
+            value, ensure_ascii=False, allow_nan=False, sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8", "strict")
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        raise CurrentPolicyError("current product policy rejected") from None
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def load_policy():
     try:
         value = load_json(POLICY_PATH, maximum_bytes=MAX_POLICY_BYTES)
-        _exact(value, CANONICAL_POLICY)
+        if _canonical_digest(value) != CANONICAL_POLICY_SHA256:
+            raise CurrentPolicyError("current product policy rejected")
         return value
     except ContractError:
         raise CurrentPolicyError("current product policy rejected") from None
