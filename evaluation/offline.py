@@ -1,4 +1,4 @@
-"""Run reproducible, provider-free checks for the 25 Kova route contracts."""
+"""Run reproducible, provider-free checks for the 37 Kova route contracts."""
 
 import json
 import re
@@ -49,8 +49,8 @@ def _route_contract(route_id):
 def build_route_manifest():
     """Resolve the checked-in expectations through the actual server router."""
     contracts = SUITE["route_contracts"]
-    _require(SUITE["target_routes"] == 25 and len(contracts) == 25, "offline suite must define exactly 25 routes")
-    _require(len({item["route_id"] for item in contracts}) == 25, "offline route IDs must be unique")
+    _require(SUITE["target_routes"] == 37 and len(contracts) == 37, "offline suite must define exactly 37 routes")
+    _require(len({item["route_id"] for item in contracts}) == 37, "offline route IDs must be unique")
     manifest = []
     for contract in contracts:
         selector = contract["selector"]
@@ -86,7 +86,7 @@ def _core_request(contract):
         "request_id": f"offline-{contract['route_id']}",
         "messages": [{"role": "user", "content": "Produce a concise, accurate project assessment."}],
     }
-    if selector["surface"] == "chat":
+    if selector["surface"] == "chat" and "route_id" in selector:
         return {**base, "route_id": selector["route_id"]}
     return {**base, **selector}
 
@@ -97,7 +97,7 @@ def _ultra_request(contract):
         "request_id": f"offline-{contract['route_id']}",
         "task": "Research competitors, compare pricing and security, and create a project report.",
     }
-    if selector["surface"] == "chat":
+    if selector["surface"] == "chat" and "route_id" in selector:
         return {**base, "route_id": selector["route_id"]}
     return {**base, **selector}
 
@@ -400,7 +400,7 @@ def run_offline_suite():
         "core": sum(item["engine"] == "kova-core" for item in manifest),
         "ultra": sum(item["engine"] == "kova-ultra" for item in manifest),
     }
-    _require(engine_counts == {"auto": 1, "core": 20, "ultra": 4}, "unexpected 25-route engine split")
+    _require(engine_counts == {"auto": 1, "core": 30, "ultra": 6}, "unexpected 37-route engine split")
 
     operation_counts = {}
     for contract in SUITE["route_contracts"]:
