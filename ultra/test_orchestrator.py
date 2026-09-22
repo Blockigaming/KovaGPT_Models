@@ -103,13 +103,13 @@ class UltraPlannerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "after input and artifact reservation"):
             self.build(self.request("x" * 100_000), max_total_tokens=4096)
 
-    def test_work_ultra_preserves_distinct_family_behavior(self):
+    def test_plus_work_ultra_is_admitted_and_preserves_distinct_family_behavior(self):
         plans = []
         for family in ("cosmo", "orion", "nova"):
             plans.append(self.build({
                 "request_id": family, "task": "Create a project report.",
                 "surface": "work", "family": family, "effort": "Ultra",
-            }))
+            }, entitlement="plus"))
         self.assertEqual(len({plan["behavior_contract_id"] for plan in plans}), 3)
 
     def test_trusted_token_counter_is_required(self):
