@@ -8,6 +8,9 @@ param location string = resourceGroup().location
 param suffix string
 param subscriptionId string
 param pilotResourceGroupName string
+@minLength(3)
+@maxLength(16)
+param pilotSuffix string
 param controllerPrincipalObjectId string
 @description('Immutable UTC cleanup deadline supplied by the future authorized controller.')
 param deadlineUtc string
@@ -101,7 +104,7 @@ resource workflow 'Microsoft.Logic/workflows@2019-05-01' = if (provisionWatchdog
           type: 'Http'
           inputs: {
             method: 'POST'
-            uri: '${managementEndpoint}subscriptions/${subscriptionId}/resourceGroups/${pilotResourceGroupName}/providers/Microsoft.Compute/virtualMachines/kova-t4-${suffix}/deallocate?api-version=2024-07-01'
+            uri: '${managementEndpoint}subscriptions/${subscriptionId}/resourceGroups/${pilotResourceGroupName}/providers/Microsoft.Compute/virtualMachines/kova-t4-${pilotSuffix}/deallocate?api-version=2024-07-01'
             authentication: {
               type: 'ManagedServiceIdentity'
               audience: managementEndpoint
