@@ -57,11 +57,15 @@ def _domains(task):
     return selected or ["general"]
 
 
-def _validate_admission(admission):
+def _validate_admission(admission, *, surface):
     _require(isinstance(admission, dict), "trusted Ultra admission missing")
     expected = {"entitlement", "ultra_authorized", "remaining_usd", "estimated_max_usd", "max_agents", "max_total_tokens"}
     _require(set(admission) == expected, "invalid Ultra admission")
-    _require(admission["entitlement"] == "pro", "Ultra requires Pro entitlement")
+    _require(surface in ("chat", "work"), "invalid Ultra surface")
+    if surface == "chat":
+        _require(admission["entitlement"] == "pro", "Chat Ultra requires Pro entitlement")
+    else:
+        _require(admission["entitlement"] in ("plus", "pro"), "Work Ultra requires Plus or Pro entitlement")
     _require(admission["ultra_authorized"] is True, "Ultra execution is not authorized")
     for field in ("remaining_usd", "estimated_max_usd"):
         value = admission[field]
@@ -172,7 +176,7 @@ def build_ultra_plan(request, *, admission, token_counter):
     task = conversation[-1]["content"] if conversation is not None else request["task"]
     _require(isinstance(task, str) and task.strip(), "task must be nonempty text")
     _require(len(task) <= 250_000, "task too large")
-    _validate_admission(admission)
+    _validate_admission(admission, surface=policy["surface"])
     _require(callable(token_counter), "trusted token counter missing")
     domains = _domains(task)
     _require(len(domains) <= admission["max_agents"], "max_agents insufficient for detected domain coverage")
