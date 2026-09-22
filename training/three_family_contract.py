@@ -7,7 +7,8 @@ signed evidence and the exact operator plan after an explicit owner release.
 
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_CEILING
+import argparse
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import hashlib
 import json
 from pathlib import Path
@@ -252,6 +253,76 @@ def admit_bootstrap(hourly_compute_rate: Decimal) -> Decimal:
     return total
 
 
+def validate_live_price_evidence(path: Path) -> dict:
+    """Consume an already-captured Azure Retail Prices response and fail closed."""
+    value = load_json(path, maximum_bytes=64 * 1024)
+    items = value.get("Items")
+    need(type(items) is list and len(items) == 1, "live-price evidence must contain exactly one item")
+    item = items[0]
+    need(type(item) is dict, "invalid live-price item")
+    need(item.get("armSkuName") == "Standard_NC4as_T4_v3", "live-price SKU mismatch")
+    need(item.get("armRegionName") == "eastus", "live-price region mismatch")
+    need(item.get("currencyCode") == "USD", "live-price currency mismatch")
+    need(item.get("unitOfMeasure") == "1 Hour", "live-price unit mismatch")
+    raw_rate = item.get("retailPrice")
+    need(type(raw_rate) in (int, float, str) and not isinstance(raw_rate, bool), "invalid live price")
+    try:
+        rate = Decimal(str(raw_rate))
+    except (InvalidOperation, ValueError):
+        raise ContractError("invalid live price") from None
+    need(rate.is_finite() and rate >= 0, "invalid live price")
+    total = admit_bootstrap(rate)
+    return {
+        "status": "live_price_admitted",
+        "hourly_compute_rate_usd": str(rate),
+        "worst_case_total_usd": str(total),
+        "hard_ceiling_usd": "6.0000",
+    }
+
+
+def validate_probe_evidence(path: Path) -> dict:
+    """Validate supplied T4/CUDA/bitsandbytes probe evidence; never run a probe."""
+    value = load_json(path, maximum_bytes=64 * 1024)
+    compat = load_json(ROOT / "config/kova-t4-compatibility.v1.json")
+    stack = load_json(ROOT / "config/kova-three-family-training-stack.v1.json")
+    need(set(value) == {
+        "schema_version", "device_name", "compute_capability", "cuda_version",
+        "bitsandbytes_four_bit_available", "available_vram_bytes", "free_disk_bytes",
+        "family_probes",
+    }, "invalid T4 probe evidence shape")
+    need(value["schema_version"] == 1, "invalid T4 probe evidence schema")
+    need(value["device_name"] == compat["device"]["exact_name"], "unexpected GPU")
+    need(value["compute_capability"] == compat["device"]["cuda_compute_capability"],
+         "unexpected compute capability")
+    need(value["cuda_version"] == stack["cuda"], "unexpected CUDA version")
+    need(value["bitsandbytes_four_bit_available"] is True, "four-bit runtime unavailable")
+    available = value["available_vram_bytes"]
+    free_disk = value["free_disk_bytes"]
+    need(type(available) is int and available > 0, "invalid available VRAM")
+    need(type(free_disk) is int and free_disk >= compat["combined_base_and_adapter_disk_minimum_bytes"],
+         "insufficient free disk")
+    probes = value["family_probes"]
+    need(type(probes) is dict and set(probes) == set(FAMILIES), "family probe set mismatch")
+    for family in FAMILIES:
+        measured = probes[family]
+        expected = compat["families"][family]
+        need(type(measured) is dict and set(measured) == {
+            "peak_vram_bytes", "maximum_sequence_length", "probe_passed",
+        }, "invalid family probe")
+        peak = measured["peak_vram_bytes"]
+        need(measured["probe_passed"] is True, "family probe failed")
+        need(type(peak) is int and 0 < peak <= expected["estimated_peak_vram_bytes"],
+             "measured peak exceeds estimate")
+        need(peak <= available, "measured peak exceeds available VRAM")
+        need(measured["maximum_sequence_length"] == expected["maximum_sequence_length"],
+             "sequence-length probe mismatch")
+    return {
+        "status": "t4_probe_evidence_valid",
+        "device_name": value["device_name"],
+        "families": list(FAMILIES),
+    }
+
+
 def validate_cost_lifecycle_operator():
     cost = load_json(ROOT / "config/kova-three-family-cost-guard.v1.json")
     need(Decimal(cost["combined_hard_ceiling"]) == Decimal("6.0000"))
@@ -284,6 +355,7 @@ def append_ledger_event(state: dict, event: dict, *, expected_sequence: int) -> 
     need(state.get("terminal") is False, "ledger is terminal")
     need(type(expected_sequence) is int and expected_sequence == state.get("sequence"), "stale ledger sequence")
     need(event.get("sequence") is None, "caller cannot assign ledger sequence")
+    state = json.loads(json.dumps(state))
     family = event.get("family")
     kind = event.get("kind")
     need(kind in ("watchdog_health", "cost_admission", "training_grant", "family_preserved", "cleanup_terminal"),
@@ -298,7 +370,6 @@ def append_ledger_event(state: dict, event: dict, *, expected_sequence: int) -> 
     assigned = expected_sequence + 1
     committed = json.loads(json.dumps(event))
     committed["sequence"] = assigned
-    state = json.loads(json.dumps(state))
     state["sequence"] = assigned
     state.setdefault("events", []).append(committed)
     if kind == "cleanup_terminal":
@@ -326,8 +397,19 @@ def validate():
     }
 
 
-def main() -> int:
-    print(json.dumps(validate(), sort_keys=True))
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser()
+    evidence = parser.add_mutually_exclusive_group()
+    evidence.add_argument("--probe-evidence", type=Path)
+    evidence.add_argument("--retail-price-evidence", type=Path)
+    args = parser.parse_args(argv)
+    if args.probe_evidence is not None:
+        report = validate_probe_evidence(args.probe_evidence)
+    elif args.retail_price_evidence is not None:
+        report = validate_live_price_evidence(args.retail_price_evidence)
+    else:
+        report = validate()
+    print(json.dumps(report, sort_keys=True))
     return 0
 
 
