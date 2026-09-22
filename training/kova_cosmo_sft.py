@@ -21,6 +21,11 @@ from training.cosmo_adapter_receipt import (
 )
 from training.cosmo_artifacts import ArtifactError, verify_snapshot
 from training.cosmo_hardware import HardwareError, verify_nvidia_t4
+from training.cosmo_generation_attestation import (
+    AttestationError,
+    load_signing_key,
+    load_trust_policy as load_generation_trust_policy,
+)
 from training.identity_pilot import load as load_identity_pilot
 from training.identity_pilot import format_messages
 from training.identity_pilot_review import validate as validate_identity_review
@@ -273,6 +278,18 @@ def execute() -> dict:
     need(resolved_snapshot not in output.parents and
          output not in resolved_snapshot.parents)
     verify_source_checkout(source_commit)
+    try:
+        signing_trust = load_generation_trust_policy(ROOT)
+        signing_key_path = Path(os.environ[
+            signing_trust["runner_private_key_environment_variable"]
+        ])
+        signing_key = load_signing_key(
+            signing_key_path,
+            expected_public_key_hex=signing_trust["public_key_hex"],
+            repository_root=ROOT,
+        )
+    except (AttestationError, KeyError):
+        raise RecipeError("kova cosmo sft recipe rejected") from None
     phase_grant = reserve_training_phase(
         phase="training",
         source_commit=source_commit,
@@ -386,6 +403,7 @@ def execute() -> dict:
         return write_receipt(
             output, source_commit,
             global_steps=training_result.global_step,
+            signing_key=signing_key,
         )
     except ReceiptError:
         raise RecipeError("kova cosmo sft recipe rejected") from None

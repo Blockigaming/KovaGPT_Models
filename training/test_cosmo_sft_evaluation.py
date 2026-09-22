@@ -1,5 +1,6 @@
 """Synthetic evidence tests for the three-way Cosmo evaluation contract."""
 from copy import deepcopy
+import hashlib
 import inspect
 from pathlib import Path
 import socket
@@ -21,6 +22,10 @@ class CosmoSftEvaluationTests(unittest.TestCase):
         self.plan, self.cases, self.plan_sha256 = evaluation.load_plan()
         self.adapter_sha256 = "a" * 64
         self.adapter_receipt_sha256 = "d" * 64
+        self.software_lock_sha256 = hashlib.sha256(
+            (evaluation.pilot.ROOT /
+             "requirements/kova-cosmo-sft-py312-linux.lock").read_bytes()
+        ).hexdigest()
         self.signing_key = Ed25519PrivateKey.from_private_bytes(b"k" * 32)
         self.public_key_hex = public_key_hex(self.signing_key)
         trust = {
@@ -82,7 +87,7 @@ class CosmoSftEvaluationTests(unittest.TestCase):
                 "adapter_sha256": self.adapter_sha256
                 if variant == "trained_adapter" else None,
                 "adapter_receipt_sha256": self.adapter_receipt_sha256,
-                "software_lock_sha256": "c" * 64,
+                "software_lock_sha256": self.software_lock_sha256,
                 "runtime_evidence_sha256": "e" * 64,
                 "lifecycle_id": "lifecycle-001",
                 "lifecycle_grant_id": "grant-evaluation-001",
@@ -263,6 +268,27 @@ class CosmoSftEvaluationTests(unittest.TestCase):
                 evaluation.analyze(
                     bundle, adapter_output=Path("/external/adapter-run"),
                 )
+
+    def test_measured_bundle_rejects_unpinned_software_digest(self):
+        bundle = self.complete_bundle("measured")
+        for row in bundle["attempts"]:
+            row["runtime"]["software_lock_sha256"] = "c" * 64
+        unsigned = dict(bundle)
+        unsigned["runner_attestation"] = None
+        bundle["runner_attestation"] = create_attestation(
+            unsigned, self.signing_key
+        )
+        receipt = {
+            "adapter_sha256": self.adapter_sha256,
+            "receipt_sha256": self.adapter_receipt_sha256,
+            "lifecycle_id": "lifecycle-001",
+        }
+        with patch.object(
+            evaluation, "verify_adapter_receipt", return_value=receipt
+        ), self.assertRaises(evaluation.EvaluationError):
+            evaluation.analyze(
+                bundle, adapter_output=Path("/external/adapter-run"),
+            )
 
     def test_measured_bundle_rejects_hand_authored_or_tampered_answers(self):
         receipt = {

@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from training import cosmo_adapter_receipt as receipt
 from training import cosmo_lifecycle_authority as authority
 from training.cosmo_generation_attestation import public_key_hex
+from training import cosmo_generation_attestation as generation
 from training.kova_cosmo_sft import EXPECTED_TARGETS
 
 
@@ -46,6 +47,20 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
             "append_only_remote_ledger_required": True,
             "independent_azure_reader_required": True,
             "runner_ledger_mutation_allowed": False,
+            "checked_in_private_key_allowed": False,
+        }
+        self.receipt_signing_key = Ed25519PrivateKey.from_private_bytes(b"r" * 32)
+        receipt_public = public_key_hex(self.receipt_signing_key)
+        self.generation_trust = {
+            "schema_version": 1,
+            "status": "runner_signing_public_key_pinned",
+            "algorithm": "ed25519",
+            "public_key_hex": receipt_public,
+            "public_key_sha256": hashlib.sha256(
+                bytes.fromhex(receipt_public)
+            ).hexdigest(),
+            "runner_private_key_environment_variable": generation.PRIVATE_KEY_ENV,
+            "verifier_private_key_access_allowed": False,
             "checked_in_private_key_allowed": False,
         }
 
@@ -135,10 +150,14 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
         }
 
     def write_receipt(self, output: Path):
-        with self.trust_patch():
+        with self.trust_patch(), patch.object(
+            receipt, "load_generation_trust_policy",
+            return_value=self.generation_trust,
+        ):
             return receipt.write_receipt(
                 output, self.source_commit,
                 global_steps=18,
+                signing_key=self.receipt_signing_key,
             )
 
     def expected_receipt(self, output: Path):
@@ -149,7 +168,10 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
             )
 
     def verify_receipt(self, output: Path, **arguments):
-        with self.trust_patch():
+        with self.trust_patch(), patch.object(
+            receipt, "load_generation_trust_policy",
+            return_value=self.generation_trust,
+        ):
             return receipt.verify_receipt(output, **arguments)
 
     def make_output(self, root: Path) -> Path:
@@ -205,8 +227,8 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
                         "down_proj": intermediate,
                     }[target]
                     output_width = {
-                        "q_proj": hidden, "k_proj": hidden // 2,
-                        "v_proj": hidden // 2, "o_proj": hidden,
+                        "q_proj": 2048, "k_proj": 1024,
+                        "v_proj": 1024, "o_proj": hidden,
                         "gate_proj": intermediate, "up_proj": intermediate,
                         "down_proj": hidden,
                     }[target]
@@ -265,6 +287,36 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
             weights.write_bytes(raw)
             with self.assertRaises(receipt.ReceiptError):
                 self.verify_receipt(output)
+
+    def test_rebuilt_receipt_for_replaced_adapter_needs_original_signer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = self.make_output(Path(directory))
+            self.write_receipt(output)
+            weights = output / "adapter/adapter_model.safetensors"
+            raw = bytearray(weights.read_bytes())
+            raw[-1] ^= 1
+            weights.write_bytes(raw)
+            rebuilt = self.expected_receipt(output)
+            (output / receipt.RECEIPT_NAME).write_bytes(receipt.serialize(rebuilt))
+            with self.assertRaises(receipt.ReceiptError):
+                self.verify_receipt(output)
+
+    def test_qwen3_attention_projection_widths_are_exact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = self.make_output(Path(directory))
+            self.expected_receipt(output)
+            weights = output / "adapter/adapter_model.safetensors"
+            raw = weights.read_bytes()
+            header_size = struct.unpack("<Q", raw[:8])[0]
+            header = json.loads(raw[8:8 + header_size])
+            q = header[
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight"
+            ]
+            k = header[
+                "base_model.model.model.layers.0.self_attn.k_proj.lora_B.weight"
+            ]
+            self.assertEqual(q["shape"], [2048, 16])
+            self.assertEqual(k["shape"], [1024, 16])
 
     def test_receipt_uses_deterministic_steps_and_omits_unauthenticated_loss(self):
         with tempfile.TemporaryDirectory() as directory:

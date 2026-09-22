@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import json
 import os
 from pathlib import Path
@@ -386,16 +386,24 @@ def verify_post_run(preflight: dict, post_run_path: Path,
         need(value["future_grants_allowed"] is False)
         counts = value["phase_grants_committed"]
         need(type(counts) is dict and list(counts) == list(PHASES))
-        need(all(type(counts[phase]) is int for phase in PHASES))
-        need(counts == {phase: 1 for phase in PHASES})
+        need(all(type(counts[phase]) is int and counts[phase] in (0, 1)
+                 for phase in PHASES))
+        need(counts["runtime_probe"] == 1)
+        need(counts["runtime_probe"] >= counts["training"] >=
+             counts["evaluation"])
         need(type(value["training_runs_consumed"]) is int and
-             value["training_runs_consumed"] == 1)
+             value["training_runs_consumed"] == counts["training"])
+        expected_reserved_seconds = sum(
+            PHASE_RESERVED_SECONDS[phase] * counts[phase] for phase in PHASES
+        )
         need(type(value["aggregate_reserved_seconds"]) is int and
-             value["aggregate_reserved_seconds"] == sum(
-            PHASE_RESERVED_SECONDS.values()
-        ))
+             value["aggregate_reserved_seconds"] == expected_reserved_seconds)
+        expected_reserved_cost = (
+            Decimal("0.5260") * Decimal(expected_reserved_seconds) /
+            Decimal(3600)
+        ).quantize(Decimal("0.0001"), rounding=ROUND_CEILING)
         need(money(value["aggregate_reserved_cost_usd"]) ==
-             Decimal("0.5260"))
+             expected_reserved_cost)
         ledger_closed = timestamp(value["ledger_closed_at_utc"])
         need(nonempty(value["provider_observation_id"]))
         need(value["provider_observation_id"] !=

@@ -305,6 +305,46 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
             ):
                 guard.verify_post_run(preflight, path, root=self.root)
 
+    def test_cleanup_accepts_each_committed_phase_prefix(self):
+        cases = [
+            ({"runtime_probe": 1, "training": 0, "evaluation": 0},
+             0, 600, "0.0877"),
+            ({"runtime_probe": 1, "training": 1, "evaluation": 0},
+             1, 3000, "0.4384"),
+        ]
+        for index, (counts, runs, seconds, cost) in enumerate(cases):
+            payload = self.post_run_payload()
+            payload["phase_grants_committed"] = counts
+            payload["training_runs_consumed"] = runs
+            payload["aggregate_reserved_seconds"] = seconds
+            payload["aggregate_reserved_cost_usd"] = cost
+            path = self.signed_path(payload, f"partial-{index}.json")
+            with self.subTest(counts=counts):
+                report = guard.verify_post_run(
+                    self.preflight_payload(), path, root=self.root
+                )
+                self.assertTrue(report["resource_group_deleted"])
+
+    def test_cleanup_rejects_skipped_phase_and_mismatched_aggregates(self):
+        mutations = [
+            lambda value: value["phase_grants_committed"].update(
+                runtime_probe=1, training=0, evaluation=1
+            ),
+            lambda value: value.update(training_runs_consumed=0),
+            lambda value: value.update(aggregate_reserved_seconds=3000),
+            lambda value: value.update(aggregate_reserved_cost_usd="0.4384"),
+        ]
+        for index, mutate in enumerate(mutations):
+            payload = self.post_run_payload()
+            mutate(payload)
+            path = self.signed_path(payload, f"bad-progression-{index}.json")
+            with self.subTest(index=index), self.assertRaises(
+                guard.RuntimeGuardError
+            ):
+                guard.verify_post_run(
+                    self.preflight_payload(), path, root=self.root
+                )
+
     def test_cleanup_rejects_wrong_lifecycle_or_nonmonotonic_ledger(self):
         for field, wrong in (
             ("lifecycle_id", "different-lifecycle"),

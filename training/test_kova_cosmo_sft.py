@@ -273,6 +273,16 @@ class KovaCosmoSftTests(unittest.TestCase):
                      return_value=(output, "a" * 40),
                  ), \
                  patch.object(recipe, "verify_source_checkout"), \
+                 patch.object(recipe, "load_generation_trust_policy",
+                              return_value={
+                                  "runner_private_key_environment_variable":
+                                      "KOVA_TEST_SIGNING_KEY",
+                                  "public_key_hex": "0" * 64,
+                              }), \
+                 patch.object(recipe, "load_signing_key",
+                              return_value=object()), \
+                 patch.dict("os.environ", {"KOVA_TEST_SIGNING_KEY":
+                                            "/external/signing-key"}), \
                  patch.object(
                      recipe, "reserve_training_phase", return_value=grant
                  ) as acquire, \

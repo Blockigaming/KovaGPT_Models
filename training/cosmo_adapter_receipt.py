@@ -15,11 +15,21 @@ import re
 import struct
 import sys
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
+
 from training.cosmo_artifacts import EXPECTED_BYTES, EXPECTED_SHA256
 from training import identity_pilot as pilot
+from training.cosmo_generation_attestation import (
+    load_trust_policy as load_generation_trust_policy,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 RECEIPT_NAME = "adapter-receipt.v1.json"
+RECEIPT_ATTESTATION_NAME = "adapter-receipt-attestation.v1.json"
 TRAINING_GRANT_NAME = "training-grant.v1.json"
 ADAPTER_DIRECTORY = "adapter"
 HEX40 = re.compile(r"[0-9a-f]{40}")
@@ -323,7 +333,8 @@ def validate_safetensors(path: Path, recipe: dict,
                          expected_layers: int = 28, *,
                          expected_hidden_size: int = EXPECTED_HIDDEN_SIZE,
                          expected_intermediate_size: int = 3072,
-                         expected_key_value_size: int = 512) -> None:
+                         expected_query_size: int = 2048,
+                         expected_key_value_size: int = 1024) -> None:
     """Validate a safe, complete LoRA-only tensor inventory without loading it."""
     need(type(expected_layers) is int and expected_layers > 0)
     raw_size = path.stat().st_size
@@ -347,12 +358,12 @@ def validate_safetensors(path: Path, recipe: dict,
     rank = recipe["lora"]["r"]
     need(all(type(item) is int and item > 0 for item in (
         expected_hidden_size, expected_intermediate_size,
-        expected_key_value_size,
+        expected_query_size, expected_key_value_size,
     )))
     intermediate = expected_intermediate_size
     hidden = expected_hidden_size
     output_width = {
-        "q_proj": hidden,
+        "q_proj": expected_query_size,
         "k_proj": expected_key_value_size,
         "v_proj": expected_key_value_size,
         "o_proj": hidden,
@@ -504,7 +515,8 @@ def expected_receipt(output: Path, source_commit: str, *,
 
 
 def write_receipt(output: Path, source_commit: str, *,
-                  global_steps: int, root: Path = ROOT) -> dict:
+                  global_steps: int, signing_key: Ed25519PrivateKey,
+                  root: Path = ROOT) -> dict:
     """Create a new receipt without overwriting any existing evidence."""
     try:
         value = expected_receipt(
@@ -516,6 +528,25 @@ def write_receipt(output: Path, source_commit: str, *,
         need(len(raw) <= MAX_RECEIPT_BYTES)
         with (output / RECEIPT_NAME).open("xb") as stream:
             stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        attested = {
+            "schema_version": 1,
+            "kind": "kova_cosmo_trained_adapter_attestation",
+            "source_commit": source_commit,
+            "receipt_sha256": hashlib.sha256(raw).hexdigest(),
+            "adapter_sha256": value["adapter_sha256"],
+        }
+        attestation = {
+            **attested,
+            "signature": signing_key.sign(serialize(attested)).hex(),
+        }
+        attestation_raw = serialize(attestation)
+        need(len(attestation_raw) <= MAX_RECEIPT_BYTES)
+        with (output / RECEIPT_ATTESTATION_NAME).open("xb") as stream:
+            stream.write(attestation_raw)
+            stream.flush()
+            os.fsync(stream.fileno())
         return verify_receipt(output, expected_source_commit=source_commit, root=root)
     except ReceiptError:
         raise
@@ -544,6 +575,27 @@ def verify_receipt(output: Path, *, expected_source_commit: str | None = None,
         )
         pilot.same(value, expected)
         need(raw == serialize(expected))
+        attestation_raw = _read_limited(
+            output / RECEIPT_ATTESTATION_NAME, MAX_RECEIPT_BYTES
+        )
+        attestation = parse_json(attestation_raw)
+        need(type(attestation) is dict and list(attestation) == [
+            "schema_version", "kind", "source_commit", "receipt_sha256",
+            "adapter_sha256", "signature",
+        ])
+        need(attestation["schema_version"] == 1)
+        need(attestation["kind"] == "kova_cosmo_trained_adapter_attestation")
+        need(attestation["source_commit"] == source_commit)
+        need(attestation["receipt_sha256"] == hashlib.sha256(raw).hexdigest())
+        need(attestation["adapter_sha256"] == expected["adapter_sha256"])
+        signature = attestation["signature"]
+        need(type(signature) is str and re.fullmatch(r"[0-9a-f]{128}", signature))
+        trust = load_generation_trust_policy(root)
+        need(trust["status"] == "runner_signing_public_key_pinned")
+        signed = {key: attestation[key] for key in list(attestation)[:-1]}
+        Ed25519PublicKey.from_public_bytes(
+            bytes.fromhex(trust["public_key_hex"])
+        ).verify(bytes.fromhex(signature), serialize(signed))
         return {
             "status": "trained_adapter_receipt_verified",
             "source_commit": source_commit,
@@ -570,6 +622,7 @@ def verify_receipt(output: Path, *, expected_source_commit: str | None = None,
             "closed_checklist_ids": [],
         }
     except (OSError, ValueError, TypeError, KeyError, AttributeError,
+            InvalidSignature,
             UnicodeError, RecursionError):
         raise ReceiptError("kova cosmo adapter receipt rejected") from None
 

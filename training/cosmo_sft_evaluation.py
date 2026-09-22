@@ -157,6 +157,9 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
             adapter_output: Path | None = None) -> dict:
     plan, cases, plan_sha256 = load_plan(root)
     recipe = load_recipe(root)
+    software_lock_sha256 = hashlib.sha256(
+        (root / "requirements/kova-cosmo-sft-py312-linux.lock").read_bytes()
+    ).hexdigest()
     need(type(bundle) is dict and list(bundle) == [
         "schema_version", "kind", "plan_sha256", "source_commit",
         "adapter_sha256", "adapter_receipt_sha256", "evaluation_grant",
@@ -264,6 +267,7 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
                       "lifecycle_ledger_commit_id"):
             need(type(runtime[field]) is str and 0 < len(runtime[field]) <= 256)
         if bundle["kind"] == "measured":
+            need(runtime["software_lock_sha256"] == software_lock_sha256)
             need(runtime["lifecycle_id"] == receipt["lifecycle_id"])
             need(runtime["lifecycle_id"] == payload["lifecycle_id"])
             need(runtime["lifecycle_grant_id"] == payload["grant_id"])

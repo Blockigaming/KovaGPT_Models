@@ -126,6 +126,9 @@ def validate() -> dict:
                 weights_path, recipe, expected_layers=2,
                 expected_hidden_size=config.hidden_size,
                 expected_intermediate_size=config.intermediate_size,
+                expected_query_size=(
+                    config.num_attention_heads * config.head_dim
+                ),
                 expected_key_value_size=(
                     config.num_key_value_heads * config.head_dim
                 ),
