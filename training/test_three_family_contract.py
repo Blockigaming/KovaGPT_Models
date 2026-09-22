@@ -27,6 +27,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
         self.assertIn("--retail-price-evidence", plan[0]["verify_argv"])
         self.assertIn("provisionPilot=true", plan[2]["argv"])
         self.assertIn("provisionWatchdog=true", plan[3]["argv"])
+        self.assertIn("pilotSuffix=${PILOT_SUFFIX}", plan[3]["argv"])
         self.assertIn("provisionPilot=true", plan[4]["argv"])
         self.assertIn("--all-families", plan[6]["argv"])
         cleanup = json.dumps(plan[15:17])
@@ -55,7 +56,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
             adapter_sha256="b" * 64, runner_sha256="c" * 64, case_id="case-1",
             prompt="Who are you?", answer="I am Kova.", runtime_profile="high",
             conversation_id="conversation-1", session_id="session-1",
-            dimensions=["identity"], private_key=private_key,
+            dimensions=["kova_identity_consistency"], private_key=private_key,
             created_at="2026-09-21T00:00:00+00:00",
         )
         self.assertNotIn("public_key_ed25519_b64", evidence)
@@ -70,6 +71,26 @@ class ThreeFamilyContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid_evidence_signature"):
                 guard.verify_evidence(tampered, **bindings)
 
+    def test_evaluation_dimensions_are_configured_unique_and_coverable(self):
+        private_key = Ed25519PrivateKey.generate()
+        kwargs = {
+            "source_commit": "d" * 40, "family": "kova-cosmo", "base_revision": "e" * 40,
+            "base_manifest_sha256": "a" * 64, "adapter_sha256": "b" * 64,
+            "runner_sha256": "c" * 64, "case_id": "case-1", "prompt": "p", "answer": "a",
+            "runtime_profile": "light", "conversation_id": "conversation-1",
+            "session_id": "session-1", "private_key": private_key,
+        }
+        for dimensions in (["not-a-required-dimension"], ["kova_identity_consistency"] * 2, [1]):
+            with self.subTest(dimensions=dimensions), self.assertRaises(ValueError):
+                guard.create_evidence(**kwargs, dimensions=dimensions)
+        payloads = [{"dimensions": [dimension]} for dimension in sorted(guard.REQUIRED_DIMENSIONS)]
+        self.assertEqual(
+            set(guard.validate_verified_dimension_coverage(payloads)),
+            set(guard.REQUIRED_DIMENSIONS),
+        )
+        with self.assertRaisesRegex(ValueError, "missing_required_dimensions"):
+            guard.validate_verified_dimension_coverage(payloads[:-1])
+
     def test_unconfigured_runner_key_fails_closed(self):
         private_key = Ed25519PrivateKey.generate()
         evidence = guard.create_evidence(
@@ -77,7 +98,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
             base_manifest_sha256="a" * 64, adapter_sha256="b" * 64,
             runner_sha256="c" * 64, case_id="case-1", prompt="p", answer="a",
             runtime_profile="light", conversation_id="conversation-1", session_id="session-1",
-            dimensions=["identity"], private_key=private_key,
+            dimensions=["kova_identity_consistency"], private_key=private_key,
         )
         with patch.object(guard, "PINNED_RUNNER_PUBLIC_KEY_B64", None), self.assertRaisesRegex(
                 ValueError, "trusted_runner_key_not_configured"):
@@ -178,6 +199,22 @@ class ThreeFamilyContractTests(unittest.TestCase):
             with self.assertRaisesRegex(contract.ContractError, "six-dollar"):
                 contract.validate_live_price_evidence(path)
 
+    def test_training_stack_versions_are_bound_to_hash_locked_requirements(self):
+        base = contract.load_json(contract.ROOT / "config/kova-three-family-training-stack.v1.json")
+        original_load = contract.load_json
+        changes = []
+        changed = deepcopy(base); changed["python"] = "3.11"; changes.append(changed)
+        changed = deepcopy(base); changed["cuda"] = "12.7"; changes.append(changed)
+        changed = deepcopy(base); changed["packages"]["torch"] = "2.7.0"; changes.append(changed)
+        for changed in changes:
+            def fake_load(path, **kwargs):
+                if path.name == "kova-three-family-training-stack.v1.json":
+                    return changed
+                return original_load(path, **kwargs)
+            with self.subTest(changed=changed), patch.object(contract, "load_json", side_effect=fake_load):
+                with self.assertRaises(contract.ContractError):
+                    contract.validate_training()
+
     def test_t4_probe_evidence_is_actually_consumed(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "probe.json"
@@ -240,6 +277,8 @@ class ThreeFamilyContractTests(unittest.TestCase):
         self.assertIn("NvidiaGpuDriverLinux", vm)
         self.assertIn("enableAutomaticUpgrade: false", vm)
         self.assertIn("frequency: 'Minute'", watchdog)
+        self.assertIn("param pilotSuffix string", watchdog)
+        self.assertIn("kova-t4-${pilotSuffix}/deallocate", watchdog)
         self.assertIn("delete_pilot_group", watchdog)
         self.assertIn("allowSharedKeyAccess: false", watchdog)
 
