@@ -21,11 +21,6 @@ from training.cosmo_adapter_receipt import (
 )
 from training.cosmo_artifacts import ArtifactError, verify_snapshot
 from training.cosmo_hardware import HardwareError, verify_nvidia_t4
-from training.cosmo_generation_attestation import (
-    AttestationError,
-    load_signing_key,
-    load_trust_policy as load_generation_trust_policy,
-)
 from training.identity_pilot import load as load_identity_pilot
 from training.identity_pilot import format_messages
 from training.identity_pilot_review import validate as validate_identity_review
@@ -56,6 +51,18 @@ EXPECTED_TARGETS = [
 
 class RecipeError(ValueError):
     pass
+
+
+def load_generation_trust_policy(root: Path) -> dict:
+    """Load signing trust only on the paid execution path."""
+    from training.cosmo_generation_attestation import load_trust_policy
+    return load_trust_policy(root)
+
+
+def load_signing_key(*args, **kwargs):
+    """Load the protected signer without burdening CPU-only contract imports."""
+    from training.cosmo_generation_attestation import load_signing_key as load
+    return load(*args, **kwargs)
 
 
 def need(value: bool) -> None:
@@ -288,7 +295,7 @@ def execute() -> dict:
             expected_public_key_hex=signing_trust["public_key_hex"],
             repository_root=ROOT,
         )
-    except (AttestationError, KeyError):
+    except (ValueError, KeyError):
         raise RecipeError("kova cosmo sft recipe rejected") from None
     phase_grant = reserve_training_phase(
         phase="training",
