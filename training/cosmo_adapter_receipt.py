@@ -15,12 +15,6 @@ import re
 import struct
 import sys
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-    Ed25519PrivateKey,
-    Ed25519PublicKey,
-)
-
 from training.cosmo_artifacts import EXPECTED_BYTES, EXPECTED_SHA256
 from training import identity_pilot as pilot
 from training.cosmo_generation_attestation import (
@@ -515,7 +509,7 @@ def expected_receipt(output: Path, source_commit: str, *,
 
 
 def write_receipt(output: Path, source_commit: str, *,
-                  global_steps: int, signing_key: Ed25519PrivateKey,
+                  global_steps: int, signing_key: object,
                   root: Path = ROOT) -> dict:
     """Create a new receipt without overwriting any existing evidence."""
     try:
@@ -593,9 +587,14 @@ def verify_receipt(output: Path, *, expected_source_commit: str | None = None,
         trust = load_generation_trust_policy(root)
         need(trust["status"] == "runner_signing_public_key_pinned")
         signed = {key: attestation[key] for key in list(attestation)[:-1]}
-        Ed25519PublicKey.from_public_bytes(
-            bytes.fromhex(trust["public_key_hex"])
-        ).verify(bytes.fromhex(signature), serialize(signed))
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        try:
+            Ed25519PublicKey.from_public_bytes(
+                bytes.fromhex(trust["public_key_hex"])
+            ).verify(bytes.fromhex(signature), serialize(signed))
+        except InvalidSignature:
+            raise ReceiptError("kova cosmo adapter receipt rejected") from None
         return {
             "status": "trained_adapter_receipt_verified",
             "source_commit": source_commit,
@@ -621,8 +620,7 @@ def verify_receipt(output: Path, *, expected_source_commit: str | None = None,
             "phase_b_ready": False,
             "closed_checklist_ids": [],
         }
-    except (OSError, ValueError, TypeError, KeyError, AttributeError,
-            InvalidSignature,
+    except (ImportError, OSError, ValueError, TypeError, KeyError, AttributeError,
             UnicodeError, RecursionError):
         raise ReceiptError("kova cosmo adapter receipt rejected") from None
 
