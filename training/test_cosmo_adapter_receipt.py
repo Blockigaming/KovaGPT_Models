@@ -151,7 +151,7 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
 
     def write_receipt(self, output: Path):
         with self.trust_patch(), patch.object(
-            receipt, "load_generation_trust_policy",
+            generation, "load_trust_policy",
             return_value=self.generation_trust,
         ):
             return receipt.write_receipt(
@@ -169,7 +169,7 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
 
     def verify_receipt(self, output: Path, **arguments):
         with self.trust_patch(), patch.object(
-            receipt, "load_generation_trust_policy",
+            generation, "load_trust_policy",
             return_value=self.generation_trust,
         ):
             return receipt.verify_receipt(output, **arguments)

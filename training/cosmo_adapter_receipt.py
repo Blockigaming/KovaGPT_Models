@@ -17,9 +17,6 @@ import sys
 
 from training.cosmo_artifacts import EXPECTED_BYTES, EXPECTED_SHA256
 from training import identity_pilot as pilot
-from training.cosmo_generation_attestation import (
-    load_trust_policy as load_generation_trust_policy,
-)
 
 ROOT = Path(__file__).resolve().parents[1]
 RECEIPT_NAME = "adapter-receipt.v1.json"
@@ -584,7 +581,8 @@ def verify_receipt(output: Path, *, expected_source_commit: str | None = None,
         need(attestation["adapter_sha256"] == expected["adapter_sha256"])
         signature = attestation["signature"]
         need(type(signature) is str and re.fullmatch(r"[0-9a-f]{128}", signature))
-        trust = load_generation_trust_policy(root)
+        from training.cosmo_generation_attestation import load_trust_policy
+        trust = load_trust_policy(root)
         need(trust["status"] == "runner_signing_public_key_pinned")
         signed = {key: attestation[key] for key in list(attestation)[:-1]}
         from cryptography.exceptions import InvalidSignature
