@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PLAN_PATH = 'config/kova-cosmo-pilot.v1.json'
 PROMPT_PATH = 'prompts/kova-identity.v2.txt'
 DATA_PATH = 'data/kova-identity-pilot.v1.jsonl'
+REVIEW_PATH = 'data/kova-identity-pilot-review.v1.json'
 MAX_BYTES = 1024 * 1024
 
 
@@ -70,6 +71,7 @@ def load(root: Path = ROOT) -> tuple[dict, str, list]:
     try:
         prompt_bytes = read_asset(root, PROMPT_PATH)
         data_bytes = read_asset(root, DATA_PATH)
+        review_bytes = read_asset(root, REVIEW_PATH)
         plan = parse(read_asset(root, PLAN_PATH).decode('utf-8'))
         ref = MODEL_SOURCE_REFERENCES['work-cosmo']
         same(plan, {
@@ -77,7 +79,9 @@ def load(root: Path = ROOT) -> tuple[dict, str, list]:
             'display_name': 'Kova Cosmo', 'model_slot': 'work-cosmo', 'method': 'lora',
             'base_model': ref.model, 'base_revision': ref.revision,
             'prompt_path': PROMPT_PATH, 'dataset_path': DATA_PATH,
+            'review_path': REVIEW_PATH,
             'prompt_sha256': digest(prompt_bytes), 'dataset_sha256': digest(data_bytes),
+            'review_sha256': digest(review_bytes),
             'provenance': {'source': 'synthetic_examples_prepared_for_kova',
                            'private_customer_data': False, 'human_review_complete': False},
             'proposed_compute': 'Standard_NC4as_T4_v3',
@@ -154,6 +158,7 @@ def prepare(root: Path = ROOT, output: Path | None = None) -> dict:
         'status': 'source_prepared_not_trained',
         'display_name': plan['display_name'], 'model_slot': plan['model_slot'],
         'prompt_sha256': plan['prompt_sha256'], 'dataset_sha256': plan['dataset_sha256'],
+        'review_sha256': plan['review_sha256'],
         'files': {key: {'filename': key + '.jsonl', 'records': len(parts[key]),
                         'sha256': digest(body)} for key, body in encoded.items()},
         'human_review_complete': False, 'model_outputs_evaluated': False,

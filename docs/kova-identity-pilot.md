@@ -28,13 +28,26 @@ example is explicitly hypothetical; it is not a live runtime observation.
   compute label is the owner's Azure NC4as T4 v3 target, not evidence of GPU fit.
 - `training/identity_pilot.py`: standard-library-only validation and compilation.
 - `training/test_identity_pilot.py`: source/data regression checks.
+- `data/kova-identity-pilot-review.v1.json`: dataset-bound owner review ledger.
+- `training/identity_pilot_review.py`: fail-closed review validation that cannot
+  authorize model download, training or deployment.
 
 No private chats, customer records, credentials, external model outputs or
 upstream weight files are included. These examples were synthetically prepared
-for Kova; human review is not yet complete. The corpus is a small starting set,
-not a claim of sufficient training diversity, model quality or independence of
-all paraphrases. Validation prompts are disjoint by normalized exact text, not
-by a proven semantic train/test contamination analysis.
+for Kova, and the owner review ledger now records approval of all 36 examples.
+The corpus is a small starting set, not a claim of sufficient training diversity,
+model quality or independence of all paraphrases. Validation prompts are disjoint
+by normalized exact text, not by a proven semantic train/test contamination
+analysis.
+
+The review ledger contains all 36 source IDs in dataset order and is bound into
+the pilot plan by SHA-256. Its 24 training and 12 validation records are approved,
+with the owner label and completion timestamp recorded in the ledger. The
+validator still supports explicit in-progress and changes-requested states, and
+the completed review cannot grant training authorization, spending release or
+Phase B readiness. The preparation-only plan's non-authorizing provenance flag
+therefore remains false by design; the review ledger is the source of truth for
+corpus-review completion.
 
 ## What is actually verified
 
@@ -77,8 +90,9 @@ weekly usage and release guards are unchanged. No PR is merged into main here.
 
 ## Before a paid pilot
 
-Review the examples; obtain a verified downloadable artifact inventory and its
-notices; validate a pinned tokenizer/template and compatible training environment;
+Preserve the completed example-review ledger; obtain a verified downloadable
+artifact inventory and its notices; validate a pinned tokenizer/template and
+compatible training environment;
 select/review measured-memory-safe hyperparameters; confirm region/quota and the
 actual Azure rate; approve a separate budget and shutdown procedure. The plan
 keeps budget, hyperparameters and trained-adapter digest null. Its download,
@@ -128,8 +142,8 @@ This verification loaded no model weights, constructed no model, ran no forward
 or backward pass and used CPU-only PyTorch. It therefore does not prove that the
 LoRA targets match a loaded checkpoint, that CUDA/PyTorch is compatible with an
 Azure T4, that FP16 training is stable, or that save/reload and evaluation work.
-Those checks, human data review and the base/configured-base/trained comparison
-remain open. The separate CPU probe lock must not be used as a GPU training lock.
+Those compatibility checks and the base/configured-base/trained comparison remain
+open. The separate CPU probe lock must not be used as a GPU training lock.
 
 ## Synthetic Qwen3/PEFT compatibility check
 
@@ -146,5 +160,26 @@ This is an API and serialization fixture, not Kova fine-tuning. It uses no
 selected checkpoint weights or training examples and proves nothing about the
 real checkpoint's memory use, quality, FP16 behavior, CUDA, T4 compatibility or
 eventual adapter. Those claims still require the separately approved GPU pilot.
+
+## Three-way evaluation contract
+
+`config/kova-cosmo-evaluation-plan.v1.json` binds all 12 held-out validation
+records to three conditions: untouched base, base plus the reviewed Kova system
+prompt, and the eventual trained adapter plus that prompt. The provider-free
+validator requires the same base revision, software lock, hardware, precision
+and quantization across conditions; only the trained condition may carry the
+single adapter digest. Every condition binds the same adapter-receipt digest.
+Measured evidence is rejected unless the local receipt verifies against the
+declared source commit and both receipt and adapter digests match the bundle.
+It rejects missing, failed, duplicated, relabeled or hash-mismatched attempts
+and incomplete scores.
+
+The contract records identity, instruction adherence, factuality, formatting,
+general quality and safety/truthfulness separately. Their exact pass/fail
+criteria are defined by the evaluation plan's hash-locked rubric, and the
+score-only human overlay must declare that same rubric digest. A complete measured bundle
+still cannot authorize release, establish the reviewer's identity, mark Phase B
+ready or close a checklist item. No result bundle exists yet, so no real model
+quality comparison is claimed by this source plan.
 
 Reference: https://huggingface.co/docs/trl/sft_trainer

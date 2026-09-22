@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import tempfile
 
+from training.cosmo_adapter_receipt import validate_safetensors
 from training.kova_cosmo_sft import EXPECTED_TARGETS, load_recipe
 from training.probe_cosmo_loss_masks import offline_cpu, verify_environment
 
@@ -121,6 +122,17 @@ def validate() -> dict:
             weights_path = adapter_dir / "adapter_model.safetensors"
             require(config_path.is_file() and weights_path.is_file(),
                     "safe adapter files were not written")
+            validate_safetensors(
+                weights_path, recipe, expected_layers=2,
+                expected_hidden_size=config.hidden_size,
+                expected_intermediate_size=config.intermediate_size,
+                expected_query_size=(
+                    config.num_attention_heads * config.head_dim
+                ),
+                expected_key_value_size=(
+                    config.num_key_value_heads * config.head_dim
+                ),
+            )
             written = json.loads(config_path.read_text())
             require(written["r"] == lora["r"] and written["lora_alpha"] == lora["alpha"],
                     "saved adapter rank or alpha drifted")
@@ -165,6 +177,7 @@ def validate() -> dict:
         "updated_lora_tensors": updated,
         "synthetic_optimizer_steps": 1,
         "adapter_tensors_roundtripped": len(original_state),
+        "receipt_tensor_inventory_compatible": True,
         "temporary_adapter_sha256": adapter_sha256,
         "temporary_adapter_bytes": adapter_bytes,
         "model_weights_downloaded": False,

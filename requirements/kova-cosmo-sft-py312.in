@@ -6,3 +6,4 @@ peft==0.21.0
 trl==1.13.0
 accelerate==1.15.0
 datasets==5.0.1
+cryptography==50.0.1

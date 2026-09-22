@@ -19,7 +19,8 @@ class IdentityPilotTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name) / 'source'
-        for relative in (pilot.PLAN_PATH, pilot.PROMPT_PATH, pilot.DATA_PATH):
+        for relative in (pilot.PLAN_PATH, pilot.PROMPT_PATH,
+                         pilot.DATA_PATH, pilot.REVIEW_PATH):
             path = self.root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes((pilot.ROOT / relative).read_bytes())
