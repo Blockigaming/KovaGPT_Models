@@ -190,7 +190,7 @@ def _locked_package_versions(stack: dict) -> dict[str, str]:
     versions = {}
     for lock in stack["locks"]:
         text = (ROOT / lock["path"]).read_text(encoding="utf-8", errors="strict")
-        for match in re.finditer(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)==([^\\s\\\\]+)", text, re.MULTILINE):
+        for match in re.finditer(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)==([^\s\\]+)", text, re.MULTILINE):
             name = match.group(1).lower().replace("_", "-")
             version = match.group(2)
             need(name not in versions or versions[name] == version,
