@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from core.adapter import build_core_plan
+from core.identity import TRUSTED_SYSTEM_MESSAGE_COUNT
 from release.model_revisions import source_reference_for_route
 from execution.contracts import ALL_ROUTES, ExecutionSpec, ExecutionLimits, canonical
 from execution.runner import LocalRunner
@@ -60,6 +61,11 @@ def spec_for(route="ultra", messages=None):
                                    stage_cost_caps={stage: 100 for stage in ids})
 
 
+def runtime_identity_for(plan):
+    source = source_reference_for_route(plan["route_id"])
+    return {**IDENTITY, "model": source.slot, "model_revision": source.revision}
+
+
 class ConversationTests(SyntheticAdapterTestCase):
     def run_spec(self, spec, *, debate=False):
         store = LocalJobStore()
@@ -79,7 +85,7 @@ class ConversationTests(SyntheticAdapterTestCase):
                 self.assertEqual(status["state"], "succeeded")
                 self.assertEqual(len(fixture.requests), len(spec.stages))
                 for _, request in fixture.requests:
-                    self.assertEqual(request["messages"][3:3 + len(HISTORY)], HISTORY)
+                    self.assertEqual(request["messages"][TRUSTED_SYSTEM_MESSAGE_COUNT:TRUSTED_SYSTEM_MESSAGE_COUNT + len(HISTORY)], HISTORY)
                 self.assertEqual(store.result(OWNER, job)["content"], "Kova final response")
                 count += len(spec.stages)
         self.assertEqual(count, 171)
@@ -93,7 +99,7 @@ class ConversationTests(SyntheticAdapterTestCase):
                     self.assertEqual(status["state"], "succeeded")
                     self.assertEqual(fixture.calls.count("debate-round-1"), int(debate))
                     for _, request in fixture.requests:
-                        self.assertEqual(request["messages"][3:3 + len(HISTORY)], HISTORY)
+                        self.assertEqual(request["messages"][TRUSTED_SYSTEM_MESSAGE_COUNT:TRUSTED_SYSTEM_MESSAGE_COUNT + len(HISTORY)], HISTORY)
                         self.assertTrue(request["messages"][0]["content"].startswith("You are Kova"))
                         self.assertFalse(request["include_reasoning"])
                     self.assertEqual(store.result(OWNER, job)["content"], "Kova final response")
@@ -132,7 +138,7 @@ class ConversationTests(SyntheticAdapterTestCase):
                     self.assertEqual(final["state"], "succeeded")
                     self.assertEqual(len(fixture.calls), len(set(fixture.calls)))
                     for _, request in fixture.requests:
-                        self.assertEqual(request["messages"][3:3 + len(HISTORY)], HISTORY)
+                        self.assertEqual(request["messages"][TRUSTED_SYSTEM_MESSAGE_COUNT:TRUSTED_SYSTEM_MESSAGE_COUNT + len(HISTORY)], HISTORY)
                 finally:
                     reopened.close()
 
@@ -144,9 +150,9 @@ class ConversationTests(SyntheticAdapterTestCase):
         source.append({"role": "user", "content": "unexpected new turn"})
         self.assertEqual(plan["conversation_messages"], HISTORY)
         for op in plan["operations"]:
-            self.assertEqual(op["input_template"]["messages"][3:3 + len(HISTORY)], HISTORY)
-        plan["operations"][0]["input_template"]["messages"][3]["content"] = "mutated first operation"
-        self.assertEqual(plan["operations"][1]["input_template"]["messages"][3], HISTORY[0])
+            self.assertEqual(op["input_template"]["messages"][TRUSTED_SYSTEM_MESSAGE_COUNT:TRUSTED_SYSTEM_MESSAGE_COUNT + len(HISTORY)], HISTORY)
+        plan["operations"][0]["input_template"]["messages"][TRUSTED_SYSTEM_MESSAGE_COUNT]["content"] = "mutated first operation"
+        self.assertEqual(plan["operations"][1]["input_template"]["messages"][TRUSTED_SYSTEM_MESSAGE_COUNT], HISTORY[0])
         self.assertEqual(plan["conversation_messages"], HISTORY)
 
     def test_privileged_roles_extra_fields_and_nontext_content_fail_before_tokenizer(self):
@@ -202,14 +208,15 @@ class ConversationTests(SyntheticAdapterTestCase):
             return tokens(IDENTITY["model"], messages)
         plan = plan_for(counter=counter)
         self.assertEqual(len(observed), len(plan["operations"]))
-        self.assertTrue(all(messages[3:3 + len(HISTORY)] == HISTORY for messages in observed))
+        self.assertTrue(all(messages[TRUSTED_SYSTEM_MESSAGE_COUNT:TRUSTED_SYSTEM_MESSAGE_COUNT + len(HISTORY)] == HISTORY for messages in observed))
         stage = plan["operations"][-1]
         artifacts = {key: "completed short artifact" for key in stage["depends_on"]}
         artifacts["debate-round-1"] = None
         recount = Mock(side_effect=tokens)
-        bound = bind_ultra_operation(plan, "synthesis", artifacts, runtime_identity=IDENTITY, token_counter=recount)
+        bound = bind_ultra_operation(plan, "synthesis", artifacts,
+                                     runtime_identity=runtime_identity_for(plan), token_counter=recount)
         self.assertEqual(recount.call_args.args[1], bound["messages"])
-        self.assertEqual(bound["messages"][3:3 + len(HISTORY)], HISTORY)
+        self.assertEqual(bound["messages"][TRUSTED_SYSTEM_MESSAGE_COUNT:TRUSTED_SYSTEM_MESSAGE_COUNT + len(HISTORY)], HISTORY)
         self.assertLessEqual(plan["reserved_maximum_total_tokens"], ADMISSION["max_total_tokens"])
 
     def test_excess_context_rejects_admission_instead_of_dropping_history(self):
@@ -218,22 +225,23 @@ class ConversationTests(SyntheticAdapterTestCase):
             plan_for(messages=original, counter=lambda _: 65536)
         self.assertEqual(original, HISTORY)
 
-    def test_artifact_targets_follow_the_conversation_not_fixed_message_four(self):
+    def test_artifact_targets_follow_the_conversation(self):
         plan = plan_for()
         for op in plan["operations"]:
             for offset, binding in enumerate(op["input_template"]["artifact_bindings"]):
-                self.assertEqual(binding["target_message_index"], 3 + len(HISTORY) + offset)
+                self.assertEqual(binding["target_message_index"], TRUSTED_SYSTEM_MESSAGE_COUNT + len(HISTORY) + offset)
         stage = next(op for op in plan["operations"] if op["id"] == "judge")
-        stage["input_template"]["artifact_bindings"][0]["target_message_index"] = 4
+        stage["input_template"]["artifact_bindings"][0]["target_message_index"] = 3
         with self.assertRaises(ValueError):
             bind_ultra_operation(plan, "judge", {s: "artifact" for s in stage["depends_on"]},
-                                  runtime_identity=IDENTITY, token_counter=tokens)
+                                  runtime_identity=runtime_identity_for(plan), token_counter=tokens)
 
     def test_binder_rejects_tampered_history_even_when_no_artifacts_exist(self):
         plan = plan_for()
-        plan["operations"][0]["input_template"]["messages"][3]["content"] = "lost old context"
+        plan["operations"][0]["input_template"]["messages"][TRUSTED_SYSTEM_MESSAGE_COUNT]["content"] = "lost old context"
         with self.assertRaises(ValueError):
-            bind_ultra_operation(plan, "specialist-1", {}, runtime_identity=IDENTITY, token_counter=tokens)
+            bind_ultra_operation(plan, "specialist-1", {},
+                                  runtime_identity=runtime_identity_for(plan), token_counter=tokens)
 
     def test_worker_rejects_snapshot_history_drift_before_client_construction(self):
         spec = spec_for()
@@ -250,6 +258,28 @@ class ConversationTests(SyntheticAdapterTestCase):
         self.assertEqual(status["state"], "failed")
         factory.assert_not_called()
 
+    def test_ultra_verifies_loaded_model_before_binding_provider_request(self):
+        spec = spec_for()
+        fixture = ModelFixture()
+        store = LocalJobStore()
+        self.addCleanup(store.close)
+        grant = grant_for(spec)
+        job = store.create(grant, "probe-before-bind", spec)
+        actual_probe = fixture.probe
+
+        def wrong_model(stage, phase):
+            result = actual_probe(stage, phase)
+            if phase == "before":
+                result["loaded_model"] = "unverified-model"
+            return result
+
+        with patch.object(fixture, "probe", side_effect=wrong_model), \
+             patch("execution.workers.bind_ultra_operation", side_effect=AssertionError("request bound before runtime check")) as bind:
+            status = LocalRunner(store, lambda: grant, fixture.worker()).run(job)
+        self.assertEqual(status["state"], "failed")
+        bind.assert_not_called()
+        self.assertEqual(fixture.requests, [])
+
     def test_owner_isolation_still_applies_to_saved_conversation(self):
         spec = spec_for()
         store = LocalJobStore()
@@ -264,9 +294,10 @@ class ConversationTests(SyntheticAdapterTestCase):
         plan = plan_for(messages=messages)
         for op in plan["operations"]:
             template = op["input_template"]["messages"]
-            self.assertEqual([m["role"] for m in template[:3]], ["system"] * 3)
-            self.assertEqual(template[3:5], messages)
-        bound = bind_ultra_operation(plan, "specialist-1", {}, runtime_identity=IDENTITY, token_counter=tokens)
+            self.assertEqual([m["role"] for m in template[:TRUSTED_SYSTEM_MESSAGE_COUNT]], ["system"] * 4)
+            self.assertEqual(template[TRUSTED_SYSTEM_MESSAGE_COUNT:TRUSTED_SYSTEM_MESSAGE_COUNT + len(messages)], messages)
+        bound = bind_ultra_operation(plan, "specialist-1", {},
+                                     runtime_identity=runtime_identity_for(plan), token_counter=tokens)
         self.assertNotIn("tools", bound)
         self.assertNotIn("tool_choice", bound)
 

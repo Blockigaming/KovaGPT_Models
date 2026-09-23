@@ -21,6 +21,11 @@ SCHEMA = "kova-three-family-evaluation-evidence.v1"
 _CONFIG = json.loads((ROOT / "config/kova-three-family-evaluation.v1.json").read_text(encoding="utf-8"))
 PINNED_RUNNER_PUBLIC_KEY_B64 = _CONFIG["answer_binding"]["runner_public_key_ed25519_b64"]
 PINNED_REVIEWER_PUBLIC_KEY_B64 = _CONFIG["reviewer_public_key_ed25519_b64"]
+# No independently reviewed 120-case corpus or structured isolation observations
+# exist yet. A future source review must pin exact manifest bytes before the
+# public matrix verifier can accept any generated evidence.
+PINNED_REVIEWED_CASE_MANIFEST_SHA256 = None
+REVIEWED_CASE_MANIFEST_PATH = ROOT / "config/kova-three-family-reviewed-evaluation-cases.v1.json"
 _REQUIRED_DIMENSIONS = _CONFIG.get("required_dimensions")
 if (
     type(_REQUIRED_DIMENSIONS) is not list
@@ -30,6 +35,35 @@ if (
 ):
     raise RuntimeError("invalid required evaluation dimensions")
 REQUIRED_DIMENSIONS = frozenset(_REQUIRED_DIMENSIONS)
+# Case meanings are fixed independently of runner evidence and supplied pins.
+# The reviewer must assess the actual prompt/answer against these dimensions.
+CASE_DIMENSIONS_BY_CATEGORY = {
+    "generated_answer": (
+        ("kova_identity_consistency",),
+        ("kovagpt_ownership_behavior",),
+        ("ordinary_upstream_name_suppression",),
+        ("instruction_following",),
+        ("response_quality",),
+        ("refusal_and_safety",),
+        ("instruction_following", "response_quality"),
+    ),
+    "isolation_integrity": (
+        ("cross_user_isolation",),
+        ("conversation_session_isolation",),
+        ("tampered_evidence_rejection",),
+        ("exact_adapter_base_binding",),
+        ("family_separation",),
+        ("cross_user_isolation", "conversation_session_isolation"),
+        ("tampered_evidence_rejection", "exact_adapter_base_binding"),
+    ),
+    "runtime_profile": (("runtime_profile_behavior",),) * 6,
+}
+if (set(CASE_DIMENSIONS_BY_CATEGORY) != set(CASE_CATEGORIES)
+        or any(len(CASE_DIMENSIONS_BY_CATEGORY[category]) != count
+               for category, count in CASE_CATEGORIES.items())
+        or {dimension for cases in CASE_DIMENSIONS_BY_CATEGORY.values()
+            for dimensions in cases for dimension in dimensions} != REQUIRED_DIMENSIONS):
+    raise RuntimeError("invalid configured evaluation case dimensions")
 
 
 def _canonical(value: dict) -> bytes:
@@ -64,14 +98,85 @@ def _validated_dimensions(dimensions) -> tuple[str, ...]:
         raise ValueError("invalid_evaluation_dimensions")
     if len(set(dimensions)) != len(dimensions):
         raise ValueError("duplicate_evaluation_dimensions")
-    return tuple(dimensions)
+    return tuple(sorted(dimensions))
+
+
+def _expected_case_dimensions(case_id: str) -> tuple[str, ...]:
+    if type(case_id) is not str:
+        raise ValueError("invalid_evaluation_case")
+    parts = case_id.split(":")
+    if (len(parts) != 4 or parts[0] not in FAMILIES or parts[1] not in VARIANTS
+            or parts[2] not in CASE_CATEGORIES or not parts[3].isdecimal()):
+        raise ValueError("invalid_evaluation_case")
+    index = int(parts[3])
+    if str(index) != parts[3] or not 1 <= index <= CASE_CATEGORIES[parts[2]]:
+        raise ValueError("invalid_evaluation_case")
+    return tuple(sorted(CASE_DIMENSIONS_BY_CATEGORY[parts[2]][index - 1]))
+
+
+def _unique_json_object(pairs):
+    value = {}
+    for name, item in pairs:
+        if name in value:
+            raise ValueError("duplicate_reviewed_case_manifest_key")
+        value[name] = item
+    return value
+
+
+def _trusted_reviewed_case_bindings() -> dict:
+    """Read an exact, independently reviewed source manifest; absent today."""
+    if not _hex(PINNED_REVIEWED_CASE_MANIFEST_SHA256, 64):
+        raise ValueError("reviewed_evaluation_case_manifest_not_pinned")
+    try:
+        raw = REVIEWED_CASE_MANIFEST_PATH.read_bytes()
+        if not 0 < len(raw) <= 512 * 1024 or hashlib.sha256(raw).hexdigest() != PINNED_REVIEWED_CASE_MANIFEST_SHA256:
+            raise ValueError("reviewed_evaluation_case_manifest_mismatch")
+        manifest = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=_unique_json_object)
+        if (type(manifest) is not dict or set(manifest) != {"schema_version", "status", "cases"}
+                or type(manifest["schema_version"]) is not int or manifest["schema_version"] != 1
+                or manifest["status"] != "independently_reviewed"
+                or type(manifest["cases"]) is not list or len(manifest["cases"]) != 120):
+            raise ValueError("invalid_reviewed_evaluation_case_manifest")
+        expected_ids = {
+            f"{family}:{variant}:{category}:{index}"
+            for family in FAMILIES for variant in VARIANTS
+            for category, count in CASE_CATEGORIES.items() for index in range(1, count + 1)
+        }
+        bindings = {}
+        for case in manifest["cases"]:
+            if (type(case) is not dict or set(case) != {"case_id", "prompt_sha256",
+                    "expected_dimensions", "runtime_profile", "conversation_id", "session_id"}):
+                raise ValueError("invalid_reviewed_evaluation_case_manifest")
+            case_id = case["case_id"]
+            if (type(case_id) is not str or case_id not in expected_ids or case_id in bindings
+                    or not _hex(case["prompt_sha256"], 64)
+                    or case["runtime_profile"] not in PROFILES
+                    or not all(_identifier(case[field]) for field in ("conversation_id", "session_id"))
+                    or _validated_dimensions(case["expected_dimensions"]) != _expected_case_dimensions(case_id)):
+                raise ValueError("invalid_reviewed_evaluation_case_manifest")
+            category = case_id.split(":")[2]
+            if category == "runtime_profile" and case["runtime_profile"] != PROFILE_ORDER[int(case_id.split(":")[3]) - 1]:
+                raise ValueError("invalid_reviewed_evaluation_case_manifest")
+            bindings[case_id] = {key: value for key, value in case.items() if key != "case_id"}
+        if set(bindings) != expected_ids:
+            raise ValueError("incomplete_reviewed_evaluation_case_manifest")
+        return bindings
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, KeyError, RecursionError):
+        raise ValueError("invalid_reviewed_evaluation_case_manifest") from None
 
 
 def validate_verified_dimension_coverage(payloads: list[dict]) -> tuple[str, ...]:
-    """Require every configured case from already verified runner payloads."""
+    """Require source-assigned dimensions in every complete family/variant cell.
+
+    Test fixtures may use synthetic prompts. A real independent reviewer must
+    inspect each pinned prompt and answer before signing its dimensions. Those
+    signatures attest human assessment, not independent provider isolation
+    telemetry; no paid evaluation or release is enabled by this source check.
+    """
     if type(payloads) is not list or not payloads:
         raise ValueError("missing_evaluation_evidence")
     covered = set()
+    covered_by_cell = {(family, variant): set() for family in FAMILIES for variant in VARIANTS}
     observed = set()
     for payload in payloads:
         if type(payload) is not dict:
@@ -97,7 +202,11 @@ def validate_verified_dimension_coverage(payloads: list[dict]) -> tuple[str, ...
         if key in observed or any(row[:4] == key[:4] for row in observed):
             raise ValueError("duplicate_evaluation_case")
         observed.add(key)
-        covered.update(_validated_dimensions(payload.get("dimensions")))
+        expected_dimensions = _expected_case_dimensions(case_id)
+        if _validated_dimensions(payload.get("dimensions")) != expected_dimensions:
+            raise ValueError("evaluation_dimension_binding_mismatch")
+        covered.update(expected_dimensions)
+        covered_by_cell[(family, variant)].update(expected_dimensions)
     expected = {
         (family, variant, category, f"{family}:{variant}:{category}:{n}")
         for family in FAMILIES for variant in VARIANTS
@@ -108,13 +217,31 @@ def validate_verified_dimension_coverage(payloads: list[dict]) -> tuple[str, ...
     missing = REQUIRED_DIMENSIONS - covered
     if missing:
         raise ValueError("missing_required_dimensions:" + ",".join(sorted(missing)))
+    if any(dimensions != REQUIRED_DIMENSIONS for dimensions in covered_by_cell.values()):
+        raise ValueError("incomplete_evaluation_dimension_coverage_per_variant")
     return tuple(sorted(covered))
 
 
 def validate_evidence_matrix(envelopes: list[dict], *, source_commit: str,
                              family_bindings: dict, case_bindings: dict,
                              review_verdicts: dict) -> tuple[str, ...]:
-    """Verify signed answers against trusted per-family and per-case input pins."""
+    """Accept only cases bound to a separately approved exact source manifest."""
+    trusted_cases = _trusted_reviewed_case_bindings()
+    if type(case_bindings) is not dict or case_bindings != trusted_cases:
+        raise ValueError("untrusted_or_incomplete_evaluation_inputs")
+    return _validate_evidence_matrix_authenticated(
+        envelopes, source_commit=source_commit, family_bindings=family_bindings,
+        case_bindings=trusted_cases, review_verdicts=review_verdicts,
+        reviewed_case_manifest_sha256=PINNED_REVIEWED_CASE_MANIFEST_SHA256)
+
+
+def _validate_evidence_matrix_authenticated(envelopes: list[dict], *, source_commit: str,
+                                            family_bindings: dict, case_bindings: dict,
+                                            review_verdicts: dict,
+                                            reviewed_case_manifest_sha256: str) -> tuple[str, ...]:
+    """Testable cryptographic mechanics; public acceptance also needs the manifest."""
+    if not _hex(reviewed_case_manifest_sha256, 64):
+        raise ValueError("reviewed_evaluation_case_manifest_not_pinned")
     if type(envelopes) is not list or len(envelopes) != 120:
         raise ValueError("incomplete_evaluation_matrix")
     expected_cases = {
@@ -142,6 +269,9 @@ def validate_evidence_matrix(envelopes: list[dict], *, source_commit: str,
         family_pin = family_bindings[family]
         if type(pin) is not dict or type(family_pin) is not dict:
             raise ValueError("invalid_evaluation_input_pin")
+        expected_dimensions = _expected_case_dimensions(case_id)
+        if _validated_dimensions(pin.get("expected_dimensions")) != expected_dimensions:
+            raise ValueError("untrusted_evaluation_dimensions")
         variant_adapters = family_pin.get("variant_adapters")
         if (type(variant_adapters) is not dict or set(variant_adapters) != set(VARIANTS)
                 or variant_adapters["configured_base"] is not None
@@ -161,14 +291,16 @@ def validate_evidence_matrix(envelopes: list[dict], *, source_commit: str,
         )
         if payload["prompt_sha256"] != pin["prompt_sha256"]:
             raise ValueError("substituted_evaluation_prompt")
-        expected_dimensions = _validated_dimensions(pin.get("dimensions"))
-        if set(payload["dimensions"]) != set(expected_dimensions):
-            raise ValueError("unreviewed_evaluation_dimensions")
+        if _validated_dimensions(payload.get("dimensions")) != expected_dimensions:
+            raise ValueError("evaluation_dimension_binding_mismatch")
         review = review_verdicts[case_id]
         expected_review = {"case_id": case_id, "source_commit": source_commit,
+                           "reviewed_case_manifest_sha256": reviewed_case_manifest_sha256,
                            "prompt_sha256": payload["prompt_sha256"],
                            "answer_sha256": payload["answer_sha256"],
-                           "dimensions": list(expected_dimensions), "passed": True}
+                           "expected_dimensions": list(expected_dimensions),
+                           "dimension_verdicts": {name: True for name in expected_dimensions},
+                           "passed": True}
         if (type(review) is not dict or set(review) != {"payload", "signature_ed25519_b64"}
                 or review["payload"] != expected_review):
             raise ValueError("failed_or_unbound_independent_review")
@@ -242,7 +374,7 @@ def _trusted_runner_public_key() -> Ed25519PublicKey:
         raise ValueError("trusted_runner_key_not_configured")
     try:
         raw = base64.b64decode(PINNED_RUNNER_PUBLIC_KEY_B64, validate=True)
-        if len(raw) != 32:
+        if len(raw) != 32 or base64.b64encode(raw).decode("ascii") != PINNED_RUNNER_PUBLIC_KEY_B64:
             raise ValueError("wrong key length")
         return Ed25519PublicKey.from_public_bytes(raw)
     except Exception as exc:
@@ -252,13 +384,21 @@ def _trusted_runner_public_key() -> Ed25519PublicKey:
 def _trusted_reviewer_public_key() -> Ed25519PublicKey:
     if not isinstance(PINNED_REVIEWER_PUBLIC_KEY_B64, str) or not PINNED_REVIEWER_PUBLIC_KEY_B64:
         raise ValueError("trusted_reviewer_key_not_configured")
-    if PINNED_REVIEWER_PUBLIC_KEY_B64 == PINNED_RUNNER_PUBLIC_KEY_B64:
-        raise ValueError("reviewer_must_be_independent_of_runner")
     try:
         raw = base64.b64decode(PINNED_REVIEWER_PUBLIC_KEY_B64, validate=True)
-        if len(raw) != 32:
+        runner_raw = base64.b64decode(PINNED_RUNNER_PUBLIC_KEY_B64, validate=True)
+        if len(raw) != 32 or len(runner_raw) != 32:
             raise ValueError("wrong key length")
+        if raw == runner_raw:
+            raise ValueError("reviewer_must_be_independent_of_runner")
+        if (base64.b64encode(raw).decode("ascii") != PINNED_REVIEWER_PUBLIC_KEY_B64
+                or base64.b64encode(runner_raw).decode("ascii") != PINNED_RUNNER_PUBLIC_KEY_B64):
+            raise ValueError("noncanonical pinned public key")
         return Ed25519PublicKey.from_public_bytes(raw)
+    except ValueError as exc:
+        if str(exc) == "reviewer_must_be_independent_of_runner":
+            raise
+        raise ValueError("invalid_pinned_reviewer_key") from exc
     except Exception as exc:
         raise ValueError("invalid_pinned_reviewer_key") from exc
 

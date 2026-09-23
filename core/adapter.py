@@ -4,7 +4,7 @@ from copy import deepcopy
 
 from router.policy import resolve_route
 from core.current_candidates import CORE_SERVING
-from core.identity import load_runtime_identity, trusted_model_provenance
+from core.identity import TRUSTED_SYSTEM_MESSAGE_COUNT, load_runtime_identity, selected_candidate_provenance
 from release.model_revisions import source_reference_for_route
 
 
@@ -117,7 +117,7 @@ def build_core_plan(value, *, candidate_model, token_counter):
         is_final = offset == len(stages) - 1
         dependencies = [operation["stage_id"] for operation in operations]
         maximum_output_tokens = _stage_output_limit(kind, route_limit, is_final)
-        first_artifact_message_index = 3 + len(messages)
+        first_artifact_message_index = TRUSTED_SYSTEM_MESSAGE_COUNT + len(messages)
         artifact_bindings = [
             {
                 "source_stage_id": dependency,
@@ -131,8 +131,9 @@ def build_core_plan(value, *, candidate_model, token_counter):
         ]
         provider_messages = [
             {"role": "system", "content": identity},
+            selected_candidate_provenance(route_id, candidate_model),
             {"role": "system", "content": policy["behavior_instruction"]},
-            {"role": "system", "content": STAGE_INSTRUCTIONS[kind] + "\n" + trusted_model_provenance(route_id)},
+            {"role": "system", "content": STAGE_INSTRUCTIONS[kind]},
             *messages,
             *[_artifact_message(dependency) for dependency in dependencies],
         ]
@@ -232,6 +233,10 @@ def bind_core_operation(plan, stage_id, prior_stage_outputs, *, token_counter):
     messages = template.get("messages")
     bindings = template.get("artifact_bindings")
     _require(isinstance(messages, list) and isinstance(bindings, list), "Core artifact binding contract missing")
+    _require(len(messages) >= TRUSTED_SYSTEM_MESSAGE_COUNT and
+             messages[0] == {"role": "system", "content": load_runtime_identity()} and
+             messages[1] == selected_candidate_provenance(plan.get("route_id"), plan.get("candidate_model")),
+             "Core trusted identity or provenance was changed")
     _require(len(bindings) == len(dependencies), "Core artifact binding count does not match DAG")
     bound_targets = set()
     for binding in bindings:

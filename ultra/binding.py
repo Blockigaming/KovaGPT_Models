@@ -8,7 +8,10 @@ from copy import deepcopy
 import json
 import re
 
+from core.current_candidates import CORE_SERVING
+from core.identity import TRUSTED_SYSTEM_MESSAGE_COUNT, load_runtime_identity, selected_candidate_provenance
 from execution.contracts import ExecutionError, require
+from release.model_revisions import source_reference_for_route
 from ultra.conversation import validated_conversation
 
 
@@ -96,12 +99,29 @@ def bind_ultra_operation(plan, stage_id, artifacts, *, runtime_identity, token_c
     messages = template["messages"]
     bindings = template["artifact_bindings"]
     require(len(bindings) == len(artifacts), "Ultra artifact binding count mismatch")
+    source = source_reference_for_route(plan["route_id"])
+    candidates = [candidate for candidate in CORE_SERVING["candidates"] if candidate["id"] == source.slot]
+    require(len(candidates) == 1 and candidates[0]["model"] == source.slot and
+            candidates[0]["revision"] == source.revision and
+            isinstance(runtime_identity, dict) and
+            runtime_identity.get("model") == source.slot and
+            runtime_identity.get("model_revision") == source.revision,
+            "Ultra loaded model differs from selected candidate provenance")
+    for field in ("adapter_sha256", "adapter_bundle_sha256"):
+        pinned = candidates[0][field]
+        require(isinstance(pinned, str) and re.fullmatch(r"[0-9a-f]{64}", pinned) is not None and
+                runtime_identity.get(field) == pinned,
+                "Ultra loaded adapter differs from selected candidate provenance")
+    require(isinstance(messages, list) and len(messages) >= TRUSTED_SYSTEM_MESSAGE_COUNT and
+            messages[0] == {"role": "system", "content": load_runtime_identity()} and
+            messages[1] == selected_candidate_provenance(plan["route_id"], source.slot),
+            "Ultra trusted identity or provenance was changed")
     conversation = validated_conversation(plan["conversation_messages"]) if "conversation_messages" in plan else [
         {"role": "user", "content": plan["task"]},
     ]
-    first_artifact = 3 + len(conversation)
+    first_artifact = TRUSTED_SYSTEM_MESSAGE_COUNT + len(conversation)
     require(isinstance(messages, list) and len(messages) == first_artifact + len(bindings)
-            and messages[3:first_artifact] == conversation,
+            and messages[TRUSTED_SYSTEM_MESSAGE_COUNT:first_artifact] == conversation,
             "Ultra conversation differs from its saved snapshot")
     sources, targets = set(), set()
     total_chars = 0

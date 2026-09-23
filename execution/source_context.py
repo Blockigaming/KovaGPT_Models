@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 
+from core.identity import TRUSTED_SYSTEM_MESSAGE_COUNT
 from execution.contracts import ExecutionError, ExecutionGrant, ExecutionSpec, canonical, identifier
 from execution.workers import ModelStageWorker
 from ultra.conversation import validated_conversation
@@ -241,7 +242,7 @@ class SourceContext:
         route = spec.plan["route_id"]
         self.check(prepared, route_id=route)
         plan = spec.plan
-        saved_messages = (plan["operations"][0]["request_template"]["messages"][3:]
+        saved_messages = (plan["operations"][0]["request_template"]["messages"][TRUSTED_SYSTEM_MESSAGE_COUNT:]
                           if plan["engine"] == "kova-core" else plan.get("conversation_messages"))
         _need(saved_messages == prepared.messages())
         fingerprint = spec.fingerprint

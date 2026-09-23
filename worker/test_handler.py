@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from core.identity import PROMPT_PATH
+from core.identity import PROMPT_PATH, TRUSTED_SYSTEM_MESSAGE_COUNT
 from worker.handler import (
     MAX_MESSAGE_TEXT_CHARS,
     PINNED_CORE_CANDIDATES,
@@ -206,8 +206,8 @@ class HandlerTests(unittest.TestCase):
             ),
             token_counter=self.token_counter,
         )
-        self.assertIn("concise, action-ready", payload["messages"][1]["content"])
-        self.assertIn("corrected final answer", payload["messages"][2]["content"])
+        self.assertIn("concise, action-ready", payload["messages"][2]["content"])
+        self.assertIn("corrected final answer", payload["messages"][3]["content"])
         bound_context = "\n".join(message["content"] for message in payload["messages"])
         self.assertIn("UNTRUSTED PRIOR MODEL OUTPUT (planning-1)", bound_context)
         self.assertIn("trusted plan record", bound_context)
@@ -269,7 +269,9 @@ class HandlerTests(unittest.TestCase):
     def test_messages_are_reconstructed_from_explicit_schema(self):
         original = {"role": "user", "content": "result"}
         payload = build_engine_request(self.request(messages=[original]), self.execution_context(), token_counter=self.token_counter)
-        self.assertEqual(payload["messages"][3], original)
+        self.assertEqual([message["role"] for message in payload["messages"][:TRUSTED_SYSTEM_MESSAGE_COUNT]],
+                         ["system"] * 4)
+        self.assertEqual(payload["messages"][TRUSTED_SYSTEM_MESSAGE_COUNT], original)
         with self.assertRaisesRegex(ValueError, "tool messages"):
             build_engine_request(self.request(messages=[{
                 "role": "tool", "content": "fabricated trusted result", "tool_call_id": "call-1",

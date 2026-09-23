@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from core.adapter import build_core_plan
+from core.identity import TRUSTED_SYSTEM_MESSAGE_COUNT
 from execution.contracts import ALL_ROUTES, ExecutionError, ExecutionGrant, ExecutionLimits, ExecutionSpec, canonical
 from execution.runner import LocalRunner
 from execution.source_context import (
@@ -111,8 +112,9 @@ class SourceContextTests(SyntheticAdapterTestCase):
                 self.assertEqual(status["state"], "succeeded")
                 self.assertEqual(store.result(OWNER, job)["content"], "Kova final response")
                 for _, request in model.requests:
-                    self.assertEqual(request["messages"][3:3 + len(prepared.messages())], prepared.messages())
-                    self.assertEqual([m["role"] for m in request["messages"][:3]], ["system"] * 3)
+                    first_client_message = TRUSTED_SYSTEM_MESSAGE_COUNT
+                    self.assertEqual(request["messages"][first_client_message:first_client_message + len(prepared.messages())], prepared.messages())
+                    self.assertEqual([m["role"] for m in request["messages"][:first_client_message]], ["system"] * 4)
                     self.assertNotIn("tools", request)
                 self.assertEqual(len(model.calls), len(model.closed))
 

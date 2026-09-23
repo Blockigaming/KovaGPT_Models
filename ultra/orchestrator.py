@@ -8,7 +8,8 @@ from pathlib import Path
 
 from router.policy import resolve_route, RUNTIME_PROFILES
 from core.current_candidates import NATIVE_CONTEXT_TOKENS
-from core.identity import load_runtime_identity, trusted_model_provenance
+from core.identity import load_runtime_identity, selected_candidate_provenance
+from release.model_revisions import source_reference_for_route
 from ultra.binding import DISAGREEMENT_INSTRUCTION, JUDGE_INSTRUCTION
 from ultra.conversation import validated_conversation
 
@@ -137,8 +138,9 @@ def _messages_template(task, behavior_instruction, operation_instruction, artifa
     bindings = []
     messages = [
         {"role": "system", "content": identity},
+        provenance,
         {"role": "system", "content": behavior_instruction},
-        {"role": "system", "content": operation_instruction + "\n" + provenance},
+        {"role": "system", "content": operation_instruction},
         *(deepcopy(conversation) if conversation is not None else [{"role": "user", "content": task}]),
     ]
     for stage_id in artifact_ids:
@@ -173,6 +175,8 @@ def build_ultra_plan(request, *, admission, token_counter):
     """Build a single-task or full-text-conversation DAG without executing it."""
     identity = load_runtime_identity()
     policy = _resolve_request(request)
+    reference = source_reference_for_route(policy["route_id"])
+    provenance = selected_candidate_provenance(policy["route_id"], reference.slot)
     request_id = request["request_id"]
     _require(isinstance(request_id, str) and 1 <= len(request_id) <= 128, "invalid request_id")
     conversation = validated_conversation(request["messages"]) if "messages" in request else None
@@ -231,8 +235,8 @@ def build_ultra_plan(request, *, admission, token_counter):
     for spec in specs:
         messages, bindings = _messages_template(
             task, policy["behavior_instruction"], spec["instruction"], spec["artifact_ids"],
-            spec.get("optional_artifact_ids", ()), conversation=conversation, identity=identity,
-            provenance=trusted_model_provenance(policy["route_id"]),
+            spec.get("optional_artifact_ids", ()), conversation=conversation,
+            identity=identity, provenance=provenance,
         )
         spec["messages"] = messages
         spec["artifact_bindings"] = bindings
