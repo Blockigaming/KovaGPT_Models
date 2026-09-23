@@ -277,6 +277,9 @@ class ExecutionSpec:
         require(runtime_identity.get("adapter_bundle_sha256") == admitted[0]["adapter_bundle_sha256"]
                 and isinstance(admitted[0]["adapter_bundle_sha256"], str),
                 "adapter bundle differs from current candidate pin")
+        positive_integer(runtime_identity.get("context_tokens"), "context tokens")
+        require(runtime_identity["context_tokens"] <= admitted[0]["context_tokens"],
+                "served context exceeds current candidate context")
         operations = plan.get("operations", [])
         ids = [op.get("stage_id", op.get("id")) for op in operations]
         require(set(stage_cost_caps) == set(ids), "every stage requires an explicit server cost cap")

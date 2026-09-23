@@ -6,12 +6,15 @@ const current = JSON.parse(execFileSync("python3", ["-E", "-S", "-B", "-c", `
 import json
 from core.current_candidates import CORE_SERVING
 from router.policy import resolve_route
+from worker.handler import ALLOWED_SERVING_ENGINES, ALLOWED_ENDPOINT_TYPES
 routes = [resolve_route({'surface':'chat','route_id':route}) for route in ('instant','medium','high','extra-high','max')]
 routes += [resolve_route({'surface':surface,'family':family,'effort':effort}) for surface, families in (('chat',('cosmo','orion')),('work',('cosmo','orion','nova'))) for family in families for effort in ('Light','Medium','High','Extra High','Max')]
-print(json.dumps({'serving':CORE_SERVING,'routes':routes}))
+print(json.dumps({'serving':CORE_SERVING,'routes':routes,'capabilities':{
+    'serving_engines':sorted(ALLOWED_SERVING_ENGINES),
+    'endpoint_types':sorted(ALLOWED_ENDPOINT_TYPES)}}))
 `], { cwd: fileURLToPath(new URL("..", import.meta.url)), encoding: "utf8" }));
 const serving = current.serving;
-const servingCapabilities = JSON.parse(readFileSync(new URL("../config/core-serving.v1.json", import.meta.url), "utf8"));
+const servingCapabilities = current.capabilities;
 const candidates = new Map(serving.candidates.map((candidate) => [candidate.model, candidate]));
 const outcomes = new Set(["success", "failed", "quarantined"]);
 const recordTypes = new Set(["attempt", "lifecycle_close"]);
@@ -159,8 +162,8 @@ export function summarizeCoreBenchmark(records, candidateCatalog = candidates) {
     if (!Number.isInteger(record.gpu_count) || record.gpu_count < 1 || record.gpu_count > 8) {
       throw new Error(`record ${index} invalid gpu_count`);
     }
-    if (!servingCapabilities.serving_engine_candidates.includes(record.serving_engine)) throw new Error(`record ${index} invalid serving_engine`);
-    if (!servingCapabilities.endpoint_type_candidates.includes(record.endpoint_type)) throw new Error(`record ${index} invalid endpoint_type`);
+    if (!servingCapabilities.serving_engines.includes(record.serving_engine)) throw new Error(`record ${index} invalid serving_engine`);
+    if (!servingCapabilities.endpoint_types.includes(record.endpoint_type)) throw new Error(`record ${index} invalid endpoint_type`);
     if (!/^sha256:[a-f0-9]{64}$/u.test(record.container_image_digest)) throw new Error(`record ${index} invalid container_image_digest`);
     if (!Number.isFinite(record.gpu_rate_per_second_usd) || record.gpu_rate_per_second_usd <= 0) {
       throw new Error(`record ${index} invalid gpu_rate_per_second_usd`);

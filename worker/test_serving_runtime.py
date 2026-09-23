@@ -188,6 +188,22 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await controller.start()
         self.factory.assert_not_called()
 
+    async def test_current_candidate_context_limit_blocks_oversized_loader_before_native_allocation(self):
+        for value in (self.candidate["context_tokens"] + 1, 262144):
+            policy = replace(self.policy, context_tokens=value)
+            controller = runtime.ServingRuntime(policy, lambda _: True,
+                                                lambda: policy.container_image_digest)
+            with self.subTest(context_tokens=value), self.assertRaises(runtime.ServingRuntimeError):
+                await controller.start()
+            self.assertEqual(controller.status()["state"], "failed")
+            self.factory.assert_not_called()
+        policy = replace(self.policy, context_tokens=self.candidate["context_tokens"])
+        controller = runtime.ServingRuntime(policy, lambda _: True,
+                                            lambda: policy.container_image_digest)
+        await controller.start()
+        self.assertEqual((await controller.identity())["context_tokens"], self.candidate["context_tokens"])
+        controller.stop()
+
     async def test_observed_native_configuration_mismatch_closes_backend_and_refuses_readiness(self):
         original = self.factory.side_effect
         def altered(*args):

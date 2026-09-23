@@ -42,7 +42,8 @@ class RuntimeFenceTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(runtime, "CORE_SERVING", {"candidates": [{"id": artifact["candidate_id"],
                     "model": artifact["model"], "revision": artifact["revision"],
                     "adapter_sha256": artifact["adapter_sha256"],
-                    "adapter_bundle_sha256": artifact["manifest_sha256"]}]}), \
+                    "adapter_bundle_sha256": artifact["manifest_sha256"],
+                    "context_tokens": runtime.CORE_SERVING["candidates"][0]["context_tokens"]}]}), \
                 patch.object(runtime, "_environment_guard"), patch.object(runtime, "NativeVllm", fixtures.FakeBackend):
             await controller.start()
             old = (await controller.identity())["worker_lifecycle_id"]

@@ -1,6 +1,10 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from core.adapter import CANDIDATES, IDENTITY, bind_core_operation, build_core_plan
+from core.identity import APPROVED_PROMPT_SHA256, PROMPT_PATH
 from release.model_revisions import source_reference_for_route
 
 
@@ -70,10 +74,20 @@ class CoreAdapterTests(unittest.TestCase):
         plan = self.build(self.request(route_id="medium"))
         provider_request = plan["operations"][-1]["request_template"]
         self.assertEqual(provider_request["messages"][0]["content"], IDENTITY)
+        self.assertEqual(IDENTITY, PROMPT_PATH.read_text(encoding="utf-8"))
+        self.assertIn("Cosmo, Orion, and Nova are Kova model families", IDENTITY)
+        self.assertEqual(len(APPROVED_PROMPT_SHA256), 64)
         self.assertEqual(provider_request["reasoning_effort"], "medium")
         self.assertEqual(provider_request["max_completion_tokens"], 4096)
         with self.assertRaisesRegex(ValueError, "server-controlled"):
             self.build(self.request(model="attacker/model"))
+
+    def test_identity_prompt_change_after_import_rejects_core_plan(self):
+        with TemporaryDirectory() as temporary:
+            changed = Path(temporary) / "prompt.txt"
+            changed.write_bytes(PROMPT_PATH.read_bytes() + b"\nUNTRUSTED CHANGE")
+            with patch("core.identity.PROMPT_PATH", changed), self.assertRaisesRegex(ValueError, "identity prompt mismatch"):
+                self.build()
 
     def test_ultra_and_unknown_models_fail_closed(self):
         with self.assertRaisesRegex(ValueError, "not eligible"):

@@ -10,6 +10,25 @@ from core.current_candidates import CORE_SERVING
 
 
 class ExecutionContractTests(SyntheticAdapterTestCase):
+    def test_new_admission_rejects_context_above_current_candidate_limit(self):
+        spec = make_spec("high")
+        identity = spec.snapshot()["runtime_identity"]
+        candidate = next(c for c in CORE_SERVING["candidates"] if c["model"] == identity["model"])
+        caps = {stage.id: stage.cost_cap_microusd for stage in spec.stages}
+        inflated = {**identity, "context_tokens": candidate["context_tokens"] + 1}
+        with self.assertRaisesRegex(ExecutionError, "served context exceeds current candidate context"):
+            ExecutionSpec.from_plan(spec.plan, limits=spec.limits,
+                                    runtime_identity=inflated, stage_cost_caps=caps)
+
+        previous_limit = candidate["context_tokens"]
+        self.addCleanup(candidate.__setitem__, "context_tokens", previous_limit)
+        candidate["context_tokens"] = previous_limit - 1
+        # Existing snapshots stay readable after a candidate context reduction.
+        self.assertEqual(ExecutionSpec(spec.encoded).fingerprint, spec.fingerprint)
+        with self.assertRaisesRegex(ExecutionError, "served context exceeds current candidate context"):
+            ExecutionSpec.from_plan(spec.plan, limits=spec.limits,
+                                    runtime_identity=identity, stage_cost_caps=caps)
+
     def test_saved_snapshot_survives_adapter_rotation_but_new_admission_does_not(self):
         spec = make_spec("instant")
         candidate = next(c for c in CORE_SERVING["candidates"] if c["model"] == spec.snapshot()["runtime_identity"]["model"])

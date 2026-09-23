@@ -2,16 +2,15 @@
 
 import json
 import math
-from pathlib import Path
 from time import perf_counter_ns
 from uuid import UUID, uuid4
 
 from core.adapter import bind_core_operation, build_core_plan
 from core.current_candidates import CORE_SERVING
+from core.identity import load_runtime_identity
 from router.policy import CHAT_POLICIES, WORK_EFFORTS, WORK_FAMILY_POLICIES, resolve_route
 
 
-ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_EFFORTS = frozenset(("low", "medium", "xhigh"))
 ALLOWED_SERVING_ENGINES = frozenset(("vllm", "sglang"))
 ALLOWED_ENDPOINT_TYPES = frozenset(("queue_based", "load_balancing"))
@@ -23,9 +22,7 @@ MAX_TOOL_CALLS = 32
 MAX_TOOL_ARGUMENT_CHARS = 250_000
 MAX_TOOL_JSON_DEPTH = 64
 MAX_TOOL_JSON_NODES = 50_000
-TRUSTED_SYSTEM_IDENTITY = json.loads(
-    (ROOT / "config" / "identity.v1.json").read_text(encoding="utf-8")
-)["system_identity"]
+TRUSTED_SYSTEM_IDENTITY = load_runtime_identity()
 PINNED_CORE_CANDIDATES = {
     candidate["id"]: {
         "id": candidate["id"],
@@ -210,6 +207,7 @@ def _planner_request(value, route_id):
 
 
 def build_engine_request(value, execution_context, *, token_counter):
+    _require(load_runtime_identity() == TRUSTED_SYSTEM_IDENTITY, "approved Kova identity prompt changed")
     value = validate_input(value)
     execution = validate_execution_context(execution_context)
     selected_candidate = _selected_candidate(execution["benchmark_candidate_id"])

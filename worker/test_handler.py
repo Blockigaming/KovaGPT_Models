@@ -1,5 +1,9 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
+from core.identity import PROMPT_PATH
 from worker.handler import (
     MAX_MESSAGE_TEXT_CHARS,
     PINNED_CORE_CANDIDATES,
@@ -153,8 +157,16 @@ class HandlerTests(unittest.TestCase):
         )
         self.assertEqual(payload["model"], self.bf16["model"])
         self.assertEqual(payload["messages"][0], {"role": "system", "content": TRUSTED_SYSTEM_IDENTITY})
+        self.assertEqual(TRUSTED_SYSTEM_IDENTITY, PROMPT_PATH.read_text(encoding="utf-8"))
         self.assertTrue(payload["stream"])
         self.assertFalse(payload["chat_template_kwargs"]["enable_thinking"])
+
+    def test_identity_prompt_change_after_import_rejects_worker_request(self):
+        with TemporaryDirectory() as temporary:
+            changed = Path(temporary) / "prompt.txt"
+            changed.write_bytes(PROMPT_PATH.read_bytes() + b"\nUNTRUSTED CHANGE")
+            with patch("core.identity.PROMPT_PATH", changed), self.assertRaisesRegex(ValueError, "identity prompt mismatch"):
+                build_engine_request(self.request(), self.execution_context(), token_counter=self.token_counter)
 
     def test_worker_supports_each_allowlisted_candidate_from_trusted_context(self):
         fp8_context = self.execution_context(

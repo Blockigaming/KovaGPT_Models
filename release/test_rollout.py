@@ -86,7 +86,9 @@ class RolloutTests(unittest.TestCase):
     def test_current_policy_or_family_revision_expires_a_staged_plan(self):
         original = Path.read_bytes
         for relative in ("config/current-product-policy.v3.json", "router/entitlements.py",
-                         "release/model_revisions.py", "core/current_candidates.py"):
+                         "release/model_revisions.py", "core/current_candidates.py",
+                         "prompts/kova-identity.v3.txt", "core/identity.py",
+                         "config/kova-three-family-dataset.v2.json", "worker/handler.py"):
             def changed(path):
                 data = original(path)
                 return data + b"\n# changed" if str(path).endswith(relative) else data

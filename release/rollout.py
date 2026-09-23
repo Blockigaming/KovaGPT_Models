@@ -69,11 +69,12 @@ def pin(value, length=64):
 def policy_digest():
     # A staged plan must expire when any current family, entitlement, model,
     # planner, or evidence source changes. Archived routing files are excluded.
-    paths = ("config/current-product-policy.v3.json", "config/identity.v1.json",
+    paths = ("config/current-product-policy.v3.json", "prompts/kova-identity.v3.txt",
+             "core/identity.py", "config/kova-three-family-dataset.v2.json",
              "config/kova-runtime-profiles.v1.json", "router/policy.py",
              "router/entitlements.py", "router/auto.py", "router/application.py",
              "release/model_revisions.py", "core/current_candidates.py",
-             "core/adapter.py", "ultra/orchestrator.py",
+             "core/adapter.py", "ultra/orchestrator.py", "worker/handler.py",
              "config/evaluation-gates.v1.json", "evaluations/offline-suite.v1.json")
     return digest({path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in paths})
 

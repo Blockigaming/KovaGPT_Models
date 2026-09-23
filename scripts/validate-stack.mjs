@@ -1,13 +1,14 @@
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 
 const load = async (name) => JSON.parse(await readFile(new URL(`../config/${name}`, import.meta.url)));
 const [
-  candidate, stack, runpod, catalog, economics, identity, inference, hardware, surface,
+  candidate, stack, runpod, catalog, economics, currentIdentity, archivedIdentity, inference, hardware, surface,
   activity, completion, evaluations, nova, cosmo, architecture, routes, ultraPlan,
   coreServing, coreContainer,
 ] = await Promise.all([
   "candidate.v1.json", "training-stack.v1.json", "runpod-serverless.v1.json",
-  "model-catalog.v1.json", "economics.v1.json", "identity.v1.json",
+  "model-catalog.v1.json", "economics.v1.json", "kova-three-family-dataset.v2.json", "identity.v1.json",
   "inference-contract.v1.json", "hardware-benchmark.v1.json", "product-surface.v1.json",
   "activity-event.v1.json", "completion-target.v1.json", "evaluation-gates.v1.json",
   "nova-candidate.v1.json", "cosmo-candidate.v1.json", "provider-architecture.v1.json",
@@ -58,20 +59,14 @@ if (
   economics.enforcement.allow_unmeasured_price_publication !== false
 ) throw new Error("unmeasured_prices_must_be_blocked");
 
-const requiredBehaviors = [
-  "identify_as_kova", "truthful_active_provider_and_upstream_disclosure_when_asked",
-  "do_not_claim_profile_names_are_separate_foundation_weights", "preserve_required_license_notices",
-  "tool_result_grounding", "no_hidden_chain_of_thought", "contextual_not_forced_plus_recommendations",
-];
-const requiredIdentityText = [
-  "You are Kova", "Do not claim", "Cosmo, Orion, and Nova", "provider and upstream model",
-  "Never claim a tool action", "Do not reveal hidden chain-of-thought",
-];
+const approvedIdentityDigest = "ed1b503f947cabc6a7c24a9395bd63b9eff2dd55d57570a0d5a8fd51df3c5bc8";
+const identityPrompt = await readFile(new URL("../prompts/kova-identity.v3.txt", import.meta.url));
 if (
-  identity.assistant_name !== "Kova" ||
-  !requiredBehaviors.every((behavior) => identity.required_behaviors.includes(behavior)) ||
-  !requiredIdentityText.every((value) => identity.system_identity.includes(value)) ||
-  !identity.forbidden_claims.includes("kova_foundation_trained_from_scratch")
+  archivedIdentity.status !== "superseded_non_authoritative_history" ||
+  archivedIdentity.superseded_by !== "prompts/kova-identity.v3.txt" ||
+  currentIdentity.prompt_path !== "prompts/kova-identity.v3.txt" ||
+  currentIdentity.prompt_sha256 !== approvedIdentityDigest ||
+  createHash("sha256").update(identityPrompt).digest("hex") !== approvedIdentityDigest
 ) throw new Error("truthful_kova_identity_required");
 
 if (

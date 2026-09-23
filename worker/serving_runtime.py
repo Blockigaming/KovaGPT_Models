@@ -183,6 +183,8 @@ class ServingRuntime:
                         if candidate["id"] == self.policy.candidate_id]
             need(len(selected) == 1)
             candidate = selected[0]
+            need(_positive(candidate.get("context_tokens"), 262144)
+                 and self.policy.context_tokens <= candidate["context_tokens"])
             # The startup manifest covers adapter_config.json as well as weights.
             # A separately trusted candidate pin must agree before native loading.
             need(artifact["model"] == candidate["model"]

@@ -1,16 +1,14 @@
 """Build RunPod Kova Core plans without performing network requests."""
 
 from copy import deepcopy
-import json
-from pathlib import Path
 
 from router.policy import resolve_route
 from core.current_candidates import CORE_SERVING
+from core.identity import load_runtime_identity
 from release.model_revisions import source_reference_for_route
 
 
-ROOT = Path(__file__).resolve().parents[1]
-IDENTITY = json.loads((ROOT / "config" / "identity.v1.json").read_text(encoding="utf-8"))["system_identity"]
+IDENTITY = load_runtime_identity()
 CANDIDATES = {candidate["model"]: candidate for candidate in CORE_SERVING["candidates"]}
 CORE_ROUTE_LIMITS = {
     "instant": 2048,
@@ -99,6 +97,7 @@ def _artifact_message(stage_id):
 
 def build_core_plan(value, *, candidate_model, token_counter):
     """Build immutable provider calls; the caller payload cannot select a model or effort."""
+    identity = load_runtime_identity()
     _require(isinstance(value, dict), "request must be an object")
     policy = _resolved_policy(value)
     request_id = value["request_id"]
@@ -131,7 +130,7 @@ def build_core_plan(value, *, candidate_model, token_counter):
             for dependency_index, dependency in enumerate(dependencies)
         ]
         provider_messages = [
-            {"role": "system", "content": IDENTITY},
+            {"role": "system", "content": identity},
             {"role": "system", "content": policy["behavior_instruction"]},
             {"role": "system", "content": STAGE_INSTRUCTIONS[kind]},
             *messages,

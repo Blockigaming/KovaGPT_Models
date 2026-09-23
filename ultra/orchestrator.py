@@ -8,12 +8,13 @@ from pathlib import Path
 
 from router.policy import resolve_route, RUNTIME_PROFILES
 from core.current_candidates import NATIVE_CONTEXT_TOKENS
+from core.identity import load_runtime_identity
 from ultra.binding import DISAGREEMENT_INSTRUCTION, JUDGE_INSTRUCTION
 from ultra.conversation import validated_conversation
 
 
 ROOT = Path(__file__).resolve().parents[1]
-IDENTITY = json.loads((ROOT / "config" / "identity.v1.json").read_text(encoding="utf-8"))["system_identity"]
+IDENTITY = load_runtime_identity()
 ULTRA_CONFIG = json.loads((ROOT / "config" / "ultra-orchestration.v1.json").read_text(encoding="utf-8"))
 DOMAIN_SPECIALISTS = {
     "coding": ("planner", "implementation", "security", "test", "performance"),
@@ -131,11 +132,11 @@ def _select_specialists(domains, maximum):
 
 
 def _messages_template(task, behavior_instruction, operation_instruction, artifact_ids,
-                       optional_artifact_ids=(), *, conversation=None):
+                       optional_artifact_ids=(), *, conversation=None, identity):
     optional = set(optional_artifact_ids)
     bindings = []
     messages = [
-        {"role": "system", "content": IDENTITY},
+        {"role": "system", "content": identity},
         {"role": "system", "content": behavior_instruction},
         {"role": "system", "content": operation_instruction},
         *(deepcopy(conversation) if conversation is not None else [{"role": "user", "content": task}]),
@@ -170,6 +171,7 @@ def _trusted_count(token_counter, messages):
 
 def build_ultra_plan(request, *, admission, token_counter):
     """Build a single-task or full-text-conversation DAG without executing it."""
+    identity = load_runtime_identity()
     policy = _resolve_request(request)
     request_id = request["request_id"]
     _require(isinstance(request_id, str) and 1 <= len(request_id) <= 128, "invalid request_id")
@@ -229,7 +231,7 @@ def build_ultra_plan(request, *, admission, token_counter):
     for spec in specs:
         messages, bindings = _messages_template(
             task, policy["behavior_instruction"], spec["instruction"], spec["artifact_ids"],
-            spec.get("optional_artifact_ids", ()), conversation=conversation,
+            spec.get("optional_artifact_ids", ()), conversation=conversation, identity=identity,
         )
         spec["messages"] = messages
         spec["artifact_bindings"] = bindings

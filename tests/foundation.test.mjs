@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,24 @@ for (const script of ["validate-data.mjs", "validate-stack.mjs"]) {
     assert.equal(result.status, 0, result.stderr);
   });
 }
+
+test("stack validation rejects a changed approved identity prompt", (t) => {
+  const output = mkdtempSync(join(tmpdir(), "kova-identity-validation-"));
+  t.after(() => rmSync(output, { recursive: true, force: true }));
+  mkdirSync(join(output, "scripts"));
+  mkdirSync(join(output, "prompts"));
+  cpSync(join(root, "config"), join(output, "config"), { recursive: true });
+  copyFileSync(join(root, "scripts/validate-stack.mjs"), join(output, "scripts/validate-stack.mjs"));
+  writeFileSync(
+    join(output, "prompts/kova-identity.v3.txt"),
+    `${readFileSync(join(root, "prompts/kova-identity.v3.txt"), "utf8")}\n`,
+  );
+  const result = spawnSync(process.execPath, [join(output, "scripts/validate-stack.mjs")], {
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /truthful_kova_identity_required/u);
+});
 
 test("dataset compiler creates hashed isolated splits", () => {
   const output = mkdtempSync(join(tmpdir(), "kova-data-"));
