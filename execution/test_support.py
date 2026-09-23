@@ -9,13 +9,19 @@ from execution.contracts import ExecutionGrant, ExecutionLimits, ExecutionSpec
 from execution.workers import ModelStageWorker
 from ultra.orchestrator import build_ultra_plan
 from worker.azure_container_apps import AzureResponse, AzureSettings, make_azure_inference_client
-from worker.handler import CORE_SERVING
+from worker.handler import CORE_SERVING, PINNED_CORE_CANDIDATES
 from release.model_revisions import source_reference_for_route
 
 
+SYNTHETIC_ADAPTER_SHA256 = "f" * 64
+# This fixture is imported only by tests. No trained adapter exists in the
+# source registry; bind synthetic identities solely for in-memory execution.
+for _candidate in CORE_SERVING["candidates"]:
+    _candidate["adapter_sha256"] = SYNTHETIC_ADAPTER_SHA256
+    PINNED_CORE_CANDIDATES[_candidate["id"]]["adapter_sha256"] = SYNTHETIC_ADAPTER_SHA256
 CANDIDATE = CORE_SERVING["candidates"][0]
 IDENTITY = {"model": CANDIDATE["model"], "model_revision": CANDIDATE["revision"],
-            "context_tokens": CANDIDATE["context_tokens"]}
+            "context_tokens": CANDIDATE["context_tokens"], "adapter_sha256": SYNTHETIC_ADAPTER_SHA256}
 OWNER = "fixture-owner"
 
 
@@ -82,6 +88,7 @@ class ModelFixture:
             "source": "server_provider_runtime", "worker_lifecycle_id": "fixture-lifecycle",
             "loaded_model": self.active_identity["model"],
             "loaded_model_revision": self.active_identity["model_revision"],
+            "loaded_adapter_sha256": self.active_identity["adapter_sha256"],
             "cold_start": False, "worker_start_ms": 0, "model_load_ms": 0, "queue_ms": 0,
             "gpu_rate_per_second_usd": 0.001, "gpu_type_id": "fixture-no-real-gpu", "gpu_count": 1,
             "serving_engine": "vllm", "endpoint_type": "load_balancing",

@@ -10,7 +10,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -28,6 +28,7 @@ class FakeBackend:
         self.bad_close = False
         self.observed = {"model_path": root, "tokenizer_path": root,
             "model_revision": artifact["revision"], "tokenizer_revision": artifact["revision"],
+            "adapter_sha256": artifact["adapter_sha256"],
             "served_model_names": [artifact["model"]], "context_tokens": policy.context_tokens,
             "trust_remote_code": False}
 
@@ -53,13 +54,19 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.model = self.root / "model"
         self.model.mkdir(mode=0o700)
         self.candidate = CORE_SERVING["candidates"][0]
+        previous_pin = self.candidate["adapter_sha256"]
+        adapter_bytes = b"synthetic serving adapter"
+        self.candidate["adapter_sha256"] = hashlib.sha256(adapter_bytes).hexdigest()
+        self.addCleanup(self.candidate.update, adapter_sha256=previous_pin)
         files = {"config.json": b'{"model_type":"synthetic"}', "tokenizer.json": b'{}',
             "tokenizer_config.json": b'{}', "fixture.safetensors": b'NOT REAL MODEL WEIGHTS',
+            "adapter_model.safetensors": adapter_bytes,
             "model.safetensors.index.json": b'{"weight_map":{"fixture":"fixture.safetensors"}}'}
         for name, value in files.items():
             (self.model / name).write_bytes(value)
         manifest = {"schema_version":1, "candidate_id":self.candidate["id"], "model":self.candidate["model"],
-            "revision":self.candidate["revision"], "files":[{"path":name, "bytes":len(value),
+            "revision":self.candidate["revision"], "adapter_sha256":self.candidate["adapter_sha256"],
+            "files":[{"path":name, "bytes":len(value),
                 "sha256":hashlib.sha256(value).hexdigest()} for name, value in sorted(files.items())]}
         manifest_path = self.root / "manifest.json"
         manifest_bytes = json.dumps(manifest).encode()
@@ -103,6 +110,16 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(self.backend.health_calls, 3)
         self.assertFalse(self.controller.stop()["ready"])
         self.assertEqual(self.backend.closed, [True])
+
+    async def test_loaded_base_without_observed_trained_adapter_cannot_be_ready(self):
+        def base_only(root, artifact, policy):
+            backend = FakeBackend(root, artifact, policy)
+            backend.observed.pop("adapter_sha256")
+            return backend
+        self.factory.side_effect = base_only
+        with self.assertRaises(runtime.ServingRuntimeError):
+            await self.controller.start()
+        self.assertFalse(self.controller.status()["ready"])
 
     async def test_each_disabled_loading_gate_blocks_before_artifacts_callbacks_or_engine(self):
         for field in ("enabled", "model_loading_authorized", "gpu_execution_authorized"):
@@ -246,54 +263,19 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
 
 class NativeBindingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_native_binding_uses_documented_vllm_api_and_no_remote_model_or_logging(self):
+    async def test_native_base_only_loader_rejects_before_gpu_allocation(self):
         policy = runtime.LoaderPolicy("/trusted/policy.json", "a"*64, "fixture", "sha256:"+"b"*64,
                                        8192, 0.8, 2, 60, 2, 2, True, True, True)
-        captured = {}
-        class Args:
-            def __init__(self, **values):
-                self.values = values
-        class Engine:
-            def __init__(self, values):
-                self.model_config = SimpleNamespace(model=values["model"], tokenizer=values["tokenizer"],
-                    revision=values["revision"], tokenizer_revision=values["tokenizer_revision"],
-                    served_model_name=values["served_model_name"], max_model_len=values["max_model_len"],
-                    trust_remote_code=values["trust_remote_code"])
-            async def check_health(self):
-                captured["health"] = True
-            def shutdown(self, timeout=None):
-                captured["shutdown_timeout"] = timeout
-        class AsyncLLM:
-            @staticmethod
-            def from_engine_args(args):
-                captured.update(args.values)
-                return Engine(args.values)
-        modules = {name:ModuleType(name) for name in ("vllm", "vllm.engine", "vllm.engine.arg_utils",
-            "vllm.v1", "vllm.v1.engine", "vllm.v1.engine.async_llm")}
-        modules["vllm.engine.arg_utils"].AsyncEngineArgs = Args
-        modules["vllm.v1.engine.async_llm"].AsyncLLM = AsyncLLM
-        with patch.dict("sys.modules", modules), patch.object(runtime.importlib.metadata, "version", return_value="0.29.0"):
-            backend = runtime.NativeVllm("/readonly/model", {"model":"fixture-model", "revision":"a"*40}, policy)
-            await backend.health()
-            self.assertEqual(backend.observed_configuration()["model_path"], "/readonly/model")
-            backend.close()
-        self.assertEqual(captured["model"], "/readonly/model")
-        self.assertEqual(captured["tokenizer"], "/readonly/model")
-        self.assertEqual(captured["load_format"], "safetensors")
-        self.assertFalse(captured["trust_remote_code"])
-        self.assertFalse(captured["enable_log_requests"])
-        self.assertTrue(captured["disable_log_stats"])
-        self.assertFalse(captured["enable_prefix_caching"])
-        self.assertEqual(captured["tensor_parallel_size"], 1)
-        self.assertEqual(captured["shutdown_timeout"], 2)
-        self.assertTrue(captured["health"])
+        with patch.dict("sys.modules", {"vllm": None}), self.assertRaisesRegex(
+                runtime.ServingRuntimeError, "trained adapter loading is unavailable"):
+            runtime.NativeVllm("/readonly/model", {"model":"fixture-model", "revision":"a"*40}, policy)
 
-    async def test_wrong_vllm_version_fails_before_native_import(self):
+    async def test_disabled_native_policy_fails_before_loader(self):
         policy = runtime.LoaderPolicy("/trusted/policy.json", "a"*64, "fixture", "sha256:"+"b"*64,
                                        8192, 0.8, 2, 60, 2, 2, True, True, True)
-        with patch.object(runtime.importlib.metadata, "version", return_value="other-version"):
-            with self.assertRaises(runtime.ServingRuntimeError):
-                runtime.NativeVllm("/readonly/model", {"model":"fixture", "revision":"a"*40}, policy)
+        with self.assertRaises(runtime.ServingRuntimeError):
+            runtime.NativeVllm("/readonly/model", {"model":"fixture", "revision":"a"*40},
+                               replace(policy, enabled=False))
 
     async def test_concrete_environment_guard_requires_nonroot_readonly_and_offline_flags(self):
         environment = {name:"1" for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "VLLM_NO_USAGE_STATS", "DO_NOT_TRACK")}

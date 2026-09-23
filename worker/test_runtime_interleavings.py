@@ -33,7 +33,8 @@ class RuntimeInterleavingTests(unittest.IsolatedAsyncioTestCase):
             True, True, True,
         )
         artifact = {"model": "fixture-model", "revision": "a" * 40,
-                    "candidate_id": self.policy.candidate_id, "manifest_sha256": "b" * 64}
+                    "candidate_id": self.policy.candidate_id, "manifest_sha256": "b" * 64,
+                    "adapter_sha256": "c" * 64}
         report = {"status": "artifact_verified_serving_blocked", "artifact_evidence": artifact}
         self.created = asyncio.Queue()
         self.tasks = []

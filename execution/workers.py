@@ -87,9 +87,11 @@ class ModelStageWorker:
         require(identity["model"] == source.slot and identity["model_revision"] == source.revision,
                 "worker identity differs from selected route family")
         candidates = [c for c in PINNED_CORE_CANDIDATES.values()
-                      if c["model"] == identity["model"] and c["model_revision"] == identity["model_revision"]]
+                      if c["model"] == identity["model"] and c["model_revision"] == identity["model_revision"]
+                      and c["adapter_sha256"] == identity["adapter_sha256"]]
         require(len(candidates) == 1, "worker model/revision not in the pinned candidate allowlist")
         candidate = candidates[0]
+        require(isinstance(candidate["adapter_sha256"], str), "trained adapter is not pinned")
         serving = next(c for c in CORE_SERVING["candidates"] if c["id"] == candidate["id"])
         require(identity["context_tokens"] <= serving["context_tokens"], "served context exceeds candidate context")
         _verify_current_plan(plan, identity, self.token_counter)

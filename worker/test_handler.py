@@ -23,6 +23,13 @@ class HandlerTests(unittest.TestCase):
     bf16 = PINNED_CORE_CANDIDATES["kova-cosmo"]
     fp8 = PINNED_CORE_CANDIDATES["kova-orion"]
 
+    def setUp(self):
+        self.original_pins = {key: value["adapter_sha256"] for key, value in PINNED_CORE_CANDIDATES.items()}
+        for candidate in PINNED_CORE_CANDIDATES.values():
+            candidate["adapter_sha256"] = "f" * 64
+        self.addCleanup(lambda: [PINNED_CORE_CANDIDATES[key].update(adapter_sha256=value)
+                                 for key, value in self.original_pins.items()])
+
     def request(self, **overrides):
         value = {
             "request_id": "request-1",
@@ -38,6 +45,7 @@ class HandlerTests(unittest.TestCase):
             "source": "server_provider_runtime",
             "loaded_model": self.bf16["model"],
             "loaded_model_revision": self.bf16["model_revision"],
+            "loaded_adapter_sha256": self.bf16["adapter_sha256"],
             "cold_start": False,
             "worker_lifecycle_id": "lifecycle-1",
             "worker_start_ms": 0,
@@ -56,6 +64,19 @@ class HandlerTests(unittest.TestCase):
             return dict(value)
 
         return probe
+
+    def test_unpinned_and_substituted_trained_adapters_cannot_serve(self):
+        candidate = PINNED_CORE_CANDIDATES["kova-cosmo"]
+        candidate["adapter_sha256"] = None
+        with self.assertRaisesRegex(ValueError, "trained adapter digest is not pinned"):
+            handle_job({"input": self.request()}, lambda _: self.response(),
+                       self.runtime_probe(), list().append,
+                       execution_context=self.execution_context(), token_counter=self.token_counter)
+        candidate["adapter_sha256"] = "f" * 64
+        with self.assertRaisesRegex(ValueError, "runtime loaded adapter does not match"):
+            handle_job({"input": self.request()}, lambda _: self.response(),
+                       self.runtime_probe(loaded_adapter_sha256="e" * 64), list().append,
+                       execution_context=self.execution_context(), token_counter=self.token_counter)
 
     def execution_context(self, **overrides):
         value = {
@@ -569,6 +590,7 @@ class HandlerTests(unittest.TestCase):
             "source": "server_provider_runtime",
             "loaded_model": self.bf16["model"],
             "loaded_model_revision": self.bf16["model_revision"],
+            "loaded_adapter_sha256": self.bf16["adapter_sha256"],
             "worker_lifecycle_id": "lifecycle-1",
             "billed_lifecycle_ms": 9000,
             "attributed_idle_timeout_ms": 5000,

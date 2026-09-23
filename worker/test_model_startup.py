@@ -274,8 +274,8 @@ class ModelStartupTests(unittest.TestCase):
 
     def test_cli_default_startup_and_verification_have_distinct_exit_codes(self):
         for args, expected in (((), 78), (("--check-source",), 0),
-                               (("--config", str(self.policy_path)), 78),
-                               (("--verify-only", "--config", str(self.policy_path)), 0)):
+                               (("--config", str(self.policy_path)), 1),
+                               (("--verify-only", "--config", str(self.policy_path)), 1)):
             with self.subTest(args=args):
                 result = self.cli(*args)
                 self.assertEqual(result.returncode, expected, result.stderr)

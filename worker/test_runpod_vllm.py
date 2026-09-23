@@ -33,6 +33,11 @@ class RunPodVllmAdapterTests(unittest.TestCase):
     candidate = PINNED_CORE_CANDIDATES["kova-cosmo"]
     digest = "sha256:" + "b" * 64
 
+    def setUp(self):
+        self.original_pin = self.candidate["adapter_sha256"]
+        self.candidate["adapter_sha256"] = "f" * 64
+        self.addCleanup(self.candidate.update, adapter_sha256=self.original_pin)
+
     def engine_request(self, **overrides):
         value = {
             "model": self.candidate["model"],
@@ -50,6 +55,7 @@ class RunPodVllmAdapterTests(unittest.TestCase):
             "worker_lifecycle_id": "fixture-lifecycle",
             "loaded_model": self.candidate["model"],
             "loaded_model_revision": self.candidate["model_revision"],
+            "loaded_adapter_sha256": self.candidate["adapter_sha256"],
             "cold_start": False,
             "worker_start_ms": 0,
             "model_load_ms": 0,

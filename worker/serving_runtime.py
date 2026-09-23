@@ -9,7 +9,6 @@ unselected and disabled. CPU tests never install or execute a real vLLM model.
 import asyncio
 from dataclasses import dataclass
 import hashlib
-import importlib.metadata
 import math
 import os
 from time import monotonic
@@ -82,43 +81,13 @@ def _environment_guard(root):
 
 
 class NativeVllm:
-    """Concrete vLLM 0.29.0 API binding. Construction initializes engine workers.
-
-    Internal trusted loader: invoke only through the guarded lifecycle below in
-    a supervised process. Native model initialization is synchronous; elapsed
-    checks cannot kill a blocked CUDA initializer. Process supervision remains
-    required. No remote model ID/path, Python model code, LoRA or plugin is loaded.
-    """
+    """Block native allocation until the trained adapter is loaded on every request."""
     def __init__(self, root, artifact, policy):
         need(type(policy) is LoaderPolicy and policy.enabled
              and policy.model_loading_authorized and policy.gpu_execution_authorized)
-        need(importlib.metadata.version("vllm") == SUPPORTED_VLLM_VERSION)
-        from vllm.engine.arg_utils import AsyncEngineArgs
-        from vllm.v1.engine.async_llm import AsyncLLM
-        args = AsyncEngineArgs(
-            model=root, tokenizer=root, served_model_name=[artifact["model"]],
-            revision=artifact["revision"], tokenizer_revision=artifact["revision"],
-            trust_remote_code=False, load_format="safetensors", dtype="bfloat16",
-            max_model_len=policy.context_tokens, tensor_parallel_size=1,
-            gpu_memory_utilization=policy.gpu_memory_utilization,
-            max_num_seqs=policy.maximum_sequences, enable_log_requests=False,
-            disable_log_stats=True, enable_prefix_caching=False,
-        )
-        self.engine = AsyncLLM.from_engine_args(args)
-        self.root, self.artifact, self.policy = root, dict(artifact), policy
-
-    def observed_configuration(self):
-        config = self.engine.model_config
-        return {"model_path": config.model, "tokenizer_path": config.tokenizer,
-                "model_revision": config.revision, "tokenizer_revision": config.tokenizer_revision,
-                "served_model_names": config.served_model_name,
-                "context_tokens": config.max_model_len, "trust_remote_code": config.trust_remote_code}
-
-    async def health(self):
-        await self.engine.check_health()
-
-    def close(self):
-        self.engine.shutdown(timeout=self.policy.shutdown_timeout_seconds)
+        # The former base-only path never applied the verified adapter. A
+        # manifest digest alone cannot make the native engine serve it.
+        raise ServingRuntimeError("native trained adapter loading is unavailable")
 
 
 class ServingRuntime:
@@ -158,6 +127,7 @@ class ServingRuntime:
         observed = self._backend.observed_configuration()
         expected = {"model_path": self._identity["artifact_root"], "tokenizer_path": self._identity["artifact_root"],
                     "model_revision": self._identity["model_revision"], "tokenizer_revision": self._identity["model_revision"],
+                    "adapter_sha256": self._identity["adapter_sha256"],
                     "served_model_names": [self._identity["model"]],
                     "context_tokens": self.policy.context_tokens, "trust_remote_code": False}
         need(type(observed) is dict and set(observed) == set(expected))
@@ -212,6 +182,7 @@ class ServingRuntime:
             need(again == encoded)
             self._permission()
             self._identity = {"model": artifact["model"], "model_revision": artifact["revision"],
+                "adapter_sha256": artifact["adapter_sha256"],
                 "candidate_id": artifact["candidate_id"], "manifest_sha256": artifact["manifest_sha256"],
                 "artifact_root": root, "context_tokens": self.policy.context_tokens,
                 "container_image_digest": self.policy.container_image_digest,

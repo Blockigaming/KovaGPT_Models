@@ -27,14 +27,13 @@ class RuntimeFenceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_direct_native_constructor_refuses_default_disabled_policy(self):
         policy = replace(self.policy(), enabled=False)
-        with patch.object(runtime.importlib.metadata, "version", side_effect=AssertionError("package queried")):
-            with self.assertRaises(runtime.ServingRuntimeError):
-                runtime.NativeVllm("/fixture/model", {}, policy)
+        with self.assertRaises(runtime.ServingRuntimeError):
+            runtime.NativeVllm("/fixture/model", {}, policy)
 
     async def test_reloading_the_same_artifact_invalidates_the_old_lifecycle_handle(self):
         policy = self.policy()
         artifact = {"model":"fixture-model", "revision":"a"*40, "candidate_id":policy.candidate_id,
-                    "manifest_sha256":"b"*64}
+                    "manifest_sha256":"b"*64, "adapter_sha256":"c"*64}
         report = {"status":"artifact_verified_serving_blocked", "artifact_evidence":artifact}
         controller = runtime.ServingRuntime(policy, lambda _:True, lambda:policy.container_image_digest)
         with patch.object(runtime.model_startup, "_control_bytes", return_value=b"fixture-policy"), \

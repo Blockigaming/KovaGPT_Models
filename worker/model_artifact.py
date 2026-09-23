@@ -90,7 +90,7 @@ def validate_manifest(encoded, expected_sha256):
     _require(hashlib.sha256(encoded).hexdigest() == expected_sha256,
              "artifact manifest digest mismatch")
     manifest = _json(encoded)
-    _require(set(manifest) == {"schema_version", "candidate_id", "model", "revision", "files"}
+    _require(set(manifest) == {"schema_version", "candidate_id", "model", "revision", "adapter_sha256", "files"}
              and type(manifest["schema_version"]) is int and manifest["schema_version"] == 1,
              "unsupported artifact manifest")
     from core.current_candidates import CORE_SERVING
@@ -100,6 +100,11 @@ def validate_manifest(encoded, expected_sha256):
     candidate = matches[0]
     _require(manifest["model"] == candidate["model"] and manifest["revision"] == candidate["revision"],
              "artifact identity differs from the pinned candidate")
+    adapter = candidate["adapter_sha256"]
+    _require(isinstance(adapter, str) and SHA256.fullmatch(adapter),
+             "trained adapter digest is not pinned")
+    _require(manifest["adapter_sha256"] == adapter,
+             "artifact trained adapter differs from the pinned candidate")
     files = manifest["files"]
     _require(isinstance(files, list) and 1 <= len(files) <= MAX_FILES, "invalid artifact file list")
     names = set()
@@ -122,6 +127,9 @@ def validate_manifest(encoded, expected_sha256):
         names.add(name)
     _require(REQUIRED_FILES <= names and any(name.endswith(".safetensors") for name in names),
              "artifact lacks required weights or tokenizer files")
+    adapter_files = [entry for entry in files if entry["path"] == "adapter_model.safetensors"]
+    _require(len(adapter_files) == 1 and adapter_files[0]["sha256"] == adapter,
+             "artifact trained adapter bytes differ from pinned digest")
     return manifest
 
 
@@ -149,7 +157,7 @@ def _metadata_contract(metadata, names):
     _require(all(isinstance(key, str) and key and isinstance(value, str)
                  for key, value in weight_map.items()), "invalid artifact tensor reference")
     referenced = set(weight_map.values())
-    shards = {name for name in names if name.endswith(".safetensors")}
+    shards = {name for name in names if name.endswith(".safetensors") and name != "adapter_model.safetensors"}
     _require(referenced == shards, "artifact weight index and packaged shards disagree")
     # Tensor contents, dimensions, dtype and engine compatibility require the
     # trusted safetensors loader/runtime rehearsal. A byte hash is not that test.
@@ -252,6 +260,7 @@ def verify_model_artifact(root, encoded_manifest, *, expected_manifest_sha256,
             "status": "local_artifact_bytes_verified",
             "candidate_id": manifest["candidate_id"], "model": manifest["model"],
             "revision": manifest["revision"], "manifest_sha256": expected_manifest_sha256,
+            "adapter_sha256": manifest["adapter_sha256"],
             "file_count": len(names), "total_bytes": total,
             "vendor_provenance_authenticated": False,
             "model_loaded": False, "serving_compatibility_verified": False,

@@ -20,6 +20,11 @@ CATALOG = CORE_SERVING
 
 class ModelArtifactTests(unittest.TestCase):
     def setUp(self):
+        self.adapter_bytes = b"synthetic fixture adapter bytes"
+        self.adapter_digest = hashlib.sha256(self.adapter_bytes).hexdigest()
+        self.original_pins = [candidate["adapter_sha256"] for candidate in CATALOG["candidates"]]
+        for candidate in CATALOG["candidates"]:
+            candidate["adapter_sha256"] = self.adapter_digest
         self.directory = tempfile.TemporaryDirectory(prefix="kova-artifact-fixture-")
         self.root = Path(self.directory.name) / "model"
         self.root.mkdir(mode=0o700)
@@ -31,12 +36,15 @@ class ModelArtifactTests(unittest.TestCase):
             # Deliberately not a loadable model: only the byte-integrity layer is tested.
             "model-00001-of-00001.safetensors": b"synthetic fixture weight bytes",
             "README.md": b"Synthetic model-artifact fixture; not upstream weights.\n",
+            "adapter_model.safetensors": self.adapter_bytes,
         }
         for name, content in self.files.items():
             (self.root / name).write_bytes(content)
         self.manifest = self.snapshot()
 
     def tearDown(self):
+        for candidate, previous in zip(CATALOG["candidates"], self.original_pins):
+            candidate["adapter_sha256"] = previous
         self.directory.cleanup()
 
     def snapshot(self, candidate_index=0):
@@ -44,6 +52,7 @@ class ModelArtifactTests(unittest.TestCase):
         return {
             "schema_version": 1, "candidate_id": candidate["id"],
             "model": candidate["model"], "revision": candidate["revision"],
+            "adapter_sha256": candidate["adapter_sha256"],
             "files": [{"path": name, "bytes": len(content), "sha256": hashlib.sha256(content).hexdigest()}
                       for name, content in sorted(self.files.items())],
         }
@@ -84,6 +93,19 @@ class ModelArtifactTests(unittest.TestCase):
         for digest in (None, "", "0" * 64, "A" * 64, "sha256:" + "a" * 64):
             with self.subTest(digest=digest), self.assertRaises(artifact.ModelArtifactError):
                 self.verify(expected_manifest_sha256=digest)
+
+    def test_adapter_file_must_match_separate_candidate_pin(self):
+        changed = deepcopy(self.manifest)
+        changed["adapter_sha256"] = "e" * 64
+        with self.assertRaises(artifact.ModelArtifactError):
+            self.verify(changed)
+        changed = deepcopy(self.manifest)
+        next(entry for entry in changed["files"] if entry["path"] == "adapter_model.safetensors")["sha256"] = "e" * 64
+        with self.assertRaises(artifact.ModelArtifactError):
+            self.verify(changed)
+        CATALOG["candidates"][0]["adapter_sha256"] = None
+        with self.assertRaisesRegex(artifact.ModelArtifactError, "trained adapter digest is not pinned"):
+            self.verify()
 
     def test_unknown_candidate_and_changed_identity_do_not_pass_with_a_new_checksum(self):
         for field, value in (("candidate_id", "unknown"), ("model", "Unapproved/Model"),

@@ -194,11 +194,14 @@ class ExecutionSpec:
             require(value["schema_version"] == 1, "unsupported execution snapshot")
             ExecutionLimits(**value["limits"])
             identity = value["runtime_identity"]
-            require(set(identity) == {"model", "model_revision", "context_tokens"},
+            require(set(identity) == {"model", "model_revision", "adapter_sha256", "context_tokens"},
                     "invalid execution runtime identity")
             require(isinstance(identity["model"], str) and identity["model"].strip(), "missing model")
             require(isinstance(identity["model_revision"], str)
                     and re.fullmatch(r"[a-f0-9]{40}", identity["model_revision"]), "unpinned model")
+            require(isinstance(identity["adapter_sha256"], str)
+                    and re.fullmatch(r"[a-f0-9]{64}", identity["adapter_sha256"]),
+                    "unpinned trained adapter")
             positive_integer(identity["context_tokens"], "context tokens")
             plan = value["plan"]
             require(plan["route_id"] in ALL_ROUTES, "invalid execution route")
@@ -213,6 +216,11 @@ class ExecutionSpec:
                 source = source_reference_for_route(plan["route_id"])
                 require(identity["model"] == source.slot and identity["model_revision"] == source.revision,
                         "Ultra identity differs from selected route family")
+            from core.current_candidates import CORE_SERVING
+            candidates = [c for c in CORE_SERVING["candidates"] if c["model"] == identity["model"]
+                          and c["revision"] == identity["model_revision"]]
+            require(len(candidates) == 1 and identity["adapter_sha256"] == candidates[0]["adapter_sha256"],
+                    "snapshot adapter differs from selected candidate")
             stages = value["stages"]
             require(isinstance(stages, list) and 1 <= len(stages) <= 16, "invalid stage count")
             seen = set()

@@ -74,6 +74,7 @@ class ExecutionContractTests(unittest.TestCase):
             lambda v: v["stages"][0].update(maximum_output_tokens=999),
             lambda v: v["stages"][0].update(condition="always"),
             lambda v: v["runtime_identity"].update(model_revision="unpinned"),
+            lambda v: v["runtime_identity"].update(adapter_sha256="0" * 64),
             lambda v: v["runtime_identity"].update(context_tokens=1),
             lambda v: v["plan"].update(production_ready=True),
             lambda v: v["plan"].update(route_id="thinking"),
