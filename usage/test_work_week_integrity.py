@@ -4,12 +4,12 @@ import sqlite3
 import unittest
 from unittest.mock import patch
 
-from execution.test_support import make_spec
+from execution.test_support import SyntheticAdapterTestCase, make_spec
 from usage import test_work_week as fixtures
 from usage.work_week import MAX, WEEK_MS, WorkUsageError, usage_units
 
 
-class WorkWeekIntegrityTests(unittest.TestCase):
+class WorkWeekIntegrityTests(SyntheticAdapterTestCase):
     setUp = fixtures.WorkWeekTests.setUp
     open = fixtures.WorkWeekTests.open
     reserve = fixtures.WorkWeekTests.reserve
