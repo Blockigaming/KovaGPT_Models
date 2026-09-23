@@ -42,6 +42,8 @@ class UltraPlannerTests(unittest.TestCase):
     def test_ultra_uses_approved_prompt_on_every_operation(self):
         self.assertEqual(IDENTITY, PROMPT_PATH.read_text(encoding="utf-8"))
         plan = self.build()
+        self.assertTrue(all("Qwen/Qwen3-1.7B" in operation["input_template"]["messages"][2]["content"]
+                            for operation in plan["operations"]))
         self.assertTrue(all(operation["input_template"]["messages"][0] ==
                             {"role": "system", "content": IDENTITY} for operation in plan["operations"]))
 

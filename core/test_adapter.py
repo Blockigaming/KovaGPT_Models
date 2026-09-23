@@ -40,6 +40,9 @@ class CoreAdapterTests(unittest.TestCase):
 
     def test_instant_is_one_streaming_operation(self):
         plan = self.build()
+        provenance = plan["operations"][0]["request_template"]["messages"][2]["content"]
+        self.assertIn("Qwen/Qwen3-0.6B", provenance)
+        self.assertIn("when asked", provenance)
         self.assertEqual(len(plan["operations"]), 1)
         operation = plan["operations"][0]
         self.assertEqual(operation["stage_id"], "answer-1")

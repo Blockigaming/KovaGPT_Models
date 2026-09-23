@@ -161,10 +161,14 @@ def validate_evidence_matrix(envelopes: list[dict], *, source_commit: str,
         )
         if payload["prompt_sha256"] != pin["prompt_sha256"]:
             raise ValueError("substituted_evaluation_prompt")
+        expected_dimensions = _validated_dimensions(pin.get("dimensions"))
+        if set(payload["dimensions"]) != set(expected_dimensions):
+            raise ValueError("unreviewed_evaluation_dimensions")
         review = review_verdicts[case_id]
         expected_review = {"case_id": case_id, "source_commit": source_commit,
                            "prompt_sha256": payload["prompt_sha256"],
-                           "answer_sha256": payload["answer_sha256"], "passed": True}
+                           "answer_sha256": payload["answer_sha256"],
+                           "dimensions": list(expected_dimensions), "passed": True}
         if (type(review) is not dict or set(review) != {"payload", "signature_ed25519_b64"}
                 or review["payload"] != expected_review):
             raise ValueError("failed_or_unbound_independent_review")

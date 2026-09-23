@@ -75,6 +75,8 @@ def policy_digest():
              "router/entitlements.py", "router/auto.py", "router/application.py",
              "release/model_revisions.py", "core/current_candidates.py",
              "core/adapter.py", "ultra/orchestrator.py", "worker/handler.py",
+             "execution/contracts.py", "worker/serving_runtime.py",
+             "scripts/summarize-core-benchmark.mjs",
              "config/evaluation-gates.v1.json", "evaluations/offline-suite.v1.json")
     return digest({path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in paths})
 

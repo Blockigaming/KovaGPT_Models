@@ -88,7 +88,9 @@ class RolloutTests(unittest.TestCase):
         for relative in ("config/current-product-policy.v3.json", "router/entitlements.py",
                          "release/model_revisions.py", "core/current_candidates.py",
                          "prompts/kova-identity.v3.txt", "core/identity.py",
-                         "config/kova-three-family-dataset.v2.json", "worker/handler.py"):
+                         "config/kova-three-family-dataset.v2.json", "worker/handler.py",
+                         "execution/contracts.py", "worker/serving_runtime.py",
+                         "scripts/summarize-core-benchmark.mjs"):
             def changed(path):
                 data = original(path)
                 return data + b"\n# changed" if str(path).endswith(relative) else data

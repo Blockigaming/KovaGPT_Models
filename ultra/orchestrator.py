@@ -8,7 +8,7 @@ from pathlib import Path
 
 from router.policy import resolve_route, RUNTIME_PROFILES
 from core.current_candidates import NATIVE_CONTEXT_TOKENS
-from core.identity import load_runtime_identity
+from core.identity import load_runtime_identity, trusted_model_provenance
 from ultra.binding import DISAGREEMENT_INSTRUCTION, JUDGE_INSTRUCTION
 from ultra.conversation import validated_conversation
 
@@ -132,13 +132,13 @@ def _select_specialists(domains, maximum):
 
 
 def _messages_template(task, behavior_instruction, operation_instruction, artifact_ids,
-                       optional_artifact_ids=(), *, conversation=None, identity):
+                       optional_artifact_ids=(), *, conversation=None, identity, provenance):
     optional = set(optional_artifact_ids)
     bindings = []
     messages = [
         {"role": "system", "content": identity},
         {"role": "system", "content": behavior_instruction},
-        {"role": "system", "content": operation_instruction},
+        {"role": "system", "content": operation_instruction + "\n" + provenance},
         *(deepcopy(conversation) if conversation is not None else [{"role": "user", "content": task}]),
     ]
     for stage_id in artifact_ids:
@@ -232,6 +232,7 @@ def build_ultra_plan(request, *, admission, token_counter):
         messages, bindings = _messages_template(
             task, policy["behavior_instruction"], spec["instruction"], spec["artifact_ids"],
             spec.get("optional_artifact_ids", ()), conversation=conversation, identity=identity,
+            provenance=trusted_model_provenance(policy["route_id"]),
         )
         spec["messages"] = messages
         spec["artifact_bindings"] = bindings

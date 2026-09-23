@@ -4,7 +4,7 @@ from copy import deepcopy
 
 from router.policy import resolve_route
 from core.current_candidates import CORE_SERVING
-from core.identity import load_runtime_identity
+from core.identity import load_runtime_identity, trusted_model_provenance
 from release.model_revisions import source_reference_for_route
 
 
@@ -132,7 +132,7 @@ def build_core_plan(value, *, candidate_model, token_counter):
         provider_messages = [
             {"role": "system", "content": identity},
             {"role": "system", "content": policy["behavior_instruction"]},
-            {"role": "system", "content": STAGE_INSTRUCTIONS[kind]},
+            {"role": "system", "content": STAGE_INSTRUCTIONS[kind] + "\n" + trusted_model_provenance(route_id)},
             *messages,
             *[_artifact_message(dependency) for dependency in dependencies],
         ]

@@ -166,6 +166,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
                             "runtime_profile": profile,
                             "conversation_id": f"conversation-{index}",
                             "session_id": f"session-{index}",
+                            "dimensions": [sorted(guard.REQUIRED_DIMENSIONS)[len(envelopes) % 12]],
                         }
                         envelopes.append(guard.create_evidence(
                             source_commit="d" * 40, family=family,
@@ -184,7 +185,8 @@ class ThreeFamilyContractTests(unittest.TestCase):
             payload = envelope["payload"]
             review = {"case_id": payload["case_id"], "source_commit": "d" * 40,
                       "prompt_sha256": payload["prompt_sha256"],
-                      "answer_sha256": payload["answer_sha256"], "passed": True}
+                      "answer_sha256": payload["answer_sha256"],
+                      "dimensions": payload["dimensions"], "passed": True}
             verdicts[payload["case_id"]] = {
                 "payload": review,
                 "signature_ed25519_b64": base64.b64encode(
@@ -197,7 +199,8 @@ class ThreeFamilyContractTests(unittest.TestCase):
             payload = envelope["payload"]
             review = {"case_id": payload["case_id"], "source_commit": "d" * 40,
                       "prompt_sha256": payload["prompt_sha256"],
-                      "answer_sha256": payload["answer_sha256"], "passed": True}
+                      "answer_sha256": payload["answer_sha256"],
+                      "dimensions": payload["dimensions"], "passed": True}
             verdicts[payload["case_id"]] = {
                 "payload": review,
                 "signature_ed25519_b64": base64.b64encode(
@@ -256,6 +259,12 @@ class ThreeFamilyContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid_evidence_signature"):
                 guard.validate_evidence_matrix(altered, source_commit="d" * 40,
                                                family_bindings=families, case_bindings=case_pins, **review_args)
+            changed_pins = deepcopy(case_pins)
+            changed_pins[envelopes[0]["payload"]["case_id"]]["dimensions"] = [
+                sorted(guard.REQUIRED_DIMENSIONS)[1]]
+            with self.assertRaisesRegex(ValueError, "unreviewed_evaluation_dimensions"):
+                guard.validate_evidence_matrix(envelopes, source_commit="d" * 40,
+                                               family_bindings=families, case_bindings=changed_pins, **review_args)
             changed_pins = deepcopy(case_pins)
             changed_pins[envelopes[0]["payload"]["case_id"]]["prompt_sha256"] = "f" * 64
             with self.assertRaisesRegex(ValueError, "substituted_evaluation_prompt"):
