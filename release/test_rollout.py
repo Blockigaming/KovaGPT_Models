@@ -89,6 +89,7 @@ class RolloutTests(unittest.TestCase):
                          "release/model_revisions.py", "core/current_candidates.py",
                          "prompts/kova-identity.v3.txt", "core/identity.py",
                          "config/kova-three-family-dataset.v2.json", "worker/handler.py",
+                         "worker/model_artifact.py", "worker/model_startup.py",
                          "worker/serving_runtime.py", "execution/contracts.py",
                          "scripts/summarize-core-benchmark.mjs", "ultra/binding.py",
                          "execution/workers.py", "execution/source_context.py",

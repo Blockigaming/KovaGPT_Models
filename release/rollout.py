@@ -76,6 +76,7 @@ def policy_digest():
              "release/model_revisions.py", "core/current_candidates.py",
              "core/adapter.py", "ultra/orchestrator.py", "worker/handler.py",
              "ultra/binding.py", "execution/workers.py", "execution/source_context.py",
+             "worker/model_artifact.py", "worker/model_startup.py",
              "worker/serving_runtime.py", "execution/contracts.py",
              "scripts/summarize-core-benchmark.mjs",
              "evaluation/three_family_guard.py", "config/evaluation-gates.v1.json",

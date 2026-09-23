@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 from worker import serving_runtime as runtime
 from worker.model_startup import SAFETY_FIELDS
 from core.current_candidates import CORE_SERVING
+from release.model_revisions import MODEL_SOURCE_REFERENCES
 
 
 class FakeBackend:
@@ -63,7 +64,9 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.candidate.update, adapter_bundle_sha256=previous_bundle)
         files = {"config.json": b'{"model_type":"synthetic"}', "tokenizer.json": b'{}',
             "tokenizer_config.json": b'{}',
-            "adapter_config.json": b'{"peft_type":"LORA","task_type":"CAUSAL_LM","r":8,"lora_alpha":16}',
+            "adapter_config.json": json.dumps({"peft_type": "LORA", "task_type": "CAUSAL_LM",
+                "r": 8, "lora_alpha": 16,
+                "base_model_name_or_path": MODEL_SOURCE_REFERENCES[self.candidate["id"]].model}).encode(),
             "model.safetensors": b'NOT REAL MODEL WEIGHTS',
             "adapter_model.safetensors": adapter_bytes,
         }
@@ -162,7 +165,9 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_valid_changed_adapter_config_manifest_with_same_weights_rejects_unpinned_bundle(self):
         config = self.model / "adapter_config.json"
-        config.write_bytes(b'{"peft_type":"LORA","task_type":"CAUSAL_LM","r":8,"lora_alpha":32}')
+        changed = json.loads(config.read_bytes())
+        changed["lora_alpha"] = 32
+        config.write_bytes(json.dumps(changed).encode())
         manifest_path = self.root / "manifest.json"
         manifest = json.loads(manifest_path.read_bytes())
         entry = next(entry for entry in manifest["files"] if entry["path"] == config.name)

@@ -151,12 +151,16 @@ def _regular(info, size):
     _require(not info.st_mode & 0o022, "artifact file is writable by another account")
 
 
-def _metadata_contract(metadata, names):
+def _metadata_contract(metadata, names, candidate_id):
     for filename in ("config.json", "tokenizer_config.json"):
         # Remote Python classes are not part of the approved packaging contract.
         _require(metadata[filename].get("auto_map") in (None, {}),
                  "artifact requires unapproved remote model code")
     adapter = metadata["adapter_config.json"]
+    from release.model_revisions import MODEL_SOURCE_REFERENCES
+    source = MODEL_SOURCE_REFERENCES.get(candidate_id)
+    _require(source is not None and adapter.get("base_model_name_or_path") == source.model,
+             "adapter base model differs from pinned family source")
     _require(adapter.get("peft_type") == "LORA" and adapter.get("task_type") == "CAUSAL_LM"
              and type(adapter.get("r")) is int
              and adapter["r"] > 0
@@ -266,7 +270,7 @@ def verify_model_artifact(root, encoded_manifest, *, expected_manifest_sha256,
             finally:
                 os.close(file_fd)
         check()
-        _metadata_contract(metadata, names)
+        _metadata_contract(metadata, names, manifest["candidate_id"])
         _require(set(os.listdir(descriptor)) == names, "artifact directory changed")
         for name, identity in checked.items():
             _require(_identity(os.stat(name, dir_fd=descriptor, follow_symlinks=False)) == identity,

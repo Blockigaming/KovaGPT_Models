@@ -95,6 +95,8 @@ class ModelStartupTests(unittest.TestCase):
         for index, candidate in enumerate(fixtures.CATALOG["candidates"]):
             if index == 1:
                 self.fixture.use_sharded_weights()
+            elif index == 2:
+                self.fixture.set_base_model(index)
             with self.subTest(candidate=candidate["id"]):
                 self.manifest.write_bytes(self.fixture.encode(self.fixture.snapshot(index)))
                 self.policy["artifact"]["expected_manifest_sha256"] = hashlib.sha256(self.manifest.read_bytes()).hexdigest()

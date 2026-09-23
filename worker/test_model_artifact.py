@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from worker import model_artifact as artifact
 from core.current_candidates import CORE_SERVING
+from release.model_revisions import MODEL_SOURCE_REFERENCES
 
 
 CATALOG = CORE_SERVING
@@ -32,7 +33,9 @@ class ModelArtifactTests(unittest.TestCase):
             "config.json": b'{"model_type":"synthetic_fixture"}',
             "tokenizer.json": b'{"fixture":true}',
             "tokenizer_config.json": b'{"tokenizer_class":"SyntheticFixture"}',
-            "adapter_config.json": b'{"peft_type":"LORA","task_type":"CAUSAL_LM","r":8,"lora_alpha":16}',
+            "adapter_config.json": json.dumps({"peft_type": "LORA", "task_type": "CAUSAL_LM",
+                "r": 8, "lora_alpha": 16,
+                "base_model_name_or_path": MODEL_SOURCE_REFERENCES["kova-cosmo"].model}).encode(),
             # Deliberately not a loadable model: only the byte-integrity layer is tested.
             "model.safetensors": b"synthetic fixture weight bytes",
             "README.md": b"Synthetic model-artifact fixture; not upstream weights.\n",
@@ -76,18 +79,26 @@ class ModelArtifactTests(unittest.TestCase):
         (self.root / name).write_bytes(content)
         self.manifest = self.snapshot()
 
+    def set_base_model(self, candidate_index):
+        value = json.loads(self.files["adapter_config.json"])
+        value["base_model_name_or_path"] = MODEL_SOURCE_REFERENCES[CATALOG["candidates"][candidate_index]["id"]].model
+        self.change_metadata("adapter_config.json", json.dumps(value).encode())
+
     def use_sharded_weights(self):
         (self.root / "model.safetensors").unlink()
         del self.files["model.safetensors"]
         self.change_metadata("model.safetensors.index.json",
                              b'{"metadata":{"total_size":16},"weight_map":{"fixture.weight":"model-00001-of-00001.safetensors"}}')
         self.change_metadata("model-00001-of-00001.safetensors", b"synthetic fixture weight bytes")
+        self.set_base_model(1)
         self.manifest = self.snapshot(1)
 
     def test_all_pinned_candidates_produce_integrity_only_evidence(self):
         for index, candidate in enumerate(CATALOG["candidates"]):
             if index == 1:
                 self.use_sharded_weights()
+            elif index == 2:
+                self.set_base_model(index)
             with self.subTest(candidate=candidate["id"]):
                 result = self.verify(self.snapshot(index))
                 self.assertEqual(result["status"], "local_artifact_bytes_verified")
@@ -101,7 +112,9 @@ class ModelArtifactTests(unittest.TestCase):
 
     def test_cosmo_monolithic_base_and_adapter_config_are_verified(self):
         self.assertEqual(self.verify()["status"], "local_artifact_bytes_verified")
-        self.change_metadata("adapter_config.json", b'{"peft_type":"OTHER","r":8,"lora_alpha":16}')
+        changed = json.loads(self.files["adapter_config.json"])
+        changed["peft_type"] = "OTHER"
+        self.change_metadata("adapter_config.json", json.dumps(changed).encode())
         with self.assertRaisesRegex(artifact.ModelArtifactError, "invalid PEFT adapter configuration"):
             self.verify()
 
@@ -137,8 +150,23 @@ class ModelArtifactTests(unittest.TestCase):
             self.verify(self.snapshot(0))
         for index in (1, 2):
             with self.subTest(candidate=CATALOG["candidates"][index]["id"]):
+                self.set_base_model(index)
                 self.assertEqual(self.verify(self.snapshot(index))["status"],
                                  "local_artifact_bytes_verified")
+
+    def test_adapter_base_must_match_trusted_family_even_with_a_reviewed_manifest(self):
+        for base in ("Other/Model", "Qwen/Qwen3-1.7B", "/external/verified-snapshot", "", None):
+            value = json.loads(self.files["adapter_config.json"])
+            value["base_model_name_or_path"] = base
+            self.change_metadata("adapter_config.json", json.dumps(value).encode())
+            with self.subTest(base=base), self.assertRaisesRegex(
+                artifact.ModelArtifactError, "adapter base model differs from pinned family source"
+            ):
+                self.verify()
+        value.pop("base_model_name_or_path")
+        self.change_metadata("adapter_config.json", json.dumps(value).encode())
+        with self.assertRaisesRegex(artifact.ModelArtifactError, "adapter base model differs"):
+            self.verify()
 
     def test_missing_or_mismatched_reviewed_manifest_pin_is_rejected(self):
         for digest in (None, "", "0" * 64, "A" * 64, "sha256:" + "a" * 64):
@@ -315,8 +343,8 @@ class ModelArtifactTests(unittest.TestCase):
 
     def test_mutation_after_hashing_is_detected_before_success(self):
         original = artifact._metadata_contract
-        def changed(metadata, names):
-            original(metadata, names)
+        def changed(metadata, names, candidate_id):
+            original(metadata, names, candidate_id)
             (self.root / "config.json").write_bytes(b"x" * len(self.files["config.json"]))
         with patch.object(artifact, "_metadata_contract", side_effect=changed):
             with self.assertRaises(artifact.ModelArtifactError):
