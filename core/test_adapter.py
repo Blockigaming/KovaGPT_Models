@@ -1,6 +1,7 @@
 import unittest
 
 from core.adapter import CANDIDATES, IDENTITY, bind_core_operation, build_core_plan
+from release.model_revisions import source_reference_for_route
 
 
 class CoreAdapterTests(unittest.TestCase):
@@ -10,17 +11,28 @@ class CoreAdapterTests(unittest.TestCase):
         return value
 
     def model(self):
-        return "Qwen/Qwen3.8-27B"
+        return "kova-cosmo"
 
     def build(self, request=None, model=None, token_count=100):
+        request = request or self.request()
+        route_id = request.get("route_id") or (
+            f"{request['surface']}:{request['family']}:{request['effort'].lower().replace(' ', '-')}")
         return build_core_plan(
-            request or self.request(), candidate_model=model or self.model(),
+            request, candidate_model=model or source_reference_for_route(route_id).slot,
             token_counter=lambda _model, _messages: token_count,
         )
 
     def test_verified_candidate_registry_is_loaded_from_architecture(self):
         self.assertIn(self.model(), CANDIDATES)
-        self.assertEqual(CANDIDATES[self.model()]["context_tokens"], 262144)
+        self.assertEqual(CANDIDATES[self.model()]["context_tokens"], 32768)
+
+    def test_canonical_route_cannot_run_a_different_family(self):
+        with self.assertRaisesRegex(ValueError, "candidate differs from authoritative family route"):
+            self.build(self.request(route_id="medium"), model="kova-cosmo")
+        with self.assertRaisesRegex(ValueError, "candidate differs from authoritative family route"):
+            self.build({"request_id": "r", "messages": [{"role": "user", "content": "hi"}],
+                        "surface": "work", "family": "nova", "effort": "High"},
+                       model="kova-orion")
 
     def test_instant_is_one_streaming_operation(self):
         plan = self.build()

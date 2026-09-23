@@ -69,11 +69,16 @@ def specification(prepared, route="high"):
             "remaining_usd": 1, "estimated_max_usd": 0.5, "max_agents": 3, "max_total_tokens": 65536},
             token_counter=lambda messages: tokens(IDENTITY["model"], messages))
     else:
-        plan = build_core_plan(request, candidate_model=IDENTITY["model"], token_counter=tokens)
+        from release.model_revisions import source_reference_for_route
+        plan = build_core_plan(request, candidate_model=source_reference_for_route(route).slot,
+                               token_counter=tokens)
     ids = [op.get("stage_id", op.get("id")) for op in plan["operations"]]
     cap = sum(op["maximum_input_tokens"] + op["maximum_output_tokens"] for op in plan["operations"])
+    identity = ({**IDENTITY, "model": plan["candidate_model"],
+                 "model_revision": plan["candidate_revision"]}
+                if plan["engine"] == "kova-core" else IDENTITY)
     return ExecutionSpec.from_plan(plan, limits=ExecutionLimits(time_ns() // 1000000 + 60000,
-        cap, len(ids) * 100, 3, 5), runtime_identity=IDENTITY, stage_cost_caps={key: 100 for key in ids})
+        cap, len(ids) * 100, 3, 5), runtime_identity=identity, stage_cost_caps={key: 100 for key in ids})
 
 
 class SourceContextTests(unittest.TestCase):

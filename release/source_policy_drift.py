@@ -14,6 +14,10 @@ ARCHIVED = (
 PUBLIC_SOURCE = (
     "router/policy.py", "router/entitlements.py", "router/application.py",
 )
+CURRENT_RUNTIME_SOURCE = (
+    "core/adapter.py", "core/current_candidates.py", "worker/handler.py",
+    "worker/model_artifact.py",
+)
 FORBIDDEN_PUBLIC = ("Qwen/", "Qwen3-", "qwen3-", "Kova 5.6", "chat-shared")
 
 
@@ -78,6 +82,11 @@ def validate(root: Path = ROOT) -> dict:
             raise ValueError(f"legacy_file_not_superseded:{name}")
         if value.get("must_not_drive_current_routing") is not True:
             raise ValueError(f"legacy_file_can_drive_routing:{name}")
+    for relative in CURRENT_RUNTIME_SOURCE:
+        source = (root / relative).read_text("utf-8", errors="strict")
+        for legacy in ("route-policy.v1.json", "core-serving.v1.json"):
+            if legacy in source:
+                raise ValueError(f"runtime_reads_archived_routing:{relative}:{legacy}")
     for relative in PUBLIC_SOURCE:
         source = (root / relative).read_text("utf-8", errors="strict")
         for token in FORBIDDEN_PUBLIC:

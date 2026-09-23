@@ -12,9 +12,10 @@ import unittest
 from unittest.mock import patch
 
 from worker import model_artifact as artifact
+from core.current_candidates import CORE_SERVING
 
 
-CATALOG = json.loads((Path(__file__).resolve().parents[1] / "config/core-serving.v1.json").read_text())
+CATALOG = CORE_SERVING
 
 
 class ModelArtifactTests(unittest.TestCase):

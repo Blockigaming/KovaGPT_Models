@@ -10,6 +10,7 @@ from execution.workers import ModelStageWorker
 from ultra.orchestrator import build_ultra_plan
 from worker.azure_container_apps import AzureResponse, AzureSettings, make_azure_inference_client
 from worker.handler import CORE_SERVING
+from release.model_revisions import source_reference_for_route
 
 
 CANDIDATE = CORE_SERVING["candidates"][0]
@@ -41,18 +42,22 @@ def make_plan(route="high", *, agents=3, task="Prove this equation."):
         request.update(surface=surface, family=family, effort=effort.replace("-", " ").title())
     else:
         request["route_id"] = route
-    return build_core_plan(request, candidate_model=IDENTITY["model"], token_counter=tokens)
+    return build_core_plan(request, candidate_model=source_reference_for_route(route).slot,
+                           token_counter=tokens)
 
 
 def make_spec(route="high", *, deadline=None, parallel=3, agents=3, task="Prove this equation."):
     plan = make_plan(route, agents=agents, task=task)
     ids = [op.get("stage_id", op.get("id")) for op in plan["operations"]]
     reserved = sum(op["maximum_input_tokens"] + op["maximum_output_tokens"] for op in plan["operations"])
+    runtime_identity = ({**IDENTITY, "model": plan["candidate_model"],
+                         "model_revision": plan["candidate_revision"]}
+                        if plan["engine"] == "kova-core" else IDENTITY)
     return ExecutionSpec.from_plan(plan, limits=ExecutionLimits(
         deadline_unix_ms=deadline or time_ns() // 1_000_000 + 60_000,
         token_limit=reserved, cost_limit_microusd=len(ids) * 100,
         max_parallel=parallel, stage_timeout_seconds=5,
-    ), runtime_identity=IDENTITY, stage_cost_caps={stage: 100 for stage in ids})
+    ), runtime_identity=runtime_identity, stage_cost_caps={stage: 100 for stage in ids})
 
 
 def grant_for(spec, *, owner=OWNER, tier="pro", enabled=True):
@@ -69,11 +74,13 @@ class ModelFixture:
         self.closed = []
         self.lock = Lock()
         self.override = {}
+        self.active_identity = IDENTITY
 
     def probe(self, stage, phase):
         return {
             "source": "server_provider_runtime", "worker_lifecycle_id": "fixture-lifecycle",
-            "loaded_model": IDENTITY["model"], "loaded_model_revision": IDENTITY["model_revision"],
+            "loaded_model": self.active_identity["model"],
+            "loaded_model_revision": self.active_identity["model_revision"],
             "cold_start": False, "worker_start_ms": 0, "model_load_ms": 0, "queue_ms": 0,
             "gpu_rate_per_second_usd": 0.001, "gpu_type_id": "fixture-no-real-gpu", "gpu_count": 1,
             "serving_engine": "vllm", "endpoint_type": "load_balancing",
@@ -92,6 +99,7 @@ class ModelFixture:
         return "PRIVATE stage result " + stage
 
     def client_factory(self, control, identity):
+        self.active_identity = dict(identity)
         stage = control.stage_id
         def transport(request, _headers):
             with self.lock:

@@ -5,11 +5,12 @@ import json
 from pathlib import Path
 
 from router.policy import resolve_route
+from core.current_candidates import CORE_SERVING
+from release.model_revisions import source_reference_for_route
 
 
 ROOT = Path(__file__).resolve().parents[1]
 IDENTITY = json.loads((ROOT / "config" / "identity.v1.json").read_text(encoding="utf-8"))["system_identity"]
-CORE_SERVING = json.loads((ROOT / "config" / "core-serving.v1.json").read_text(encoding="utf-8"))
 CANDIDATES = {candidate["model"]: candidate for candidate in CORE_SERVING["candidates"]}
 CORE_ROUTE_LIMITS = {
     "instant": 2048,
@@ -82,9 +83,8 @@ def _resolved_policy(value):
 def _stage_output_limit(kind, route_limit, is_final):
     if is_final:
         return route_limit
-    if kind in ("planning", "critic"):
-        return min(2048, route_limit)
-    return min(8192, route_limit)
+    # Native 32k context must reserve room for each earlier private stage.
+    return min(512, route_limit)
 
 
 def _artifact_message(stage_id):
@@ -105,6 +105,8 @@ def build_core_plan(value, *, candidate_model, token_counter):
     _require(isinstance(request_id, str) and 1 <= len(request_id) <= 128, "invalid request_id")
     route_id = policy["route_id"]
     _require(candidate_model in CANDIDATES, "unverified Core candidate")
+    _require(candidate_model == source_reference_for_route(route_id).slot,
+             "candidate differs from authoritative family route")
     _require(callable(token_counter), "trusted token counter missing")
     messages = _messages(value["messages"])
     route_limit = policy.get("maximum_output_tokens", CORE_ROUTE_LIMITS.get(route_id))

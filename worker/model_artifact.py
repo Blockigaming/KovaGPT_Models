@@ -93,8 +93,8 @@ def validate_manifest(encoded, expected_sha256):
     _require(set(manifest) == {"schema_version", "candidate_id", "model", "revision", "files"}
              and type(manifest["schema_version"]) is int and manifest["schema_version"] == 1,
              "unsupported artifact manifest")
-    source = Path(__file__).resolve().parents[1] / "config" / "core-serving.v1.json"
-    catalog = _json(source.read_bytes())
+    from core.current_candidates import CORE_SERVING
+    catalog = CORE_SERVING
     matches = [c for c in catalog["candidates"] if c["id"] == manifest["candidate_id"]]
     _require(len(matches) == 1, "artifact candidate is not in the server allowlist")
     candidate = matches[0]

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from core.adapter import CANDIDATES, build_core_plan
+from release.model_revisions import source_reference_for_route
 from router.auto import classify_auto
 from router.policy import resolve_route
 from ultra.orchestrator import build_ultra_plan
@@ -14,7 +15,6 @@ from ultra.orchestrator import build_ultra_plan
 ROOT = Path(__file__).resolve().parents[1]
 SUITE = json.loads((ROOT / "evaluations" / "offline-suite.v1.json").read_text(encoding="utf-8"))
 ACTIVITY_CONTRACT = json.loads((ROOT / "config" / "activity-event.v1.json").read_text(encoding="utf-8"))
-CORE_CANDIDATE = "Qwen/Qwen3.8-27B"
 URL_PATTERN = re.compile(r"https?://[^\s<>\]\)]+", re.IGNORECASE)
 FORBIDDEN_RESPONSE_PATTERNS = (
     "foundation model trained from scratch",
@@ -103,9 +103,10 @@ def _ultra_request(contract):
 
 
 def _validate_core_plan(contract):
+    candidate = source_reference_for_route(contract["route_id"]).slot
     plan = build_core_plan(
         _core_request(contract),
-        candidate_model=CORE_CANDIDATE,
+        candidate_model=candidate,
         token_counter=_core_token_count,
     )
     _require(plan["route_id"] == contract["route_id"], f"Core plan route mismatch:{contract['route_id']}")
@@ -127,7 +128,7 @@ def _validate_core_plan(contract):
         _require(operation["request_template"]["recount_bound_messages_with_trusted_tokenizer"] is True, "Core recount missing")
         _require(
             operation["maximum_input_tokens"] + operation["maximum_output_tokens"]
-            <= CANDIDATES[CORE_CANDIDATE]["context_tokens"],
+            <= CANDIDATES[candidate]["context_tokens"],
             "Core context reservation exceeded",
         )
         prior_ids.append(operation["stage_id"])

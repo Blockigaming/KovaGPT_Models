@@ -30,7 +30,7 @@ class Clock:
 
 
 class RunPodVllmAdapterTests(unittest.TestCase):
-    candidate = PINNED_CORE_CANDIDATES["qwen3.8-27b-bf16"]
+    candidate = PINNED_CORE_CANDIDATES["kova-cosmo"]
     digest = "sha256:" + "b" * 64
 
     def engine_request(self, **overrides):
@@ -247,7 +247,7 @@ class RunPodVllmAdapterTests(unittest.TestCase):
                 "request_id": "private-fixture",
                 "messages": [{"role": "user", "content": "hello"}],
                 "reasoning_effort": "medium",
-                "max_output_tokens": 2048,
+                "max_output_tokens": 512,
             }},
             make_queue_inference_client(lambda _job: response),
             self.runtime_probe,
@@ -255,7 +255,7 @@ class RunPodVllmAdapterTests(unittest.TestCase):
             execution_context={
                 "logical_request_id": "kova-exec-00000000-0000-4000-8000-000000000002",
                 "benchmark_candidate_id": self.candidate["id"],
-                "route_id": "medium",
+                "route_id": "work:cosmo:medium",
                 "stage_id": "planning-1",
                 "public_response": False,
                 "prior_stage_outputs": {},

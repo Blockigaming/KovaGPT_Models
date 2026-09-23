@@ -8,10 +8,11 @@ from core.adapter import build_core_plan
 from router.policy import CHAT_POLICIES, WORK_FAMILIES, WORK_EFFORTS
 from worker.azure_container_apps import AzureResponse, AzureSettings, make_azure_inference_client
 from worker.handler import PINNED_CORE_CANDIDATES, handle_job
+from release.model_revisions import source_reference_for_route
 
 
 class AzureKovaIntegrationTests(unittest.TestCase):
-    candidate = PINNED_CORE_CANDIDATES["qwen3.8-27b-bf16"]
+    candidate = PINNED_CORE_CANDIDATES["kova-cosmo"]
 
     def setUp(self):
         self.closed = 0
@@ -79,6 +80,11 @@ class AzureKovaIntegrationTests(unittest.TestCase):
         )
 
     def plan(self, selection):
+        route = selection.get("route_id") or (
+            f"{selection['surface']}:{selection['family']}:{selection['effort'].lower().replace(' ', '-')}")
+        self.candidate = PINNED_CORE_CANDIDATES[source_reference_for_route(route).slot]
+        self.config = replace(self.config, served_model=self.candidate["model"])
+        self.json_body["model"] = self.candidate["model"]
         return build_core_plan(
             {"request_id": "azure-fixture-request", "messages": [{"role": "user", "content": "Help with this fixture"}], **selection},
             candidate_model=self.candidate["model"], token_counter=lambda *_: 10,

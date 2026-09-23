@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from core.adapter import build_core_plan
+from release.model_revisions import source_reference_for_route
 from execution.contracts import ALL_ROUTES, ExecutionSpec, ExecutionLimits, canonical
 from execution.runner import LocalRunner
 from execution.store import LocalJobStore
@@ -41,7 +42,8 @@ def plan_for(route="ultra", messages=None, *, counter=None):
     if route == "ultra" or route.endswith(":ultra"):
         return build_ultra_plan(request, admission=dict(ADMISSION),
                                 token_counter=counter or (lambda msgs: tokens(IDENTITY["model"], msgs)))
-    return build_core_plan(request, candidate_model=IDENTITY["model"], token_counter=counter or tokens)
+    return build_core_plan(request, candidate_model=source_reference_for_route(route).slot,
+                           token_counter=counter or tokens)
 
 
 def spec_for(route="ultra", messages=None):
@@ -49,7 +51,10 @@ def spec_for(route="ultra", messages=None):
     ids = [op.get("stage_id", op.get("id")) for op in plan["operations"]]
     reserved = sum(op["maximum_input_tokens"] + op["maximum_output_tokens"] for op in plan["operations"])
     limits = ExecutionLimits(time_ns() // 1_000_000 + 60_000, reserved, len(ids) * 100, 3, 5)
-    return ExecutionSpec.from_plan(plan, limits=limits, runtime_identity=IDENTITY,
+    identity = ({**IDENTITY, "model": plan["candidate_model"],
+                 "model_revision": plan["candidate_revision"]}
+                if plan["engine"] == "kova-core" else IDENTITY)
+    return ExecutionSpec.from_plan(plan, limits=limits, runtime_identity=identity,
                                    stage_cost_caps={stage: 100 for stage in ids})
 
 

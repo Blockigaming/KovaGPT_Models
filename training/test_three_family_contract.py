@@ -206,6 +206,19 @@ class ThreeFamilyContractTests(unittest.TestCase):
             "authoritative_three_family_policy_no_drift",
         )
 
+    def test_archived_routing_sources_cannot_reenter_runtime(self):
+        self.assertEqual(validate_policy_drift()["status"],
+                         "authoritative_three_family_policy_no_drift")
+        original = Path.read_text
+        for relative in ("core/adapter.py", "core/current_candidates.py",
+                         "worker/handler.py", "worker/model_artifact.py"):
+            def changed(path, *args, **kwargs):
+                source = original(path, *args, **kwargs)
+                return source + "\n# loads core-serving.v1.json\n" if str(path).endswith(relative) else source
+            with self.subTest(relative=relative), patch.object(Path, "read_text", changed):
+                with self.assertRaisesRegex(ValueError, "runtime_reads_archived_routing"):
+                    validate_policy_drift()
+
     def test_complete_source_contract_is_valid_dataset_approved_execution_blocked(self):
         report = contract.validate()
         self.assertEqual(report["families"], list(contract.FAMILIES))

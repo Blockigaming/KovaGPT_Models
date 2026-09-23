@@ -16,6 +16,7 @@ from unittest.mock import Mock, patch
 
 from worker import serving_runtime as runtime
 from worker.model_startup import SAFETY_FIELDS
+from core.current_candidates import CORE_SERVING
 
 
 class FakeBackend:
@@ -51,7 +52,7 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.root = Path(self.directory.name)
         self.model = self.root / "model"
         self.model.mkdir(mode=0o700)
-        self.candidate = json.loads((Path(__file__).resolve().parents[1] / "config/core-serving.v1.json").read_text())["candidates"][0]
+        self.candidate = CORE_SERVING["candidates"][0]
         files = {"config.json": b'{"model_type":"synthetic"}', "tokenizer.json": b'{}',
             "tokenizer_config.json": b'{}', "fixture.safetensors": b'NOT REAL MODEL WEIGHTS',
             "model.safetensors.index.json": b'{"weight_map":{"fixture":"fixture.safetensors"}}'}

@@ -35,7 +35,8 @@ class ExecutionContractTests(unittest.TestCase):
         plan = make_plan()
         expected = make_spec()
         caps = {s.id: 100 for s in expected.stages}
-        spec = ExecutionSpec.from_plan(plan, limits=expected.limits, runtime_identity=IDENTITY,
+        spec = ExecutionSpec.from_plan(plan, limits=expected.limits,
+                                       runtime_identity=expected.snapshot()["runtime_identity"],
                                        stage_cost_caps=caps)
         fingerprint = spec.fingerprint
         plan["display_name"] = "changed"

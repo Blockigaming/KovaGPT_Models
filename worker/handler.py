@@ -7,6 +7,8 @@ from time import perf_counter_ns
 from uuid import UUID, uuid4
 
 from core.adapter import bind_core_operation, build_core_plan
+from core.current_candidates import CORE_SERVING
+from router.policy import CHAT_POLICIES, WORK_EFFORTS, WORK_FAMILY_POLICIES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,12 +26,6 @@ MAX_TOOL_JSON_NODES = 50_000
 TRUSTED_SYSTEM_IDENTITY = json.loads(
     (ROOT / "config" / "identity.v1.json").read_text(encoding="utf-8")
 )["system_identity"]
-ROUTE_POLICY = json.loads(
-    (ROOT / "config" / "route-policy.v1.json").read_text(encoding="utf-8")
-)
-CORE_SERVING = json.loads(
-    (ROOT / "config" / "core-serving.v1.json").read_text(encoding="utf-8")
-)
 PINNED_CORE_CANDIDATES = {
     candidate["id"]: {
         "id": candidate["id"],
@@ -66,32 +62,29 @@ def _selected_candidate(candidate_id):
 
 def _stage_ids(policy):
     stages = []
-    for phase, field in (
-        ("planning", "planning_passes"), ("answer", "answer_passes"),
-        ("critic", "critic_passes"), ("verification", "verification_passes"),
-    ):
-        stages.extend(f"{phase}-{index}" for index in range(1, policy.get(field, 0) + 1))
+    for phase, count in zip(("planning", "answer", "critic", "verification"), policy["passes"]):
+        stages.extend(f"{phase}-{index}" for index in range(1, count + 1))
     return stages
 
 
 CORE_ROUTE_STAGES = {}
 CORE_ROUTE_EFFORTS = {}
 WORK_ROUTE_REQUESTS = {}
-for route in ROUTE_POLICY["chat"]:
-    if route["engine"] == "kova-core":
-        CORE_ROUTE_STAGES[route["id"]] = _stage_ids(route)
-        CORE_ROUTE_EFFORTS[route["id"]] = route["reasoning_effort"]
-for family in ROUTE_POLICY["work"]["families"]:
-    for effort in ROUTE_POLICY["work"]["effort_profiles"]:
-        if effort["engine"] == "kova-core":
-            route_id = f"work:{family}:{effort['name'].lower().replace(' ', '-')}"
+for route_id, policy in CHAT_POLICIES.items():
+    if policy["engine"] == "kova-core":
+        CORE_ROUTE_STAGES[route_id] = _stage_ids(policy)
+        CORE_ROUTE_EFFORTS[route_id] = policy["reasoning_effort"]
+for family in WORK_FAMILY_POLICIES:
+    for name, effort in WORK_EFFORTS.items():
+        if name != "Ultra":
+            route_id = f"work:{family}:{name.lower().replace(' ', '-')}"
             CORE_ROUTE_STAGES[route_id] = _stage_ids(effort)
             CORE_ROUTE_EFFORTS[route_id] = effort["reasoning_effort"]
             WORK_ROUTE_REQUESTS[route_id] = {
-                "surface": "work", "family": family, "effort": effort["name"],
+                "surface": "work", "family": family, "effort": name,
             }
             if family in ("cosmo", "orion"):
-                chat_route_id = f"chat:{family}:{effort['name'].lower().replace(' ', '-')}"
+                chat_route_id = f"chat:{family}:{name.lower().replace(' ', '-')}"
                 CORE_ROUTE_STAGES[chat_route_id] = _stage_ids(effort)
                 CORE_ROUTE_EFFORTS[chat_route_id] = effort["reasoning_effort"]
 

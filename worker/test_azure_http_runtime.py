@@ -287,7 +287,7 @@ class AzureRuntimeLoopbackTests(unittest.TestCase):
     def test_end_to_end_identity_rest_then_verified_tls_chat_stream(self):
         from worker import bounded_http
         from worker.handler import PINNED_CORE_CANDIDATES, handle_job
-        candidate = PINNED_CORE_CANDIDATES["qwen3.8-27b-bf16"]
+        candidate = PINNED_CORE_CANDIDATES["kova-cosmo"]
         selected = config(settings=replace(config().settings, served_model=candidate["model"]))
         identity_bytes = json.dumps(token_response(expires_on="9999999999")).encode()
         identity_wire = (b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
