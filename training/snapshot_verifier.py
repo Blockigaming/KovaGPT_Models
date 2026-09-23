@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
+import stat
 
 from training.three_family_contract import load_json
 
@@ -18,20 +20,32 @@ MANIFESTS = {
 
 def verify_snapshot(snapshot: Path, manifest: dict) -> dict:
     expected = {entry["path"]: entry for entry in manifest["files"]}
-    actual = {
-        str(path.relative_to(snapshot)).replace("\\", "/")
-        for path in snapshot.rglob("*") if path.is_file()
-    }
+    if not stat.S_ISDIR(snapshot.lstat().st_mode):
+        raise ValueError("snapshot_root_not_directory")
+    actual = set()
+    for path in snapshot.rglob("*"):
+        mode = path.lstat().st_mode
+        if stat.S_ISDIR(mode):
+            continue
+        if not stat.S_ISREG(mode) or path.lstat().st_nlink != 1:
+            raise ValueError("snapshot_nonregular_or_linked_entry")
+        actual.add(path.relative_to(snapshot).as_posix())
     if actual != set(expected):
         raise ValueError("snapshot_inventory_mismatch")
     for relative, entry in expected.items():
         path = snapshot / relative
-        if path.stat().st_size != entry["bytes"]:
-            raise ValueError(f"snapshot_size_mismatch:{relative}")
         hasher = hashlib.sha256()
-        with path.open("rb") as stream:
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        with os.fdopen(os.open(path, flags), "rb") as stream:
+            metadata = os.fstat(stream.fileno())
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise ValueError(f"snapshot_nonregular_or_linked_entry:{relative}")
+            if metadata.st_size != entry["bytes"]:
+                raise ValueError(f"snapshot_size_mismatch:{relative}")
             for block in iter(lambda: stream.read(1024 * 1024), b""):
                 hasher.update(block)
+            if os.fstat(stream.fileno()).st_size != metadata.st_size:
+                raise ValueError(f"snapshot_size_changed:{relative}")
         digest = hasher.hexdigest()
         if digest != entry["sha256"]:
             raise ValueError(f"snapshot_hash_mismatch:{relative}")

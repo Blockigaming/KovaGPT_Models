@@ -16,6 +16,7 @@ def command_plan() -> list[dict]:
         "provisionPilot=true",
         "suffix=${PILOT_SUFFIX}",
         "adminUsername=${PILOT_ADMIN_USERNAME}",
+        "ubuntuImageVersion=${PINNED_UBUNTU_IMAGE_VERSION}",
         "sshPublicKey=${PILOT_SSH_PUBLIC_KEY}",
     ]
     watchdog_parameters = [

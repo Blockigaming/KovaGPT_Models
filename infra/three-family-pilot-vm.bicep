@@ -7,6 +7,9 @@ param location string = resourceGroup().location
 @maxLength(16)
 param suffix string
 param adminUsername string
+@description('Exact immutable Marketplace image version from a reviewed East US image listing. No default or latest alias.')
+@minLength(8)
+param ubuntuImageVersion string
 @secure()
 param sshPublicKey string
 
@@ -80,7 +83,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2024-07-01' = if (provisionPilot)
         publisher: 'Canonical'
         offer: 'ubuntu-24_04-lts'
         sku: 'server'
-        version: 'latest'
+        version: ubuntuImageVersion
       }
       osDisk: {
         createOption: 'FromImage'

@@ -3,6 +3,7 @@ from copy import deepcopy
 from decimal import Decimal
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -352,12 +353,50 @@ class ThreeFamilyContractTests(unittest.TestCase):
             with self.assertRaises(contract.ContractError):
                 contract.verify_snapshot("kova-cosmo", root)
 
+    def test_snapshot_rejects_links_and_nonregular_entries(self):
+        from training.snapshot_verifier import verify_snapshot
+        manifest = {"files": [{"path": "config.json", "bytes": 2,
+                               "sha256": hashlib.sha256(b"{}").hexdigest()}]}
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            target = root / "config.json"
+            target.write_bytes(b"{}")
+            self.assertTrue(verify_snapshot(root, manifest)["verified"])
+            (root / "extra").symlink_to(target)
+            with self.assertRaises(ValueError):
+                verify_snapshot(root, manifest)
+            (root / "extra").unlink()
+            os.link(target, root / "extra")
+            with self.assertRaises(ValueError):
+                verify_snapshot(root, manifest)
+            (root / "extra").unlink()
+            target.unlink()
+            target.symlink_to(root / "absent")
+            with self.assertRaises(ValueError):
+                verify_snapshot(root, manifest)
+
     def test_six_dollar_bootstrap_uses_live_rate_and_60_second_rounding(self):
         self.assertLessEqual(contract.admit_bootstrap(Decimal("0.526")), Decimal("6.0000"))
         with self.assertRaisesRegex(contract.ContractError, "six-dollar"):
             contract.admit_bootstrap(Decimal("1.00"))
         with self.assertRaises(contract.ContractError):
             contract.admit_bootstrap(Decimal("-0.01"))
+        with self.assertRaises(contract.ContractError):
+            contract.admit_bootstrap(Decimal("NaN"))
+
+    def test_cost_guard_rejects_understated_or_nonfinite_ancillary_bounds(self):
+        original = contract.load_json
+        cost = original(contract.ROOT / "config/kova-three-family-cost-guard.v1.json")
+        for change in (lambda cfg: cfg["category_upper_bounds"].update(managed_disks="-1"),
+                       lambda cfg: cfg["category_upper_bounds"].update(managed_disks="NaN"),
+                       lambda cfg: cfg["category_upper_bounds"].pop("managed_disks"),
+                       lambda cfg: cfg["meter_categories"].pop()):
+            altered = deepcopy(cost)
+            change(altered)
+            def fake_load(path, **kwargs):
+                return altered if path.name == "kova-three-family-cost-guard.v1.json" else original(path, **kwargs)
+            with patch.object(contract, "load_json", side_effect=fake_load), self.assertRaises(contract.ContractError):
+                contract.admit_bootstrap(Decimal("0.526"))
 
     def test_captured_live_price_is_parsed_and_admitted(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -472,6 +511,21 @@ class ThreeFamilyContractTests(unittest.TestCase):
                 with self.subTest(family=family, field=field), patch.object(
                         contract, "load_json", side_effect=fake_load), self.assertRaises(contract.ContractError):
                     contract.validate_training()
+
+    def test_qlora_recipe_rejects_changed_hyperparameters(self):
+        original = Path.read_bytes
+        for family in contract.FAMILIES:
+            name = f"{family}-qlora.v1.json"
+            def changed(path):
+                raw = original(path)
+                if path.name == name:
+                    cfg = json.loads(raw)
+                    cfg["training"]["maximum_optimizer_steps"] = 6
+                    return json.dumps(cfg).encode()
+                return raw
+            with self.subTest(family=family), patch.object(Path, "read_bytes", changed), self.assertRaisesRegex(
+                    contract.ContractError, "complete QLoRA recipe digest mismatch"):
+                contract.validate_training()
 
     def test_json_numeric_overflow_is_rejected_at_any_depth(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -591,6 +645,9 @@ class ThreeFamilyContractTests(unittest.TestCase):
         self.assertIn("disablePasswordAuthentication: true", vm)
         self.assertIn("Microsoft.HpcCompute", vm)
         self.assertIn("NvidiaGpuDriverLinux", vm)
+        self.assertIn("version: ubuntuImageVersion", vm)
+        self.assertNotIn("version: 'latest'", vm)
+        self.assertIn("ubuntuImageVersion=${PINNED_UBUNTU_IMAGE_VERSION}", command_plan()[3]["argv"])
         self.assertIn("enableAutomaticUpgrade: false", vm)
         self.assertIn("frequency: 'Minute'", watchdog)
         self.assertIn("param pilotSuffix string", watchdog)

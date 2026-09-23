@@ -33,6 +33,17 @@ MANIFEST_SHA256 = {
     "kova-orion": "d4eb95e29eef9a92445e3b7622d17f066678e5dc0915fd5a3c40189167c5e746",
     "kova-nova": "8fd1bac2209b5f1c4f1412fc1797b29e0bdc4609025bdd176660dd560fa97566",
 }
+RECIPE_SHA256 = {
+    "kova-cosmo": "6f577e521d4ddeff1725f9c660825d6bd08f94d80b06acf6f0721b265236eb3d",
+    "kova-orion": "467330ca8e7ee928ae76b88996b70264190512045e2d42c1d54b4262a9456885",
+    "kova-nova": "46d44da0bcbcfc4fe15454059bbaba2c7e104e8d079348998e5075ee1fee3088",
+}
+COST_CATEGORY_BOUNDS = {
+    "managed_disks": "0.3000", "snapshots": "0.0000",
+    "storage_capacity": "0.1000", "storage_transactions": "0.1000",
+    "network_transfer": "0.1000", "public_ip_and_network": "0.1000",
+    "shutdown_delay": "0.1000", "failed_allocation_attempts": "0.1000",
+}
 MANIFEST_PATHS = {
     "kova-cosmo": "config/qwen3-0.6b-download-manifest.v1.json",
     "kova-orion": "config/qwen3-1.7b-download-manifest.v1.json",
@@ -165,13 +176,11 @@ def verify_snapshot(family: str, directory: Path) -> None:
     lineage = load_json(ROOT / "config/kova-private-lineage.v1.json")
     need(family in FAMILIES, "unknown family")
     manifest = _pinned_manifest(family, lineage["families"][family])
-    expected = {entry["path"]: entry for entry in manifest["files"]}
-    actual = {path.relative_to(directory).as_posix(): path for path in directory.rglob("*") if path.is_file()}
-    need(set(actual) == set(expected), "snapshot allowlist mismatch")
-    for relative, path in actual.items():
-        entry = expected[relative]
-        need(path.stat().st_size == entry["bytes"], "snapshot size mismatch")
-        need(sha256(path) == entry["sha256"], "snapshot hash mismatch")
+    from training.snapshot_verifier import verify_snapshot as verify_exact_snapshot
+    try:
+        verify_exact_snapshot(directory, manifest)
+    except (ValueError, OSError) as error:
+        raise ContractError(f"snapshot rejected: {error}") from None
 
 
 def validate_dataset():
@@ -257,7 +266,9 @@ def validate_training():
                 "kova-orion": (1024, 2700, "1.5000"),
                 "kova-nova": (768, 4500, "1.7500")}
     for family, (sequence, elapsed, allowance) in expected.items():
-        cfg = load_json(ROOT / f"config/{family}-qlora.v1.json")
+        recipe_path = ROOT / f"config/{family}-qlora.v1.json"
+        need(sha256(recipe_path) == RECIPE_SHA256[family], "complete QLoRA recipe digest mismatch")
+        cfg = load_json(recipe_path)
         need(cfg["family"] == family and cfg["method"] == "four_bit_qlora_lora_sft")
         need(cfg["manifest"] == MANIFEST_PATHS[family], "recipe manifest mismatch")
         need(cfg["dataset"] == "config/kova-three-family-dataset.v2.json",
@@ -312,9 +323,31 @@ def validate_compatibility_evaluation_profiles():
     _all_false(profiles, "profiles")
 
 
-def worst_case_total(*, hourly_compute_rate: Decimal, lifecycle_seconds: int = 21600) -> Decimal:
-    need(type(hourly_compute_rate) is Decimal and hourly_compute_rate >= 0, "invalid live price")
+def _validated_cost_guard() -> dict:
     cost = load_json(ROOT / "config/kova-three-family-cost-guard.v1.json")
+    need(cost["combined_hard_ceiling"] == "6.0000")
+    need(cost["emergency_cleanup_margin"] == "1.2500")
+    need(cost["provider_compute_meter_increment_seconds"] == 60)
+    need(cost["meter_categories"] == ["compute_allocation_time", *COST_CATEGORY_BOUNDS])
+    need(type(cost["category_upper_bounds"]) is dict
+         and set(cost["category_upper_bounds"]) == set(COST_CATEGORY_BOUNDS), "cost categories mismatch")
+    for category, expected in COST_CATEGORY_BOUNDS.items():
+        raw = cost["category_upper_bounds"][category]
+        need(type(raw) is str, f"invalid cost bound: {category}")
+        try:
+            bound = Decimal(raw)
+        except InvalidOperation:
+            raise ContractError(f"invalid cost bound: {category}") from None
+        need(bound.is_finite() and bound >= 0 and bound == Decimal(expected),
+             f"unapproved cost bound: {category}")
+    return cost
+
+
+def worst_case_total(*, hourly_compute_rate: Decimal, lifecycle_seconds: int = 21600) -> Decimal:
+    need(type(hourly_compute_rate) is Decimal and hourly_compute_rate.is_finite()
+         and hourly_compute_rate >= 0, "invalid live price")
+    need(type(lifecycle_seconds) is int and 0 < lifecycle_seconds <= 21600, "invalid lifecycle")
+    cost = _validated_cost_guard()
     increment = cost["provider_compute_meter_increment_seconds"]
     increments = (Decimal(lifecycle_seconds) / Decimal(increment)).to_integral_value(rounding=ROUND_CEILING)
     compute = (increments * Decimal(increment) / Decimal(3600)) * hourly_compute_rate
@@ -324,8 +357,7 @@ def worst_case_total(*, hourly_compute_rate: Decimal, lifecycle_seconds: int = 2
 
 def admit_bootstrap(hourly_compute_rate: Decimal) -> Decimal:
     total = worst_case_total(hourly_compute_rate=hourly_compute_rate)
-    ceiling = Decimal(load_json(ROOT / "config/kova-three-family-cost-guard.v1.json")["combined_hard_ceiling"])
-    need(total <= ceiling, "live-price worst case exceeds six-dollar ceiling")
+    need(total <= Decimal("6.0000"), "live-price worst case exceeds six-dollar ceiling")
     return total
 
 
@@ -427,10 +459,7 @@ def validate_probe_evidence(path: Path) -> dict:
 
 
 def validate_cost_lifecycle_operator():
-    cost = load_json(ROOT / "config/kova-three-family-cost-guard.v1.json")
-    need(Decimal(cost["combined_hard_ceiling"]) == Decimal("6.0000"))
-    need(Decimal(cost["emergency_cleanup_margin"]) == Decimal("1.2500"))
-    need(len(cost["meter_categories"]) == 9)
+    cost = _validated_cost_guard()
     need(cost["azure_budget_alert_is_hard_stop"] is False)
     lifecycle = load_json(ROOT / "config/kova-three-family-lifecycle.v1.json")
     need(lifecycle["maximum_lifecycle_seconds"] == 21600)
@@ -451,6 +480,16 @@ def validate_cost_lifecycle_operator():
     need(pilot["single_shared_vm"]["sku"] == "Standard_NC4as_T4_v3")
     need(pilot["single_shared_vm"]["public_ip_allowed"] is False)
     need(pilot["combined_hard_ceiling_usd"] == "6.0000")
+    vm_template = (ROOT / "infra/three-family-pilot-vm.bicep").read_text(encoding="utf-8")
+    need("param ubuntuImageVersion string" in vm_template
+         and "version: ubuntuImageVersion" in vm_template
+         and "version: 'latest'" not in vm_template,
+         "VM image must require an immutable operator-supplied version")
+    from training.three_family_operator import command_plan
+    for step in command_plan():
+        if "infra/three-family-pilot-vm.bicep" in step.get("argv", []):
+            need("ubuntuImageVersion=${PINNED_UBUNTU_IMAGE_VERSION}" in step["argv"],
+                 "VM image version missing from operator plan")
     for value, label in ((cost, "cost"), (lifecycle, "lifecycle"), (operator, "operator"), (pilot, "pilot")):
         _all_false(value, label)
 
