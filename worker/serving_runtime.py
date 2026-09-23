@@ -14,6 +14,7 @@ import os
 from time import monotonic
 from uuid import uuid4
 
+from core.current_candidates import CORE_SERVING
 from worker import model_startup
 
 
@@ -128,6 +129,7 @@ class ServingRuntime:
         expected = {"model_path": self._identity["artifact_root"], "tokenizer_path": self._identity["artifact_root"],
                     "model_revision": self._identity["model_revision"], "tokenizer_revision": self._identity["model_revision"],
                     "adapter_sha256": self._identity["adapter_sha256"],
+                    "adapter_bundle_sha256": self._identity["adapter_bundle_sha256"],
                     "served_model_names": [self._identity["model"]],
                     "context_tokens": self.policy.context_tokens, "trust_remote_code": False}
         need(type(observed) is dict and set(observed) == set(expected))
@@ -177,12 +179,27 @@ class ServingRuntime:
             need(code == 0 and report["status"] == "artifact_verified_serving_blocked")
             artifact = report["artifact_evidence"]
             need(artifact["candidate_id"] == self.policy.candidate_id)
+            selected = [candidate for candidate in CORE_SERVING["candidates"]
+                        if candidate["id"] == self.policy.candidate_id]
+            need(len(selected) == 1)
+            candidate = selected[0]
+            # The startup manifest covers adapter_config.json as well as weights.
+            # A separately trusted candidate pin must agree before native loading.
+            need(artifact["model"] == candidate["model"]
+                 and artifact["revision"] == candidate["revision"]
+                 and artifact["adapter_sha256"] == candidate["adapter_sha256"]
+                 and isinstance(candidate["adapter_sha256"], str)
+                 and artifact["manifest_sha256"] == candidate["adapter_bundle_sha256"]
+                 and isinstance(candidate["adapter_bundle_sha256"], str)
+                 and len(candidate["adapter_bundle_sha256"]) == 64
+                 and all(c in "0123456789abcdef" for c in candidate["adapter_bundle_sha256"]))
             again = model_startup._control_bytes(self.policy.startup_policy_path,
                 model_startup.MAX_POLICY_BYTES, self._cancelled)
             need(again == encoded)
             self._permission()
             self._identity = {"model": artifact["model"], "model_revision": artifact["revision"],
                 "adapter_sha256": artifact["adapter_sha256"],
+                "adapter_bundle_sha256": artifact["manifest_sha256"],
                 "candidate_id": artifact["candidate_id"], "manifest_sha256": artifact["manifest_sha256"],
                 "artifact_root": root, "context_tokens": self.policy.context_tokens,
                 "container_image_digest": self.policy.container_image_digest,

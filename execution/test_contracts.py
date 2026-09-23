@@ -20,6 +20,16 @@ class ExecutionContractTests(SyntheticAdapterTestCase):
                                     runtime_identity=spec.snapshot()["runtime_identity"],
                                     stage_cost_caps={stage.id: stage.cost_cap_microusd for stage in spec.stages})
 
+    def test_saved_snapshot_survives_bundle_rotation_but_new_admission_does_not(self):
+        spec = make_spec("instant")
+        candidate = next(c for c in CORE_SERVING["candidates"] if c["model"] == spec.snapshot()["runtime_identity"]["model"])
+        candidate["adapter_bundle_sha256"] = "e" * 64
+        self.assertEqual(ExecutionSpec(spec.encoded).fingerprint, spec.fingerprint)
+        with self.assertRaisesRegex(ExecutionError, "adapter bundle differs from current candidate pin"):
+            ExecutionSpec.from_plan(spec.plan, limits=spec.limits,
+                                    runtime_identity=spec.snapshot()["runtime_identity"],
+                                    stage_cost_caps={stage.id: stage.cost_cap_microusd for stage in spec.stages})
+
     def test_ultra_snapshot_rejects_another_family_identity(self):
         spec = make_spec("work:nova:ultra")
         changed = spec.snapshot()
@@ -86,6 +96,7 @@ class ExecutionContractTests(SyntheticAdapterTestCase):
             lambda v: v["stages"][0].update(condition="always"),
             lambda v: v["runtime_identity"].update(model_revision="unpinned"),
             lambda v: v["runtime_identity"].update(adapter_sha256="not-a-digest"),
+            lambda v: v["runtime_identity"].update(adapter_bundle_sha256="not-a-digest"),
             lambda v: v["runtime_identity"].update(context_tokens=1),
             lambda v: v["plan"].update(production_ready=True),
             lambda v: v["plan"].update(route_id="thinking"),

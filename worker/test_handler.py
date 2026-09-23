@@ -24,10 +24,13 @@ class HandlerTests(unittest.TestCase):
     fp8 = PINNED_CORE_CANDIDATES["kova-orion"]
 
     def setUp(self):
-        self.original_pins = {key: value["adapter_sha256"] for key, value in PINNED_CORE_CANDIDATES.items()}
+        self.original_pins = {key: (value["adapter_sha256"], value["adapter_bundle_sha256"])
+                              for key, value in PINNED_CORE_CANDIDATES.items()}
         for candidate in PINNED_CORE_CANDIDATES.values():
             candidate["adapter_sha256"] = "f" * 64
-        self.addCleanup(lambda: [PINNED_CORE_CANDIDATES[key].update(adapter_sha256=value)
+            candidate["adapter_bundle_sha256"] = "d" * 64
+        self.addCleanup(lambda: [PINNED_CORE_CANDIDATES[key].update(adapter_sha256=value[0],
+                                  adapter_bundle_sha256=value[1])
                                  for key, value in self.original_pins.items()])
 
     def request(self, **overrides):
@@ -46,6 +49,7 @@ class HandlerTests(unittest.TestCase):
             "loaded_model": self.bf16["model"],
             "loaded_model_revision": self.bf16["model_revision"],
             "loaded_adapter_sha256": self.bf16["adapter_sha256"],
+            "loaded_adapter_bundle_sha256": self.bf16["adapter_bundle_sha256"],
             "cold_start": False,
             "worker_lifecycle_id": "lifecycle-1",
             "worker_start_ms": 0,
@@ -76,6 +80,19 @@ class HandlerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "runtime loaded adapter does not match"):
             handle_job({"input": self.request()}, lambda _: self.response(),
                        self.runtime_probe(loaded_adapter_sha256="e" * 64), list().append,
+                       execution_context=self.execution_context(), token_counter=self.token_counter)
+
+    def test_same_weights_with_changed_adapter_config_manifest_cannot_serve(self):
+        candidate = PINNED_CORE_CANDIDATES["kova-cosmo"]
+        candidate["adapter_bundle_sha256"] = None
+        with self.assertRaisesRegex(ValueError, "adapter bundle digest is not pinned"):
+            handle_job({"input": self.request()}, lambda _: self.response(),
+                       self.runtime_probe(), list().append,
+                       execution_context=self.execution_context(), token_counter=self.token_counter)
+        candidate["adapter_bundle_sha256"] = "d" * 64
+        with self.assertRaisesRegex(ValueError, "runtime loaded adapter bundle does not match"):
+            handle_job({"input": self.request()}, lambda _: self.response(),
+                       self.runtime_probe(loaded_adapter_bundle_sha256="e" * 64), list().append,
                        execution_context=self.execution_context(), token_counter=self.token_counter)
 
     def execution_context(self, **overrides):
@@ -575,6 +592,7 @@ class HandlerTests(unittest.TestCase):
         self.assertEqual(benchmark["outcome"], "success")
         self.assertEqual(benchmark["model"], self.bf16["model"])
         self.assertEqual(benchmark["model_revision"], self.bf16["model_revision"])
+        self.assertEqual(benchmark["adapter_bundle_sha256"], self.bf16["adapter_bundle_sha256"])
         self.assertEqual(benchmark["inference_ms"], 75)
         self.assertEqual(benchmark["time_to_first_token_ms"], 10)
         self.assertEqual(benchmark["measurement_source"], "server_provider_runtime")
@@ -591,6 +609,7 @@ class HandlerTests(unittest.TestCase):
             "loaded_model": self.bf16["model"],
             "loaded_model_revision": self.bf16["model_revision"],
             "loaded_adapter_sha256": self.bf16["adapter_sha256"],
+            "loaded_adapter_bundle_sha256": self.bf16["adapter_bundle_sha256"],
             "worker_lifecycle_id": "lifecycle-1",
             "billed_lifecycle_ms": 9000,
             "attributed_idle_timeout_ms": 5000,
@@ -607,6 +626,7 @@ class HandlerTests(unittest.TestCase):
         )
         self.assertEqual(record, records[0])
         self.assertEqual(record["record_type"], "lifecycle_close")
+        self.assertEqual(record["adapter_bundle_sha256"], self.bf16["adapter_bundle_sha256"])
         self.assertEqual(record["billed_lifecycle_ms"], 9000)
         self.assertEqual(record["attributed_idle_timeout_ms"], 5000)
         with self.assertRaisesRegex(ValueError, "attributed_idle_timeout_ms"):

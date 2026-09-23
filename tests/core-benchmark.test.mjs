@@ -6,10 +6,11 @@ const revision = "c1899de289a04d12100db370d81485cdf75e47ca";
 const fp8Revision = "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e";
 const digest = `sha256:${"a".repeat(64)}`;
 const adapter = "f".repeat(64);
+const adapterBundle = "b".repeat(64);
 const catalog = new Map([
-  ["kova-cosmo", {revision, adapter_sha256: adapter, quantization: "four_bit_nf4"}],
-  ["kova-orion", {revision: fp8Revision, adapter_sha256: adapter, quantization: "four_bit_nf4"}],
-  ["kova-nova", {revision: "1cfa9a7208912126459214e8b04321603b3df60c", adapter_sha256: adapter, quantization: "four_bit_nf4"}],
+  ["kova-cosmo", {revision, adapter_sha256: adapter, adapter_bundle_sha256: adapterBundle, quantization: "four_bit_nf4"}],
+  ["kova-orion", {revision: fp8Revision, adapter_sha256: adapter, adapter_bundle_sha256: adapterBundle, quantization: "four_bit_nf4"}],
+  ["kova-nova", {revision: "1cfa9a7208912126459214e8b04321603b3df60c", adapter_sha256: adapter, adapter_bundle_sha256: adapterBundle, quantization: "four_bit_nf4"}],
 ]);
 const summarizeCoreBenchmark = (records) => summarizeWithCatalog(records, catalog);
 const logicalId = (value) => `kova-exec-00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
@@ -18,6 +19,7 @@ const common = {
   model: "kova-cosmo",
   model_revision: revision,
   adapter_sha256: adapter,
+  adapter_bundle_sha256: adapterBundle,
   gpu_type_id: "NVIDIA A100 80GB PCIe",
   gpu_count: 1,
   serving_engine: "vllm",
@@ -71,9 +73,12 @@ test("Core benchmark prices one complete RunPod lifecycle", () => {
   assert.equal(result.schema_version, 6);
   assert.equal(result.worker_lifecycles, 1);
   assert.equal(result.by_configuration[configuration()].configuration.adapter_sha256, adapter);
+  assert.equal(result.by_configuration[configuration()].configuration.adapter_bundle_sha256, adapterBundle);
   assert.equal(result.by_configuration[configuration()].configuration.quantization, catalog.get(common.model).quantization);
   assert.equal(result.attempt_records[0].adapter_sha256, adapter);
   assert.equal(result.lifecycle_close_records[0].adapter_sha256, adapter);
+  assert.equal(result.attempt_records[0].adapter_bundle_sha256, adapterBundle);
+  assert.equal(result.lifecycle_close_records[0].adapter_bundle_sha256, adapterBundle);
   assert.equal(instant.successful_requests, 1);
   assert.ok(Math.abs(instant.total_attributable_compute_cost_usd - 0.009) < 1e-12);
   assert.ok(Math.abs(instant.average_compute_cost_per_successful_request_usd - 0.009) < 1e-12);
@@ -90,6 +95,16 @@ test("Core benchmark rejects an unpinned adapter and separates adapter configura
   assert.throws(() => summarizeCoreBenchmark([attempt(), close({adapter_sha256: undefined})]), /unverified adapter digest/);
   assert.throws(() => summarizeWithCatalog([attempt(), close()]), /unverified adapter digest/);
   assert.notEqual(configuration(), configuration({adapter_sha256: "e".repeat(64)}));
+});
+
+test("Core benchmark rejects unpinned adapter bundles and separates bundle configurations", () => {
+  assert.throws(() => summarizeCoreBenchmark([attempt({adapter_bundle_sha256: "e".repeat(64)}), close()]), /unverified adapter bundle digest/);
+  assert.throws(() => summarizeCoreBenchmark([attempt(), close({adapter_bundle_sha256: "e".repeat(64)})]), /unverified adapter bundle digest/);
+  assert.throws(() => summarizeCoreBenchmark([attempt({adapter_bundle_sha256: null}), close()]), /unverified adapter bundle digest/);
+  assert.throws(() => summarizeCoreBenchmark([attempt({adapter_bundle_sha256: adapterBundle.toUpperCase()}), close()]), /unverified adapter bundle digest/);
+  assert.throws(() => summarizeCoreBenchmark([attempt(), close({adapter_bundle_sha256: undefined})]), /unverified adapter bundle digest/);
+  assert.throws(() => summarizeCoreBenchmark([attempt(), close({adapter_bundle_sha256: adapterBundle, unsupported: 1})]), /unsupported fields/);
+  assert.notEqual(configuration(), configuration({adapter_bundle_sha256: "e".repeat(64)}));
 });
 
 test("Core benchmark separates model, GPU, server, endpoint type, and image", () => {

@@ -16,7 +16,16 @@ PUBLIC_SOURCE = (
 )
 CURRENT_RUNTIME_SOURCE = (
     "core/adapter.py", "core/current_candidates.py", "worker/handler.py",
-    "worker/model_artifact.py", "release/rollout.py",
+    "worker/model_artifact.py", "release/rollout.py", "config/inference-contract.v1.json",
+)
+CURRENT_CANDIDATE_SOURCE = "core/current_candidates.py:CORE_SERVING.candidates"
+CURRENT_CANDIDATE_ASSERTION = (
+    'inference.candidate_selection.allowlist_source !== '
+    f'"{CURRENT_CANDIDATE_SOURCE}"'
+)
+CURRENT_BENCHMARK_ASSERTION = (
+    'inference.trusted_execution_context.benchmark_candidate_id_source !== '
+    '"trusted_server_configuration_allowlisted_in_current_candidates"'
 )
 FORBIDDEN_PUBLIC = ("Qwen/", "Qwen3-", "qwen3-", "Kova 5.6", "chat-shared")
 
@@ -87,6 +96,16 @@ def validate(root: Path = ROOT) -> dict:
         for legacy in ("route-policy.v1.json", "core-serving.v1.json"):
             if legacy in source:
                 raise ValueError(f"runtime_reads_archived_routing:{relative}:{legacy}")
+    contract = _load(root / "config/inference-contract.v1.json")
+    if (contract["candidate_selection"]["allowlist_source"] != CURRENT_CANDIDATE_SOURCE or
+            contract["trusted_execution_context"]["benchmark_candidate_id_source"] !=
+            "trusted_server_configuration_allowlisted_in_current_candidates"):
+        raise ValueError("inference_candidate_source_drift")
+    # The stack validator also verifies archived history; inspect only its active assertions.
+    validator = (root / "scripts/validate-stack.mjs").read_text("utf-8", errors="strict")
+    if (CURRENT_CANDIDATE_ASSERTION not in validator or
+            CURRENT_BENCHMARK_ASSERTION not in validator):
+        raise ValueError("inference_validator_candidate_source_drift")
     for relative in PUBLIC_SOURCE:
         source = (root / relative).read_text("utf-8", errors="strict")
         for token in FORBIDDEN_PUBLIC:

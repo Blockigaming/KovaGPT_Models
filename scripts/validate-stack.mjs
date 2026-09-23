@@ -76,20 +76,20 @@ if (
 
 if (
   inference.candidate_selection.source !== "trusted_server_configuration" ||
-  inference.candidate_selection.allowlist_source !== "config/core-serving.v1.json:candidates" ||
+  inference.candidate_selection.allowlist_source !== "core/current_candidates.py:CORE_SERVING.candidates" ||
   inference.candidate_selection.client_selectable !== false ||
   inference.candidate_selection.benchmark_job_must_select_exactly_one !== true ||
   inference.candidate_selection.production_candidate_selected !== false
 ) throw new Error("benchmark_worker_candidate_selection_must_be_trusted_and_blocked");
 for (const field of [
-  "record_type", "request_id", "correlation_id", "attempt_id", "outcome", "model", "model_revision", "adapter_sha256", "route_id",
+  "record_type", "request_id", "correlation_id", "attempt_id", "outcome", "model", "model_revision", "adapter_sha256", "adapter_bundle_sha256", "route_id",
   "stage_id", "public_response", "worker_lifecycle_id", "measurement_source", "cold_start",
   "time_to_first_token_ms", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count",
   "serving_engine", "endpoint_type", "container_image_digest",
 ]) {
   if (!inference.telemetry.attempt_record_required.includes(field)) throw new Error(`inference_attempt_telemetry_missing:${field}`);
 }
-for (const field of ["record_type", "close_event_id", "worker_lifecycle_id", "adapter_sha256", "billed_lifecycle_ms", "attributed_idle_timeout_ms"]) {
+for (const field of ["record_type", "close_event_id", "worker_lifecycle_id", "adapter_sha256", "adapter_bundle_sha256", "billed_lifecycle_ms", "attributed_idle_timeout_ms"]) {
   if (!inference.telemetry.lifecycle_close_record_required.includes(field)) throw new Error(`inference_lifecycle_telemetry_missing:${field}`);
 }
 if (inference.telemetry.lifecycle_close_source !== "trusted_runtime_shutdown_observation") throw new Error("trusted_lifecycle_close_required");
@@ -108,7 +108,7 @@ if (
   inference.trusted_execution_context.source !== "server_router_and_stage_store_only" ||
   inference.trusted_execution_context.logical_request_id_source !== "server_generated_uuid4_once_per_route_execution" ||
   inference.trusted_execution_context.logical_request_id_format !== "kova-exec-{uuid4}" ||
-  inference.trusted_execution_context.benchmark_candidate_id_source !== "trusted_server_configuration_allowlisted_in_core_serving" ||
+  inference.trusted_execution_context.benchmark_candidate_id_source !== "trusted_server_configuration_allowlisted_in_current_candidates" ||
   inference.trusted_execution_context.prior_stage_outputs !== "exact_declared_core_dag_dependencies_only" ||
   inference.trusted_execution_context.artifact_trust !== "server_recorded_untrusted_model_output" ||
   inference.trusted_execution_context.trusted_token_recount_after_binding !== true ||
@@ -126,9 +126,11 @@ if (
   inference.streaming.positive_completion_usage_required_for_success !== true ||
   inference.runtime_identity.source !== "server_provider_runtime" ||
   inference.runtime_identity.required.join(",") !==
-    "loaded_model,loaded_model_revision,loaded_adapter_sha256,worker_lifecycle_id,gpu_type_id,gpu_count,serving_engine,endpoint_type,container_image_digest" ||
+    "loaded_model,loaded_model_revision,loaded_adapter_sha256,loaded_adapter_bundle_sha256,worker_lifecycle_id,gpu_type_id,gpu_count,serving_engine,endpoint_type,container_image_digest" ||
   inference.runtime_identity.loaded_model_must_match_selected_pinned_candidate !== true ||
   inference.runtime_identity.loaded_revision_must_match_selected_pinned_candidate !== true ||
+  inference.runtime_identity.loaded_adapter_must_match_selected_pinned_candidate !== true ||
+  inference.runtime_identity.loaded_adapter_bundle_must_match_selected_pinned_candidate !== true ||
   inference.runtime_identity.validated_before_and_after_each_attempt !== true ||
   inference.runtime_identity.lifecycle_close_must_match_pinned_candidate !== true ||
   inference.telemetry.attempt_outcomes.join(",") !== "success,failed,quarantined" ||

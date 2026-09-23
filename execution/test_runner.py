@@ -39,11 +39,26 @@ class RunnerTests(SyntheticAdapterTestCase):
         self.assertEqual(status["state"], "failed")
         self.assertEqual(fixture.calls, [])
 
+    def test_same_weights_but_changed_adapter_config_pin_blocks_dispatch(self):
+        spec = make_spec("instant")
+        grant = grant_for(spec)
+        job = self.store.create(grant, "bundle-rotation", spec)
+        candidate = next(c for c in CORE_SERVING["candidates"] if c["model"] == spec.snapshot()["runtime_identity"]["model"])
+        candidate["adapter_bundle_sha256"] = "e" * 64
+        PINNED_CORE_CANDIDATES[candidate["id"]]["adapter_bundle_sha256"] = "e" * 64
+        self.assertEqual(self.store.server_spec(OWNER, job).fingerprint, spec.fingerprint)
+        fixture = ModelFixture()
+        status = LocalRunner(self.store, lambda: grant, fixture.worker()).run(job)
+        self.assertEqual(status["state"], "failed")
+        self.assertEqual(fixture.calls, [])
+
     def test_ultra_attempt_telemetry_includes_pinned_adapter(self):
         spec, fixture, _, _, status = self.run_job(make_spec("ultra"))
         self.assertEqual(status["state"], "succeeded")
         self.assertTrue(fixture.records)
         self.assertTrue(all(record["adapter_sha256"] == spec.snapshot()["runtime_identity"]["adapter_sha256"]
+                            for record in fixture.records))
+        self.assertTrue(all(record["adapter_bundle_sha256"] == spec.snapshot()["runtime_identity"]["adapter_bundle_sha256"]
                             for record in fixture.records))
 
     def run_job(self, spec=None, fixture=None, *, worker=None, authorization=None, max_stages=None):

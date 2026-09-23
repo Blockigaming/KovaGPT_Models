@@ -52,6 +52,10 @@ class RuntimeInterleavingTests(unittest.IsolatedAsyncioTestCase):
             patch.object(runtime.model_startup, "validate_policy", return_value={
                 "verification_enabled": True, "artifact": {"root": "/fixture/model"}}),
             patch.object(runtime.model_startup, "run_startup", return_value=(0, report)),
+            patch.object(runtime, "CORE_SERVING", {"candidates": [{"id": artifact["candidate_id"],
+                "model": artifact["model"], "revision": artifact["revision"],
+                "adapter_sha256": artifact["adapter_sha256"],
+                "adapter_bundle_sha256": artifact["manifest_sha256"]}]}),
             patch.object(runtime, "_environment_guard"),
             patch.object(runtime, "NativeVllm", side_effect=factory),
         )

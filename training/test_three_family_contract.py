@@ -375,6 +375,30 @@ class ThreeFamilyContractTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verify_snapshot(root, manifest)
 
+    def test_snapshot_cli_requires_independent_complete_manifest_pins(self):
+        from training import snapshot_verifier
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            config = root / "config"
+            config.mkdir()
+            paths = ("config/kova-private-lineage.v1.json", *contract.MANIFEST_PATHS.values())
+            for relative in paths:
+                (root / relative).write_bytes((contract.ROOT / relative).read_bytes())
+            result = {"verified": True, "files": 0}
+            with patch.object(contract, "ROOT", root), \
+                    patch.object(snapshot_verifier, "verify_snapshot", return_value=result) as verify, \
+                    patch("builtins.print"):
+                self.assertEqual(snapshot_verifier.main(["--all-families", "--root", str(root)]), 0)
+                self.assertEqual(verify.call_count, 3)
+                verify.reset_mock()
+                manifest = config / "qwen3-0.6b-download-manifest.v1.json"
+                manifest.write_bytes(manifest.read_bytes() + b" ")  # Still valid JSON; bytes no longer pinned.
+                for args in (["--family", "kova-cosmo"], ["--all-families"]):
+                    with self.subTest(args=args), self.assertRaisesRegex(
+                            contract.ContractError, "complete manifest digest mismatch"):
+                        snapshot_verifier.main([*args, "--root", str(root)])
+                verify.assert_not_called()
+
     def test_six_dollar_bootstrap_uses_live_rate_and_60_second_rounding(self):
         self.assertLessEqual(contract.admit_bootstrap(Decimal("0.526")), Decimal("6.0000"))
         with self.assertRaisesRegex(contract.ContractError, "six-dollar"):

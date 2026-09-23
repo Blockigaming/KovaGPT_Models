@@ -117,6 +117,8 @@ jobs:
           "$compiler" --version
           echo "KOVA_BICEP=$compiler" >> "$GITHUB_ENV"
       - run: npm test
+      - name: Check current routing source against archived policy
+        run: python3 -m unittest release.test_source_policy_drift
       - run: npm run preflight
       - name: Archive verified committed source
         if: github.event_name == 'push'

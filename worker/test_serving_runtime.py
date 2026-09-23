@@ -29,6 +29,7 @@ class FakeBackend:
         self.observed = {"model_path": root, "tokenizer_path": root,
             "model_revision": artifact["revision"], "tokenizer_revision": artifact["revision"],
             "adapter_sha256": artifact["adapter_sha256"],
+            "adapter_bundle_sha256": artifact["manifest_sha256"],
             "served_model_names": [artifact["model"]], "context_tokens": policy.context_tokens,
             "trust_remote_code": False}
 
@@ -55,9 +56,11 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.model.mkdir(mode=0o700)
         self.candidate = CORE_SERVING["candidates"][0]
         previous_pin = self.candidate["adapter_sha256"]
+        previous_bundle = self.candidate["adapter_bundle_sha256"]
         adapter_bytes = b"synthetic serving adapter"
         self.candidate["adapter_sha256"] = hashlib.sha256(adapter_bytes).hexdigest()
         self.addCleanup(self.candidate.update, adapter_sha256=previous_pin)
+        self.addCleanup(self.candidate.update, adapter_bundle_sha256=previous_bundle)
         files = {"config.json": b'{"model_type":"synthetic"}', "tokenizer.json": b'{}',
             "tokenizer_config.json": b'{}',
             "adapter_config.json": b'{"peft_type":"LORA","task_type":"CAUSAL_LM","r":8,"lora_alpha":16}',
@@ -72,6 +75,7 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 "sha256":hashlib.sha256(value).hexdigest()} for name, value in sorted(files.items())]}
         manifest_path = self.root / "manifest.json"
         manifest_bytes = json.dumps(manifest).encode()
+        self.candidate["adapter_bundle_sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
         manifest_path.write_bytes(manifest_bytes)
         manifest_path.chmod(0o600)
         startup = {"schema_version":1, "status":"source_only_serving_blocked", "verification_enabled":True,
@@ -104,6 +108,7 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         identity = await self.controller.identity()
         self.assertEqual(identity["model"], self.candidate["model"])
         self.assertEqual(identity["model_revision"], self.candidate["revision"])
+        self.assertEqual(identity["adapter_bundle_sha256"], self.candidate["adapter_bundle_sha256"])
         self.assertEqual(identity["context_tokens"], 8192)
         self.assertEqual(identity["container_image_digest"], self.policy.container_image_digest)
         self.assertNotIn("artifact_root", identity)
@@ -151,6 +156,27 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_changed_weight_bytes_are_rejected_by_real_startup_verifier(self):
         path = self.model / "model.safetensors"
         path.write_bytes(b"x" * len(path.read_bytes()))
+        with self.assertRaises(runtime.ServingRuntimeError):
+            await self.controller.start()
+        self.factory.assert_not_called()
+
+    async def test_valid_changed_adapter_config_manifest_with_same_weights_rejects_unpinned_bundle(self):
+        config = self.model / "adapter_config.json"
+        config.write_bytes(b'{"peft_type":"LORA","task_type":"CAUSAL_LM","r":8,"lora_alpha":32}')
+        manifest_path = self.root / "manifest.json"
+        manifest = json.loads(manifest_path.read_bytes())
+        entry = next(entry for entry in manifest["files"] if entry["path"] == config.name)
+        entry["bytes"] = len(config.read_bytes())
+        entry["sha256"] = hashlib.sha256(config.read_bytes()).hexdigest()
+        manifest_path.write_bytes(json.dumps(manifest).encode())
+        startup = json.loads(self.policy_path.read_bytes())
+        startup["artifact"]["expected_manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        self.policy_path.write_bytes(json.dumps(startup).encode())
+        self.policy = replace(self.policy, startup_policy_sha256=hashlib.sha256(self.policy_path.read_bytes()).hexdigest())
+        self.controller = runtime.ServingRuntime(self.policy, lambda _: True,
+            lambda: self.policy.container_image_digest)
+        self.assertNotEqual(startup["artifact"]["expected_manifest_sha256"],
+                            self.candidate["adapter_bundle_sha256"])
         with self.assertRaises(runtime.ServingRuntimeError):
             await self.controller.start()
         self.factory.assert_not_called()

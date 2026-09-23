@@ -15,10 +15,13 @@ class AzureKovaIntegrationTests(unittest.TestCase):
     candidate = PINNED_CORE_CANDIDATES["kova-cosmo"]
 
     def setUp(self):
-        self.original_pins = {key: value["adapter_sha256"] for key, value in PINNED_CORE_CANDIDATES.items()}
+        self.original_pins = {key: (value["adapter_sha256"], value["adapter_bundle_sha256"])
+                              for key, value in PINNED_CORE_CANDIDATES.items()}
         for candidate in PINNED_CORE_CANDIDATES.values():
             candidate["adapter_sha256"] = "f" * 64
-        self.addCleanup(lambda: [PINNED_CORE_CANDIDATES[key].update(adapter_sha256=value)
+            candidate["adapter_bundle_sha256"] = "d" * 64
+        self.addCleanup(lambda: [PINNED_CORE_CANDIDATES[key].update(adapter_sha256=value[0],
+                                 adapter_bundle_sha256=value[1])
                                  for key, value in self.original_pins.items()])
         self.closed = 0
         self.captured = []
@@ -44,6 +47,7 @@ class AzureKovaIntegrationTests(unittest.TestCase):
             "source": "server_provider_runtime", "worker_lifecycle_id": "azure-fixture-lifecycle",
             "loaded_model": self.candidate["model"], "loaded_model_revision": self.candidate["model_revision"],
             "loaded_adapter_sha256": self.candidate["adapter_sha256"],
+            "loaded_adapter_bundle_sha256": self.candidate["adapter_bundle_sha256"],
             "cold_start": False, "worker_start_ms": 0, "model_load_ms": 0, "queue_ms": 0,
             "gpu_rate_per_second_usd": 0.001, "gpu_type_id": "fixture-not-real-gpu", "gpu_count": 1,
             "serving_engine": "vllm", "endpoint_type": "load_balancing",

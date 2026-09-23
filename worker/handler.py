@@ -32,6 +32,7 @@ PINNED_CORE_CANDIDATES = {
         "model": candidate["model"],
         "model_revision": candidate["revision"],
         "adapter_sha256": candidate["adapter_sha256"],
+        "adapter_bundle_sha256": candidate["adapter_bundle_sha256"],
     }
     for candidate in CORE_SERVING["candidates"]
 }
@@ -39,7 +40,8 @@ RUNTIME_NUMERIC_FIELDS = (
     "worker_start_ms", "model_load_ms", "queue_ms", "gpu_rate_per_second_usd",
 )
 RUNTIME_IDENTITY_FIELDS = (
-    "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "loaded_adapter_sha256", "cold_start",
+    "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "loaded_adapter_sha256",
+    "loaded_adapter_bundle_sha256", "cold_start",
     "worker_start_ms", "model_load_ms", "queue_ms", "gpu_rate_per_second_usd", "gpu_type_id",
     "gpu_count", "serving_engine", "endpoint_type", "container_image_digest",
 )
@@ -171,6 +173,12 @@ def _validate_runtime_value(value, selected_candidate):
              "trained adapter digest is not pinned for this candidate")
     _require(value.get("loaded_adapter_sha256") == pinned_adapter,
              "runtime loaded adapter does not match pinned trained adapter")
+    pinned_bundle = selected_candidate["adapter_bundle_sha256"]
+    _require(isinstance(pinned_bundle, str) and len(pinned_bundle) == 64
+             and all(character in "0123456789abcdef" for character in pinned_bundle),
+             "trained adapter bundle digest is not pinned for this candidate")
+    _require(value.get("loaded_adapter_bundle_sha256") == pinned_bundle,
+             "runtime loaded adapter bundle does not match pinned manifest")
     for field in RUNTIME_NUMERIC_FIELDS:
         number = value.get(field)
         _require(isinstance(number, (int, float)) and not isinstance(number, bool), f"invalid {field}")
@@ -493,6 +501,7 @@ def _attempt_record(value, execution, attempt_id, outcome, elapsed_ms, first_tok
         "model": runtime["loaded_model"],
         "model_revision": runtime["loaded_model_revision"],
         "adapter_sha256": runtime["loaded_adapter_sha256"],
+        "adapter_bundle_sha256": runtime["loaded_adapter_bundle_sha256"],
         "route_id": execution["route_id"],
         "stage_id": execution["stage_id"],
         "public_response": execution["public_response"],
@@ -526,7 +535,8 @@ def emit_lifecycle_close(
     selected_candidate = _selected_candidate(benchmark_candidate_id)
     value = runtime_close_probe()
     required = {
-        "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "loaded_adapter_sha256", "billed_lifecycle_ms",
+        "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "loaded_adapter_sha256",
+        "loaded_adapter_bundle_sha256", "billed_lifecycle_ms",
         "attributed_idle_timeout_ms", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count",
         "serving_engine", "endpoint_type", "container_image_digest",
     }
@@ -534,6 +544,7 @@ def emit_lifecycle_close(
     identity_probe = {
         **{field: value[field] for field in (
             "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "loaded_adapter_sha256",
+            "loaded_adapter_bundle_sha256",
             "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count", "serving_engine",
             "endpoint_type", "container_image_digest",
         )},
@@ -559,6 +570,7 @@ def emit_lifecycle_close(
         "model": validated["loaded_model"],
         "model_revision": validated["loaded_model_revision"],
         "adapter_sha256": validated["loaded_adapter_sha256"],
+        "adapter_bundle_sha256": validated["loaded_adapter_bundle_sha256"],
         "billed_lifecycle_ms": billed_ms,
         "attributed_idle_timeout_ms": idle_ms,
         "gpu_rate_per_second_usd": validated["gpu_rate_per_second_usd"],

@@ -194,7 +194,7 @@ class ExecutionSpec:
             require(value["schema_version"] == 1, "unsupported execution snapshot")
             ExecutionLimits(**value["limits"])
             identity = value["runtime_identity"]
-            require(set(identity) == {"model", "model_revision", "adapter_sha256", "context_tokens"},
+            require(set(identity) == {"model", "model_revision", "adapter_sha256", "adapter_bundle_sha256", "context_tokens"},
                     "invalid execution runtime identity")
             require(isinstance(identity["model"], str) and identity["model"].strip(), "missing model")
             require(isinstance(identity["model_revision"], str)
@@ -202,6 +202,9 @@ class ExecutionSpec:
             require(isinstance(identity["adapter_sha256"], str)
                     and re.fullmatch(r"[a-f0-9]{64}", identity["adapter_sha256"]),
                     "unpinned trained adapter")
+            require(isinstance(identity["adapter_bundle_sha256"], str)
+                    and re.fullmatch(r"[a-f0-9]{64}", identity["adapter_bundle_sha256"]),
+                    "unpinned adapter bundle")
             positive_integer(identity["context_tokens"], "context tokens")
             plan = value["plan"]
             require(plan["route_id"] in ALL_ROUTES, "invalid execution route")
@@ -271,6 +274,9 @@ class ExecutionSpec:
                     and c["revision"] == runtime_identity.get("model_revision")]
         require(len(admitted) == 1 and runtime_identity.get("adapter_sha256") == admitted[0]["adapter_sha256"]
                 and isinstance(admitted[0]["adapter_sha256"], str), "adapter differs from current candidate pin")
+        require(runtime_identity.get("adapter_bundle_sha256") == admitted[0]["adapter_bundle_sha256"]
+                and isinstance(admitted[0]["adapter_bundle_sha256"], str),
+                "adapter bundle differs from current candidate pin")
         operations = plan.get("operations", [])
         ids = [op.get("stage_id", op.get("id")) for op in operations]
         require(set(stage_cost_caps) == set(ids), "every stage requires an explicit server cost cap")

@@ -35,8 +35,11 @@ class RunPodVllmAdapterTests(unittest.TestCase):
 
     def setUp(self):
         self.original_pin = self.candidate["adapter_sha256"]
+        self.original_bundle = self.candidate["adapter_bundle_sha256"]
         self.candidate["adapter_sha256"] = "f" * 64
+        self.candidate["adapter_bundle_sha256"] = "d" * 64
         self.addCleanup(self.candidate.update, adapter_sha256=self.original_pin)
+        self.addCleanup(self.candidate.update, adapter_bundle_sha256=self.original_bundle)
 
     def engine_request(self, **overrides):
         value = {
@@ -56,6 +59,7 @@ class RunPodVllmAdapterTests(unittest.TestCase):
             "loaded_model": self.candidate["model"],
             "loaded_model_revision": self.candidate["model_revision"],
             "loaded_adapter_sha256": self.candidate["adapter_sha256"],
+            "loaded_adapter_bundle_sha256": self.candidate["adapter_bundle_sha256"],
             "cold_start": False,
             "worker_start_ms": 0,
             "model_load_ms": 0,

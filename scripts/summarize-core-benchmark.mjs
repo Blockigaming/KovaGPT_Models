@@ -16,7 +16,7 @@ const candidates = new Map(serving.candidates.map((candidate) => [candidate.mode
 const outcomes = new Set(["success", "failed", "quarantined"]);
 const recordTypes = new Set(["attempt", "lifecycle_close"]);
 const commonRequired = [
-  "record_type", "worker_lifecycle_id", "model", "model_revision", "adapter_sha256", "gpu_type_id",
+  "record_type", "worker_lifecycle_id", "model", "model_revision", "adapter_sha256", "adapter_bundle_sha256", "gpu_type_id",
   "gpu_count", "serving_engine", "endpoint_type", "container_image_digest",
   "gpu_rate_per_second_usd", "measurement_source",
 ];
@@ -54,6 +54,7 @@ for (const route of current.routes) {
 export const coreConfigurationKey = (record) => [
   `${record.model}@${record.model_revision}`,
   record.adapter_sha256,
+  record.adapter_bundle_sha256,
   `${record.gpu_type_id}x${record.gpu_count}`,
   record.serving_engine,
   record.endpoint_type,
@@ -64,6 +65,7 @@ const configurationFrom = (record, candidateCatalog) => ({
   model: record.model,
   model_revision: record.model_revision,
   adapter_sha256: record.adapter_sha256,
+  adapter_bundle_sha256: record.adapter_bundle_sha256,
   quantization: candidateCatalog.get(record.model).quantization,
   gpu_type_id: record.gpu_type_id,
   gpu_count: record.gpu_count,
@@ -152,6 +154,8 @@ export function summarizeCoreBenchmark(records, candidateCatalog = candidates) {
     if (!candidate || candidate.revision !== record.model_revision) throw new Error(`record ${index} unverified model revision`);
     if (!/^[a-f0-9]{64}$/u.test(record.adapter_sha256)
         || record.adapter_sha256 !== candidate.adapter_sha256) throw new Error(`record ${index} unverified adapter digest`);
+    if (!/^[a-f0-9]{64}$/u.test(record.adapter_bundle_sha256)
+        || record.adapter_bundle_sha256 !== candidate.adapter_bundle_sha256) throw new Error(`record ${index} unverified adapter bundle digest`);
     if (!Number.isInteger(record.gpu_count) || record.gpu_count < 1 || record.gpu_count > 8) {
       throw new Error(`record ${index} invalid gpu_count`);
     }

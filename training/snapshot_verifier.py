@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import stat
 
-from training.three_family_contract import load_json
+from training import three_family_contract as contract
 
 MANIFESTS = {
     "kova-cosmo": "qwen3-0.6b-download-manifest.v1.json",
@@ -53,7 +53,8 @@ def verify_snapshot(snapshot: Path, manifest: dict) -> dict:
 
 
 def _manifest(family: str) -> dict:
-    return load_json(Path(__file__).parents[1] / "config" / MANIFESTS[family])
+    lineage = contract.load_json(contract.ROOT / "config/kova-private-lineage.v1.json")
+    return contract._pinned_manifest(family, lineage["families"][family])
 
 
 def main(argv=None) -> int:

@@ -15,24 +15,28 @@ from release.model_revisions import source_reference_for_route
 
 
 SYNTHETIC_ADAPTER_SHA256 = "f" * 64
+SYNTHETIC_ADAPTER_BUNDLE_SHA256 = "d" * 64
 # Bind synthetic pins for each test, restoring both registries on cleanup.
 class SyntheticAdapterTestCase(unittest.TestCase):
     def setUp(self):
         super().setUp()
-        previous = [(candidate, candidate["adapter_sha256"])
+        previous = [(candidate, candidate["adapter_sha256"], candidate["adapter_bundle_sha256"])
                     for candidate in CORE_SERVING["candidates"]]
-        pinned = [(candidate, candidate["adapter_sha256"])
+        pinned = [(candidate, candidate["adapter_sha256"], candidate["adapter_bundle_sha256"])
                   for candidate in PINNED_CORE_CANDIDATES.values()]
         def restore():
-            for candidate, digest in previous + pinned:
+            for candidate, digest, bundle in previous + pinned:
                 candidate["adapter_sha256"] = digest
+                candidate["adapter_bundle_sha256"] = bundle
         self.addCleanup(restore)
-        for candidate, _ in previous + pinned:
+        for candidate, _, _ in previous + pinned:
             candidate["adapter_sha256"] = SYNTHETIC_ADAPTER_SHA256
+            candidate["adapter_bundle_sha256"] = SYNTHETIC_ADAPTER_BUNDLE_SHA256
 
 CANDIDATE = CORE_SERVING["candidates"][0]
 IDENTITY = {"model": CANDIDATE["model"], "model_revision": CANDIDATE["revision"],
-            "context_tokens": CANDIDATE["context_tokens"], "adapter_sha256": SYNTHETIC_ADAPTER_SHA256}
+            "context_tokens": CANDIDATE["context_tokens"], "adapter_sha256": SYNTHETIC_ADAPTER_SHA256,
+            "adapter_bundle_sha256": SYNTHETIC_ADAPTER_BUNDLE_SHA256}
 OWNER = "fixture-owner"
 
 
@@ -100,6 +104,7 @@ class ModelFixture:
             "loaded_model": self.active_identity["model"],
             "loaded_model_revision": self.active_identity["model_revision"],
             "loaded_adapter_sha256": self.active_identity["adapter_sha256"],
+            "loaded_adapter_bundle_sha256": self.active_identity["adapter_bundle_sha256"],
             "cold_start": False, "worker_start_ms": 0, "model_load_ms": 0, "queue_ms": 0,
             "gpu_rate_per_second_usd": 0.001, "gpu_type_id": "fixture-no-real-gpu", "gpu_count": 1,
             "serving_engine": "vllm", "endpoint_type": "load_balancing",
