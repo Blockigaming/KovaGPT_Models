@@ -83,7 +83,8 @@ def policy_digest():
              "worker/model_artifact.py", "worker/model_startup.py",
              "worker/serving_runtime.py", "execution/contracts.py",
              "scripts/summarize-core-benchmark.mjs",
-             "evaluation/three_family_guard.py", "config/evaluation-gates.v1.json",
+             "evaluation/three_family_guard.py", "config/inference-contract.v1.json",
+             "config/evaluation-gates.v1.json",
              "evaluations/offline-suite.v1.json")
     return digest({path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in paths})
 

@@ -51,6 +51,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
             "expected_base_revision": "e" * 40,
             "expected_base_manifest_sha256": digest,
             "expected_adapter_sha256": "b" * 64,
+            "expected_adapter_bundle_sha256": "f" * 64,
             "expected_runner_sha256": "c" * 64,
             "expected_case_id": "case-1",
             "expected_variant": "trained_adapter",
@@ -62,7 +63,8 @@ class ThreeFamilyContractTests(unittest.TestCase):
         evidence = guard.create_evidence(
             source_commit=bindings["expected_source_commit"], family="kova-cosmo",
             base_revision=bindings["expected_base_revision"], base_manifest_sha256=digest,
-            adapter_sha256="b" * 64, runner_sha256="c" * 64, case_id="case-1",
+            adapter_sha256="b" * 64, adapter_bundle_sha256="f" * 64,
+            runner_sha256="c" * 64, case_id="case-1",
             prompt="Who are you?", answer="I am Kova.", runtime_profile="high",
             conversation_id="conversation-1", session_id="session-1",
             dimensions=["kova_identity_consistency"], private_key=private_key,
@@ -75,6 +77,9 @@ class ThreeFamilyContractTests(unittest.TestCase):
             self.assertEqual(verified["answer"], "I am Kova.")
             with self.assertRaisesRegex(ValueError, "evidence_binding_mismatch:session_id"):
                 guard.verify_evidence(evidence, **{**bindings, "expected_session_id": "session-2"})
+            with self.assertRaisesRegex(ValueError, "evidence_binding_mismatch:adapter_bundle_sha256"):
+                guard.verify_evidence(
+                    evidence, **{**bindings, "expected_adapter_bundle_sha256": "9" * 64})
             tampered = copy.deepcopy(evidence)
             tampered["payload"]["answer"] = "altered"
             tampered["payload"]["answer_sha256"] = hashlib.sha256(b"altered").hexdigest()
@@ -86,6 +91,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
         kwargs = {
             "source_commit": "d" * 40, "family": "kova-cosmo", "base_revision": "e" * 40,
             "base_manifest_sha256": "a" * 64, "adapter_sha256": "b" * 64,
+            "adapter_bundle_sha256": "f" * 64,
             "runner_sha256": "c" * 64, "case_id": "case-1", "prompt": "p", "answer": "a",
             "runtime_profile": "light", "conversation_id": "conversation-1",
             "session_id": "session-1", "private_key": private_key,
@@ -124,11 +130,25 @@ class ThreeFamilyContractTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 guard.validate_verified_dimension_coverage(changed)
 
+    def test_evaluation_declaration_requires_bundle_binding(self):
+        original_load = contract.load_json
+
+        def without_bundle_binding(path, *args, **kwargs):
+            value = original_load(path, *args, **kwargs)
+            if path.name == "kova-three-family-evaluation.v1.json":
+                value["answer_binding"]["binds"].remove("adapter_bundle_sha256")
+            return value
+
+        with patch.object(contract, "load_json", side_effect=without_bundle_binding), \
+             self.assertRaisesRegex(ValueError, "evaluation signature binding declaration drift"):
+            contract.validate_compatibility_evaluation_profiles()
+
     def test_unconfigured_runner_key_fails_closed(self):
         private_key = Ed25519PrivateKey.generate()
         evidence = guard.create_evidence(
             source_commit="d" * 40, family="kova-cosmo", base_revision="e" * 40,
             base_manifest_sha256="a" * 64, adapter_sha256="b" * 64,
+            adapter_bundle_sha256="f" * 64,
             runner_sha256="c" * 64, case_id="case-1", prompt="p", answer="a",
             runtime_profile="light", conversation_id="conversation-1", session_id="session-1",
             dimensions=["kova_identity_consistency"], private_key=private_key,
@@ -139,19 +159,62 @@ class ThreeFamilyContractTests(unittest.TestCase):
             guard.verify_evidence(
                 evidence, expected_source_commit="d" * 40, expected_family="kova-cosmo",
                 expected_base_revision="e" * 40, expected_base_manifest_sha256="a" * 64,
-                expected_adapter_sha256="b" * 64, expected_runner_sha256="c" * 64,
+                expected_adapter_sha256="b" * 64,
+                expected_adapter_bundle_sha256="f" * 64,
+                expected_runner_sha256="c" * 64,
                 expected_case_id="case-1", expected_runtime_profile="light",
                 expected_variant="trained_adapter", expected_case_category="generated_answer",
                 expected_conversation_id="conversation-1", expected_session_id="session-1",
             )
 
+    def test_public_evaluation_requires_source_pinned_full_adapter_bundles(self):
+        families = {
+            family: {"variant_adapters": {"configured_base": None,
+                                         "trained_adapter": "b" * 64},
+                     "variant_adapter_bundles": {"configured_base": None,
+                                                 "trained_adapter": "f" * 64}}
+            for family in guard.FAMILIES
+        }
+        with patch.object(guard, "_trusted_reviewed_case_bindings", return_value={}):
+            with self.assertRaisesRegex(ValueError, "trusted_adapter_bundle_not_pinned"):
+                guard.validate_evidence_matrix(
+                    [], source_commit="d" * 40, family_bindings=families,
+                    case_bindings={}, review_verdicts={})
+            registry = deepcopy(guard.CORE_SERVING)
+            for candidate in registry["candidates"]:
+                candidate["adapter_sha256"] = "b" * 64
+                candidate["adapter_bundle_sha256"] = "f" * 64
+            with patch.object(guard, "CORE_SERVING", registry):
+                guard._require_trusted_family_adapter_bindings(families)
+                changed_bundle = deepcopy(families)
+                changed_bundle["kova-cosmo"]["variant_adapter_bundles"]["trained_adapter"] = "9" * 64
+                with self.assertRaisesRegex(ValueError, "untrusted_variant_artifact_binding"):
+                    guard.validate_evidence_matrix(
+                        [], source_commit="d" * 40, family_bindings=changed_bundle,
+                        case_bindings={}, review_verdicts={})
+                changed_weights = deepcopy(families)
+                changed_weights["kova-cosmo"]["variant_adapters"]["trained_adapter"] = "9" * 64
+                with self.assertRaisesRegex(ValueError, "untrusted_variant_artifact_binding"):
+                    guard.validate_evidence_matrix(
+                        [], source_commit="d" * 40, family_bindings=changed_weights,
+                        case_bindings={}, review_verdicts={})
+
     def test_signed_evaluation_matrix_rejects_missing_replayed_and_substituted_cases(self):
         private_key = Ed25519PrivateKey.generate()
         trusted_public = base64.b64encode(private_key.public_key().public_bytes_raw()).decode("ascii")
+        def bundle_digest(adapter_config: bytes) -> str:
+            inventory = {"adapter_config.json": hashlib.sha256(adapter_config).hexdigest(),
+                         "adapter_model.safetensors": "b" * 64}
+            return hashlib.sha256(guard._canonical(inventory)).hexdigest()
+        adapter_bundle_sha256 = bundle_digest(b'{"r":16}')
+        changed_adapter_bundle_sha256 = bundle_digest(b'{"r":32}')
+        self.assertNotEqual(adapter_bundle_sha256, changed_adapter_bundle_sha256)
         families = {
             family: {"base_revision": "e" * 40, "base_manifest_sha256": "a" * 64,
                      "variant_adapters": {"configured_base": None,
                                           "trained_adapter": "b" * 64},
+                     "variant_adapter_bundles": {"configured_base": None,
+                                                 "trained_adapter": adapter_bundle_sha256},
                      "runner_sha256": "c" * 64}
             for family in guard.FAMILIES
         }
@@ -175,6 +238,8 @@ class ThreeFamilyContractTests(unittest.TestCase):
                             source_commit="d" * 40, family=family,
                             base_revision="e" * 40, base_manifest_sha256="a" * 64,
                             adapter_sha256=None if variant == "configured_base" else "b" * 64,
+                            adapter_bundle_sha256=(None if variant == "configured_base"
+                                                   else adapter_bundle_sha256),
                             runner_sha256="c" * 64,
                             variant=variant, case_category=category, case_id=case_id,
                             prompt=prompt, answer="I am Kova.", runtime_profile=profile,
@@ -189,6 +254,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
             expected_dimensions = case_pins[payload["case_id"]]["expected_dimensions"]
             review = {"case_id": payload["case_id"], "source_commit": "d" * 40,
                       "reviewed_case_manifest_sha256": "f" * 64,
+                      "adapter_bundle_sha256": payload["adapter_bundle_sha256"],
                       "prompt_sha256": payload["prompt_sha256"],
                       "answer_sha256": payload["answer_sha256"],
                       "expected_dimensions": expected_dimensions,
@@ -256,6 +322,34 @@ class ThreeFamilyContractTests(unittest.TestCase):
             self.assertEqual(set(validate_synthetic_matrix(
                 envelopes, source_commit="d" * 40, family_bindings=families,
                 case_bindings=case_pins, **review_args)), guard.REQUIRED_DIMENSIONS)
+            missing_bundle_pin = deepcopy(families)
+            del missing_bundle_pin["kova-cosmo"]["variant_adapter_bundles"]
+            with self.assertRaisesRegex(ValueError, "invalid_variant_artifact_binding"):
+                validate_synthetic_matrix(
+                    envelopes, source_commit="d" * 40,
+                    family_bindings=missing_bundle_pin, case_bindings=case_pins,
+                    **review_args)
+            changed_family = deepcopy(families)
+            changed_family["kova-cosmo"]["variant_adapter_bundles"]["trained_adapter"] = (
+                changed_adapter_bundle_sha256)
+            with self.assertRaisesRegex(ValueError, "evidence_binding_mismatch:adapter_bundle_sha256"):
+                validate_synthetic_matrix(
+                    envelopes, source_commit="d" * 40,
+                    family_bindings=changed_family, case_bindings=case_pins,
+                    **review_args)
+            changed_evidence = deepcopy(envelopes)
+            for envelope in changed_evidence:
+                payload = envelope["payload"]
+                if payload["family"] == "kova-cosmo" and payload["variant"] == "trained_adapter":
+                    self.assertEqual(payload["adapter_sha256"], "b" * 64)
+                    payload["adapter_bundle_sha256"] = changed_adapter_bundle_sha256
+                    envelope["signature_ed25519_b64"] = base64.b64encode(
+                        private_key.sign(guard._canonical(payload))).decode("ascii")
+            with self.assertRaisesRegex(ValueError, "failed_or_unbound_independent_review"):
+                validate_synthetic_matrix(
+                    changed_evidence, source_commit="d" * 40,
+                    family_bindings=changed_family, case_bindings=case_pins,
+                    **review_args)
             mislabeled = deepcopy(envelopes)
             claimed = mislabeled[0]["payload"]
             self.assertIn(":generated_answer:", claimed["case_id"])

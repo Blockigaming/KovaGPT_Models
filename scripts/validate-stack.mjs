@@ -5,7 +5,7 @@ const load = async (name) => JSON.parse(await readFile(new URL(`../config/${name
 const [
   candidate, stack, runpod, catalog, economics, currentIdentity, archivedIdentity, inference, hardware, surface,
   activity, completion, evaluations, nova, cosmo, architecture, routes, ultraPlan,
-  coreServing, coreContainer,
+  coreServing, coreContainer, currentPolicy,
 ] = await Promise.all([
   "candidate.v1.json", "training-stack.v1.json", "runpod-serverless.v1.json",
   "model-catalog.v1.json", "economics.v1.json", "kova-three-family-dataset.v2.json", "identity.v1.json",
@@ -13,7 +13,7 @@ const [
   "activity-event.v1.json", "completion-target.v1.json", "evaluation-gates.v1.json",
   "nova-candidate.v1.json", "cosmo-candidate.v1.json", "provider-architecture.v1.json",
   "route-policy.v1.json", "ultra-orchestration.v1.json",
-  "core-serving.v1.json", "core-container.v1.json",
+  "core-serving.v1.json", "core-container.v1.json", "current-product-policy.v3.json",
 ].map(load));
 
 if (candidate.base_model !== "Qwen/Qwen3.8-27B" || !/^[a-f0-9]{40}$/u.test(candidate.base_revision)) {
@@ -303,11 +303,25 @@ if (
   coreContainer.weights.immutable_cached_artifact_present !== false ||
   coreContainer.weights.cache_warmth_verified !== false
 ) throw new Error("core_container_weights_must_stay_uncached_and_selection_blocked");
+const ultraMinimumEntitlements = ultraPlan.minimum_entitlement_by_surface;
+const ultraFamiliesByPolicy = (surface, tier) =>
+  Object.entries(currentPolicy.entitlements[surface][tier])
+    .filter(([, levels]) => levels.includes("ultra"))
+    .map(([family]) => family).sort().join(",");
 if (
   ultraPlan.status !== "source_only" || ultraPlan.engine !== "kova-ultra" ||
   ultraPlan.provider !== "runpod_serverless" || ultraPlan.worker_type !== "flex" ||
   ultraPlan.endpoint_name_reserved !== "kova-ultra" || ultraPlan.endpoint_deployed !== false ||
-  ultraPlan.active_workers !== 0 || ultraPlan.required_entitlement !== "pro" ||
+  ultraPlan.active_workers !== 0 || Object.hasOwn(ultraPlan, "required_entitlement") ||
+  !ultraMinimumEntitlements ||
+  Object.keys(ultraMinimumEntitlements).sort().join(",") !== "chat,work" ||
+  ultraMinimumEntitlements.chat !== "pro" || ultraMinimumEntitlements.work !== "plus" ||
+  ultraFamiliesByPolicy("chat", "free") !== "" ||
+  ultraFamiliesByPolicy("chat", "plus") !== "" ||
+  ultraFamiliesByPolicy("chat", "pro") !== "cosmo,orion" ||
+  ultraFamiliesByPolicy("work", "free") !== "" ||
+  ultraFamiliesByPolicy("work", "plus") !== "cosmo,nova,orion" ||
+  ultraFamiliesByPolicy("work", "pro") !== "cosmo,nova,orion" ||
   ultraPlan.minimum_specialists !== 2 || ultraPlan.maximum_specialists !== 5 ||
   ultraPlan.maximum_debate_rounds !== 1 || ultraPlan.selected_model !== null ||
   ultraPlan.required_stages.join(",") !== "specialists,disagreement_check,judge,conditional_debate,synthesis" ||
@@ -390,9 +404,44 @@ if (activity.rules.must_follow_real_runtime_or_tool_event !== true || activity.r
   throw new Error("activity_must_be_truthfully_grounded");
 }
 if (!activity.required_fields.includes("grounding_operation_id")) throw new Error("activity_runtime_grounding_id_required");
-if (completion.baseline_percent !== 0 || completion.current_verified_percent !== 22 || completion.live_model_routes !== 0 || completion.target_model_routes !== 37) {
+const canonicalProductRoutes = 1 + ["chat", "work"].reduce((count, surfaceName) =>
+  count + Object.values(currentPolicy.entitlements[surfaceName].pro).reduce(
+    (surfaceCount, levels) => surfaceCount + levels.length, 0,
+  ), 0,
+);
+if (
+  completion.baseline_percent !== 0 || completion.current_verified_percent !== 22 ||
+  completion.live_model_routes !== 0 || canonicalProductRoutes !== 31 ||
+  completion.target_canonical_product_routes !== canonicalProductRoutes ||
+  completion.target_route_contracts_including_compatibility_aliases !== 37 ||
+  Object.hasOwn(completion, "target_model_routes")
+) {
   throw new Error("completion_progress_contract_mismatch");
 }
+const trainedFamilyWeightsCriterion = "cosmo_orion_and_nova_each_have_distinct_pinned_base_weights_and_distinct_verified_trained_adapters";
+if (
+  !Array.isArray(completion.definition_of_100_percent) ||
+  completion.definition_of_100_percent.filter((criterion) => criterion === trainedFamilyWeightsCriterion).length !== 1 ||
+  completion.definition_of_100_percent.includes("cosmo_orion_and_nova_are_truthfully_described_as_compute_profiles_not_separate_foundation_weights")
+) throw new Error("completion_family_weight_contract_mismatch");
+const completionClaims = [
+  ["definition_of_100_percent", "non_ultra_routes_select_family_pinned_trained_models_on_core_runtime",
+    "auto_through_max_use_one_benchmark_selected_kova_core_engine"],
+  ["definition_of_100_percent", "selected_inference_runtime_scales_to_zero_without_active_workers",
+    "runpod_flex_scales_to_zero_without_active_workers"],
+  ["definition_of_100_percent", "selected_inference_runtime_billing_and_cost_are_verified_against_measured_usage",
+    "runpod_core_and_ultra_billing_tradeoffs_are_accepted_after_benchmarking"],
+  ["definition_of_100_percent", "azure_gpu_inference_migration_is_verified_before_production_cutover", null],
+  ["current_evidence", "verified_cosmo_qwen3_0_6b_upstream_checkpoint_is_pinned",
+    "verified_cosmo_fp8_upstream_checkpoint_is_pinned"],
+  ["current_evidence", "ultra_chat_requires_pro_and_ultra_work_requires_plus_or_pro_with_remaining_budget",
+    "ultra_direct_requests_require_pro_authorization_and_remaining_budget"],
+];
+if (completionClaims.some(([section, current, stale]) =>
+  !Array.isArray(completion[section]) ||
+  completion[section].filter((claim) => claim === current).length !== 1 ||
+  (stale !== null && completion[section].includes(stale))
+)) throw new Error("completion_current_policy_mismatch");
 if (
   evaluations.status !== "all_routes_blocked" || evaluations.target_routes !== 37 ||
   evaluations.passing_routes.length !== 0 ||

@@ -310,6 +310,12 @@ def validate_compatibility_evaluation_profiles():
     need(evaluation["required_attempts_per_family"] == 40)
     need(len(evaluation["required_dimensions"]) == 12)
     need(evaluation["answer_binding"]["algorithm"] == "Ed25519")
+    declared_bindings = evaluation["answer_binding"]["binds"]
+    need(type(declared_bindings) is list and tuple(declared_bindings) == (
+        "source_commit", "family", "base_revision", "adapter_sha256",
+        "adapter_bundle_sha256", "case_id", "prompt_sha256", "answer_sha256",
+        "runtime_profile", "conversation_id", "session_id",
+    ), "evaluation signature binding declaration drift")
     profiles = load_json(ROOT / "config/kova-runtime-profiles.v1.json")
     need(tuple(profiles["profiles"]) == LEVELS)
     need(profiles["separately_trained_models"] is False)

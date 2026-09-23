@@ -7,7 +7,7 @@
   "endpoint_deployed": false,
   "worker_type": "flex",
   "active_workers": 0,
-  "required_entitlement": "pro",
+  "minimum_entitlement_by_surface": {"chat": "pro", "work": "plus"},
   "minimum_specialists": 2,
   "maximum_specialists": 5,
   "maximum_debate_rounds": 1,

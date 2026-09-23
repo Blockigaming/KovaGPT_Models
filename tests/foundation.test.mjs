@@ -33,6 +33,100 @@ test("stack validation rejects a changed approved identity prompt", (t) => {
   assert.match(result.stderr, /truthful_kova_identity_required/u);
 });
 
+test("Ultra entitlement contract tracks Chat Pro and Work Plus without admitting Work Free", (t) => {
+  const output = mkdtempSync(join(tmpdir(), "kova-ultra-entitlement-"));
+  t.after(() => rmSync(output, { recursive: true, force: true }));
+  mkdirSync(join(output, "scripts"));
+  mkdirSync(join(output, "prompts"));
+  cpSync(join(root, "config"), join(output, "config"), { recursive: true });
+  copyFileSync(join(root, "scripts/validate-stack.mjs"), join(output, "scripts/validate-stack.mjs"));
+  copyFileSync(join(root, "prompts/kova-identity.v3.txt"), join(output, "prompts/kova-identity.v3.txt"));
+  const runValidation = () => spawnSync(process.execPath, [join(output, "scripts/validate-stack.mjs")], {
+    encoding: "utf8",
+  });
+  assert.equal(runValidation().status, 0);
+
+  const ultraPath = join(output, "config/ultra-orchestration.v1.json");
+  const ultra = JSON.parse(readFileSync(ultraPath, "utf8"));
+  writeFileSync(ultraPath, JSON.stringify({
+    ...ultra, minimum_entitlement_by_surface: { chat: "pro", work: "pro" },
+  }));
+  let result = runValidation();
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /ultra_orchestration_must_be_bounded_and_blocked/u);
+
+  writeFileSync(ultraPath, JSON.stringify(ultra));
+  const policyPath = join(output, "config/current-product-policy.v3.json");
+  const policy = JSON.parse(readFileSync(policyPath, "utf8"));
+  policy.entitlements.work.free.cosmo.push("ultra");
+  writeFileSync(policyPath, JSON.stringify(policy));
+  result = runValidation();
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /ultra_orchestration_must_be_bounded_and_blocked/u);
+});
+
+test("stack validation rejects obsolete completion target claims", (t) => {
+  const output = mkdtempSync(join(tmpdir(), "kova-completion-validation-"));
+  t.after(() => rmSync(output, { recursive: true, force: true }));
+  mkdirSync(join(output, "scripts"));
+  mkdirSync(join(output, "prompts"));
+  cpSync(join(root, "config"), join(output, "config"), { recursive: true });
+  copyFileSync(join(root, "scripts/validate-stack.mjs"), join(output, "scripts/validate-stack.mjs"));
+  copyFileSync(join(root, "prompts/kova-identity.v3.txt"), join(output, "prompts/kova-identity.v3.txt"));
+  const runValidation = () => spawnSync(process.execPath, [join(output, "scripts/validate-stack.mjs")], {
+    encoding: "utf8",
+  });
+  assert.equal(runValidation().status, 0);
+
+  const path = join(output, "config/completion-target.v1.json");
+  const completion = JSON.parse(readFileSync(path, "utf8"));
+  const baseline = structuredClone(completion);
+  const newCriterion = "cosmo_orion_and_nova_each_have_distinct_pinned_base_weights_and_distinct_verified_trained_adapters";
+  const oldCriterion = "cosmo_orion_and_nova_are_truthfully_described_as_compute_profiles_not_separate_foundation_weights";
+  assert.ok(completion.definition_of_100_percent.includes(newCriterion));
+  completion.definition_of_100_percent = completion.definition_of_100_percent.map((criterion) =>
+    criterion === newCriterion ? oldCriterion : criterion
+  );
+  writeFileSync(path, JSON.stringify(completion));
+  const result = runValidation();
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /completion_family_weight_contract_mismatch/u);
+
+  const staleClaims = [
+    ["definition_of_100_percent", "auto_through_max_use_one_benchmark_selected_kova_core_engine"],
+    ["definition_of_100_percent", "runpod_flex_scales_to_zero_without_active_workers"],
+    ["definition_of_100_percent", "runpod_core_and_ultra_billing_tradeoffs_are_accepted_after_benchmarking"],
+    ["current_evidence", "verified_cosmo_fp8_upstream_checkpoint_is_pinned"],
+    ["current_evidence", "ultra_direct_requests_require_pro_authorization_and_remaining_budget"],
+  ];
+  for (const [section, staleClaim] of staleClaims) {
+    const changed = structuredClone(baseline);
+    changed[section].push(staleClaim);
+    writeFileSync(path, JSON.stringify(changed));
+    const staleResult = runValidation();
+    assert.equal(staleResult.status, 1, `${staleClaim}: ${staleResult.stderr}`);
+    assert.match(staleResult.stderr, /completion_current_policy_mismatch/u, staleClaim);
+  }
+
+  const missingMigration = structuredClone(baseline);
+  missingMigration.definition_of_100_percent = missingMigration.definition_of_100_percent.filter((claim) =>
+    claim !== "azure_gpu_inference_migration_is_verified_before_production_cutover"
+  );
+  writeFileSync(path, JSON.stringify(missingMigration));
+  const migrationResult = runValidation();
+  assert.equal(migrationResult.status, 1, migrationResult.stderr);
+  assert.match(migrationResult.stderr, /completion_current_policy_mismatch/u);
+
+  const legacyRouteCount = structuredClone(baseline);
+  delete legacyRouteCount.target_canonical_product_routes;
+  delete legacyRouteCount.target_route_contracts_including_compatibility_aliases;
+  legacyRouteCount.target_model_routes = 37;
+  writeFileSync(path, JSON.stringify(legacyRouteCount));
+  const countResult = runValidation();
+  assert.equal(countResult.status, 1, countResult.stderr);
+  assert.match(countResult.stderr, /completion_progress_contract_mismatch/u);
+});
+
 test("dataset compiler creates hashed isolated splits", () => {
   const output = mkdtempSync(join(tmpdir(), "kova-data-"));
   const result = spawnSync(

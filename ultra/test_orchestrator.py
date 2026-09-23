@@ -147,10 +147,13 @@ class UltraPlannerTests(unittest.TestCase):
     def test_plus_work_ultra_is_admitted_and_preserves_distinct_family_behavior(self):
         plans = []
         for family in ("cosmo", "orion", "nova"):
-            plans.append(self.build({
+            request = {
                 "request_id": family, "task": "Create a project report.",
                 "surface": "work", "family": family, "effort": "Ultra",
-            }, entitlement="plus"))
+            }
+            plans.append(self.build(request, entitlement="plus"))
+            with self.assertRaisesRegex(ValueError, "Work Ultra requires Plus or Pro"):
+                self.build(request, entitlement="free")
         self.assertEqual(len({plan["behavior_contract_id"] for plan in plans}), 3)
 
     def test_trusted_token_counter_is_required(self):

@@ -97,7 +97,7 @@ class RolloutTests(unittest.TestCase):
                          "worker/serving_runtime.py", "execution/contracts.py",
                          "scripts/summarize-core-benchmark.mjs", "ultra/binding.py",
                          "execution/workers.py", "execution/source_context.py",
-                         "evaluation/three_family_guard.py"):
+                         "evaluation/three_family_guard.py", "config/inference-contract.v1.json"):
             def changed(path):
                 data = original(path)
                 return data + b"\n# changed" if str(path).endswith(relative) else data

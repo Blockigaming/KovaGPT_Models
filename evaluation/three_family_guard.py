@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+from core.current_candidates import CORE_SERVING
 
 ROOT = Path(__file__).resolve().parents[1]
 FAMILIES = {"kova-cosmo", "kova-orion", "kova-nova"}
@@ -229,10 +230,38 @@ def validate_evidence_matrix(envelopes: list[dict], *, source_commit: str,
     trusted_cases = _trusted_reviewed_case_bindings()
     if type(case_bindings) is not dict or case_bindings != trusted_cases:
         raise ValueError("untrusted_or_incomplete_evaluation_inputs")
+    _require_trusted_family_adapter_bindings(family_bindings)
     return _validate_evidence_matrix_authenticated(
         envelopes, source_commit=source_commit, family_bindings=family_bindings,
         case_bindings=trusted_cases, review_verdicts=review_verdicts,
         reviewed_case_manifest_sha256=PINNED_REVIEWED_CASE_MANIFEST_SHA256)
+
+
+def _require_trusted_family_adapter_bindings(family_bindings: dict) -> None:
+    """Tie public evaluation to full artifact pins in the source candidate registry."""
+    candidates = CORE_SERVING.get("candidates")
+    if (type(family_bindings) is not dict or set(family_bindings) != FAMILIES
+            or type(candidates) is not list or len(candidates) != len(FAMILIES)
+            or any(type(candidate) is not dict or type(candidate.get("id")) is not str
+                   or candidate["id"] not in FAMILIES for candidate in candidates)):
+        raise ValueError("untrusted_variant_artifact_binding")
+    registry = {candidate.get("id"): candidate for candidate in candidates}
+    if set(registry) != FAMILIES:
+        raise ValueError("untrusted_variant_artifact_binding")
+    for family in FAMILIES:
+        candidate = registry[family]
+        weights = candidate.get("adapter_sha256")
+        bundle = candidate.get("adapter_bundle_sha256")
+        if (not _hex(weights, 64) or weights == "0" * 64
+                or not _hex(bundle, 64) or bundle == "0" * 64):
+            raise ValueError("trusted_adapter_bundle_not_pinned")
+        pin = family_bindings[family]
+        if (type(pin) is not dict
+                or type(pin.get("variant_adapters")) is not dict
+                or type(pin.get("variant_adapter_bundles")) is not dict
+                or pin["variant_adapters"].get("trained_adapter") != weights
+                or pin["variant_adapter_bundles"].get("trained_adapter") != bundle):
+            raise ValueError("untrusted_variant_artifact_binding")
 
 
 def _validate_evidence_matrix_authenticated(envelopes: list[dict], *, source_commit: str,
@@ -278,11 +307,19 @@ def _validate_evidence_matrix_authenticated(envelopes: list[dict], *, source_com
                 or not _hex(variant_adapters["trained_adapter"], 64)
                 or variant_adapters["trained_adapter"] == "0" * 64):
             raise ValueError("invalid_variant_artifact_binding")
+        variant_adapter_bundles = family_pin.get("variant_adapter_bundles")
+        if (type(variant_adapter_bundles) is not dict
+                or set(variant_adapter_bundles) != set(VARIANTS)
+                or variant_adapter_bundles["configured_base"] is not None
+                or not _hex(variant_adapter_bundles["trained_adapter"], 64)
+                or variant_adapter_bundles["trained_adapter"] == "0" * 64):
+            raise ValueError("invalid_variant_artifact_binding")
         payload = verify_evidence(
             envelope, expected_source_commit=source_commit, expected_family=family,
             expected_base_revision=family_pin["base_revision"],
             expected_base_manifest_sha256=family_pin["base_manifest_sha256"],
             expected_adapter_sha256=variant_adapters[variant],
+            expected_adapter_bundle_sha256=variant_adapter_bundles[variant],
             expected_runner_sha256=family_pin["runner_sha256"],
             expected_case_id=case_id, expected_variant=variant,
             expected_case_category=category, expected_runtime_profile=pin["runtime_profile"],
@@ -296,6 +333,7 @@ def _validate_evidence_matrix_authenticated(envelopes: list[dict], *, source_com
         review = review_verdicts[case_id]
         expected_review = {"case_id": case_id, "source_commit": source_commit,
                            "reviewed_case_manifest_sha256": reviewed_case_manifest_sha256,
+                           "adapter_bundle_sha256": payload["adapter_bundle_sha256"],
                            "prompt_sha256": payload["prompt_sha256"],
                            "answer_sha256": payload["answer_sha256"],
                            "expected_dimensions": list(expected_dimensions),
@@ -316,6 +354,7 @@ def _validate_evidence_matrix_authenticated(envelopes: list[dict], *, source_com
 
 def create_evidence(*, source_commit: str, family: str, base_revision: str,
                     base_manifest_sha256: str, adapter_sha256: str | None,
+                    adapter_bundle_sha256: str | None,
                     runner_sha256: str, case_id: str, prompt: str, answer: str,
                     runtime_profile: str, conversation_id: str, session_id: str,
                     dimensions: list[str], private_key: Ed25519PrivateKey,
@@ -328,12 +367,17 @@ def create_evidence(*, source_commit: str, family: str, base_revision: str,
         raise ValueError("invalid_evaluation_matrix_cell")
     if (adapter_sha256 is None) != (variant == "configured_base"):
         raise ValueError("variant_adapter_binding_mismatch")
+    if (adapter_bundle_sha256 is None) != (variant == "configured_base"):
+        raise ValueError("variant_adapter_bundle_binding_mismatch")
     for name, value in (("base_manifest", base_manifest_sha256),
                         ("runner", runner_sha256)):
         if not _hex(value, 64):
             raise ValueError(f"invalid_{name}_sha256")
     if variant == "trained_adapter" and (not _hex(adapter_sha256, 64) or adapter_sha256 == "0" * 64):
         raise ValueError("invalid_adapter_sha256")
+    if variant == "trained_adapter" and (
+            not _hex(adapter_bundle_sha256, 64) or adapter_bundle_sha256 == "0" * 64):
+        raise ValueError("invalid_adapter_bundle_sha256")
     if not all(_identifier(value) for value in (case_id, conversation_id, session_id)):
         raise ValueError("invalid_evaluation_context")
     if runtime_profile not in PROFILES:
@@ -348,6 +392,7 @@ def create_evidence(*, source_commit: str, family: str, base_revision: str,
         "base_revision": base_revision,
         "base_manifest_sha256": base_manifest_sha256,
         "adapter_sha256": adapter_sha256,
+        "adapter_bundle_sha256": adapter_bundle_sha256,
         "runner_sha256": runner_sha256,
         "case_id": case_id,
         "variant": variant,
@@ -405,11 +450,23 @@ def _trusted_reviewer_public_key() -> Ed25519PublicKey:
 
 def verify_evidence(evidence: dict, *, expected_source_commit: str,
                     expected_family: str, expected_base_revision: str,
-                    expected_base_manifest_sha256: str, expected_adapter_sha256: str,
+                    expected_base_manifest_sha256: str, expected_adapter_sha256: str | None,
+                    expected_adapter_bundle_sha256: str | None,
                     expected_runner_sha256: str, expected_case_id: str,
                     expected_runtime_profile: str, expected_conversation_id: str,
                     expected_session_id: str, expected_variant: str,
                     expected_case_category: str) -> dict:
+    if expected_variant not in VARIANTS:
+        raise ValueError("invalid_evaluation_matrix_cell")
+    if (expected_adapter_sha256 is None) != (expected_variant == "configured_base"):
+        raise ValueError("variant_adapter_binding_mismatch")
+    if (expected_adapter_bundle_sha256 is None) != (expected_variant == "configured_base"):
+        raise ValueError("variant_adapter_bundle_binding_mismatch")
+    if expected_variant == "trained_adapter" and (
+            not _hex(expected_adapter_sha256, 64) or expected_adapter_sha256 == "0" * 64
+            or not _hex(expected_adapter_bundle_sha256, 64)
+            or expected_adapter_bundle_sha256 == "0" * 64):
+        raise ValueError("invalid_variant_artifact_binding")
     if set(evidence) != {"payload", "signature_ed25519_b64"}:
         raise ValueError("invalid_evidence_shape")
     payload = evidence["payload"]
@@ -419,6 +476,7 @@ def verify_evidence(evidence: dict, *, expected_source_commit: str,
         "base_revision": expected_base_revision,
         "base_manifest_sha256": expected_base_manifest_sha256,
         "adapter_sha256": expected_adapter_sha256,
+        "adapter_bundle_sha256": expected_adapter_bundle_sha256,
         "runner_sha256": expected_runner_sha256,
         "case_id": expected_case_id,
         "variant": expected_variant,
@@ -429,6 +487,8 @@ def verify_evidence(evidence: dict, *, expected_source_commit: str,
     }
     if not isinstance(payload, dict) or payload.get("schema") != SCHEMA:
         raise ValueError("invalid_evidence_schema")
+    if "adapter_bundle_sha256" not in payload:
+        raise ValueError("evidence_binding_mismatch:adapter_bundle_sha256")
     for field, value in expected.items():
         if payload.get(field) != value:
             raise ValueError(f"evidence_binding_mismatch:{field}")

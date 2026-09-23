@@ -36,6 +36,7 @@
       "family",
       "base_revision",
       "adapter_sha256",
+      "adapter_bundle_sha256",
       "case_id",
       "prompt_sha256",
       "answer_sha256",
