@@ -23,9 +23,9 @@ READ_BYTES = 1024 * 1024
 SHA256 = re.compile(r"[a-f0-9]{64}\Z")
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,191}\Z")
 REQUIRED_FILES = frozenset((
-    "config.json", "tokenizer.json", "tokenizer_config.json", "model.safetensors.index.json",
+    "config.json", "tokenizer.json", "tokenizer_config.json", "adapter_config.json",
 ))
-PARSED_FILES = frozenset(("config.json", "tokenizer_config.json", "model.safetensors.index.json"))
+PARSED_FILES = frozenset(("config.json", "tokenizer_config.json", "adapter_config.json", "model.safetensors.index.json"))
 OPTIONAL_FILES = frozenset((
     "chat_template.jinja", "generation_config.json", "preprocessor_config.json",
     "processor_config.json", "video_preprocessor_config.json", "special_tokens_map.json",
@@ -115,7 +115,7 @@ def validate_manifest(encoded, expected_sha256):
         name = entry["path"]
         _require(isinstance(name, str) and NAME.fullmatch(name)
                  and name not in names and ".." not in name, "unsafe or duplicate artifact path")
-        _require(name in REQUIRED_FILES | OPTIONAL_FILES or name.endswith(".safetensors"),
+        _require(name in REQUIRED_FILES | OPTIONAL_FILES | {"model.safetensors.index.json"} or name.endswith(".safetensors"),
                  "unapproved artifact file type")
         _require(_integer(entry["bytes"]), "invalid artifact byte count")
         _require(isinstance(entry["sha256"], str) and SHA256.fullmatch(entry["sha256"]),
@@ -127,6 +127,12 @@ def validate_manifest(encoded, expected_sha256):
         names.add(name)
     _require(REQUIRED_FILES <= names and any(name.endswith(".safetensors") for name in names),
              "artifact lacks required weights or tokenizer files")
+    if candidate["id"] == "kova-cosmo":
+        _require("model.safetensors" in names and "model.safetensors.index.json" not in names,
+                 "Cosmo requires approved monolithic base weights")
+    else:
+        _require("model.safetensors.index.json" in names and "model.safetensors" not in names,
+                 "Orion and Nova require approved sharded base weights")
     adapter_files = [entry for entry in files if entry["path"] == "adapter_model.safetensors"]
     _require(len(adapter_files) == 1 and adapter_files[0]["sha256"] == adapter,
              "artifact trained adapter bytes differ from pinned digest")
@@ -150,6 +156,17 @@ def _metadata_contract(metadata, names):
         # Remote Python classes are not part of the approved packaging contract.
         _require(metadata[filename].get("auto_map") in (None, {}),
                  "artifact requires unapproved remote model code")
+    adapter = metadata["adapter_config.json"]
+    _require(adapter.get("peft_type") == "LORA" and adapter.get("task_type") == "CAUSAL_LM"
+             and type(adapter.get("r")) is int
+             and adapter["r"] > 0
+             and isinstance(adapter.get("lora_alpha"), (int, float))
+             and not isinstance(adapter["lora_alpha"], bool) and adapter["lora_alpha"] > 0
+             and adapter.get("auto_mapping") in (None, {}), "invalid PEFT adapter configuration")
+    if "model.safetensors.index.json" not in names:
+        _require({name for name in names if name.endswith(".safetensors")}
+                 == {"model.safetensors", "adapter_model.safetensors"}, "unexpected base weights")
+        return
     index = metadata["model.safetensors.index.json"]
     _require(set(index) <= {"metadata", "weight_map"} and isinstance(index.get("weight_map"), dict)
              and index["weight_map"], "invalid artifact weight index")

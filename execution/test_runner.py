@@ -11,16 +11,40 @@ from execution.activity import activity_from_started_event
 from execution.contracts import ExecutionBlocked, ExecutionError, ExecutionSpec, canonical
 from execution.runner import LocalRunner
 from execution.store import LocalJobStore
-from execution.test_support import IDENTITY, OWNER, ModelFixture, grant_for, make_spec, tokens
+from execution.test_support import IDENTITY, OWNER, ModelFixture, SyntheticAdapterTestCase, grant_for, make_spec, tokens
 from execution.workers import ModelStageWorker
+from core.current_candidates import CORE_SERVING
+from worker.handler import PINNED_CORE_CANDIDATES
 
 
-class RunnerTests(unittest.TestCase):
+class RunnerTests(SyntheticAdapterTestCase):
     def setUp(self):
+        super().setUp()
         self.store = LocalJobStore()
 
     def tearDown(self):
         self.store.close()
+
+    def test_persisted_job_reads_after_adapter_rotation_and_dispatch_fails_closed(self):
+        spec = make_spec("instant")
+        grant = grant_for(spec)
+        job = self.store.create(grant, "adapter-rotation", spec)
+        self.assertEqual(self.store.server_spec(OWNER, job).fingerprint, spec.fingerprint)
+        candidate = next(c for c in CORE_SERVING["candidates"] if c["model"] == spec.snapshot()["runtime_identity"]["model"])
+        candidate["adapter_sha256"] = "e" * 64
+        PINNED_CORE_CANDIDATES[candidate["id"]]["adapter_sha256"] = "e" * 64
+        self.assertEqual(self.store.server_spec(OWNER, job).fingerprint, spec.fingerprint)
+        fixture = ModelFixture()
+        status = LocalRunner(self.store, lambda: grant, fixture.worker()).run(job)
+        self.assertEqual(status["state"], "failed")
+        self.assertEqual(fixture.calls, [])
+
+    def test_ultra_attempt_telemetry_includes_pinned_adapter(self):
+        spec, fixture, _, _, status = self.run_job(make_spec("ultra"))
+        self.assertEqual(status["state"], "succeeded")
+        self.assertTrue(fixture.records)
+        self.assertTrue(all(record["adapter_sha256"] == spec.snapshot()["runtime_identity"]["adapter_sha256"]
+                            for record in fixture.records))
 
     def run_job(self, spec=None, fixture=None, *, worker=None, authorization=None, max_stages=None):
         spec = spec or make_spec()

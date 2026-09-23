@@ -17,7 +17,7 @@ from execution.source_context import (
     ContextRejected, ContextScope, SourceContext, SourceRecord, SourceRef, REFERENCE_PREFIX,
 )
 from execution.store import LocalJobStore
-from execution.test_support import IDENTITY, ModelFixture, OWNER, tokens
+from execution.test_support import IDENTITY, ModelFixture, OWNER, SyntheticAdapterTestCase, tokens
 from ultra.orchestrator import build_ultra_plan
 
 
@@ -84,8 +84,9 @@ def specification(prepared, route="high"):
         cap, len(ids) * 100, 3, 5), runtime_identity=identity, stage_cost_caps={key: 100 for key in ids})
 
 
-class SourceContextTests(unittest.TestCase):
+class SourceContextTests(SyntheticAdapterTestCase):
     def setUp(self):
+        super().setUp()
         self.f = EvidenceFixture()
 
     def prepared(self, *refs):

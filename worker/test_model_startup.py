@@ -91,11 +91,14 @@ class ModelStartupTests(unittest.TestCase):
                          self.policy["artifact"]["expected_manifest_sha256"])
         self.assertEqual(report["artifact_evidence"]["status"], "local_artifact_bytes_verified")
 
-    def test_both_candidates_verify_without_becoming_a_serving_grant(self):
+    def test_all_candidates_verify_without_becoming_a_serving_grant(self):
         for index, candidate in enumerate(fixtures.CATALOG["candidates"]):
+            if index == 1:
+                self.fixture.use_sharded_weights()
             with self.subTest(candidate=candidate["id"]):
                 self.manifest.write_bytes(self.fixture.encode(self.fixture.snapshot(index)))
                 self.policy["artifact"]["expected_manifest_sha256"] = hashlib.sha256(self.manifest.read_bytes()).hexdigest()
+                self.policy["artifact"]["maximum_total_bytes"] = sum(map(len, self.fixture.files.values()))
                 self.save()
                 code, report = self.run_gate(verify_only=True)
                 self.assertEqual(code, 0)

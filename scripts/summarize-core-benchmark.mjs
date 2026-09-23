@@ -16,7 +16,7 @@ const candidates = new Map(serving.candidates.map((candidate) => [candidate.mode
 const outcomes = new Set(["success", "failed", "quarantined"]);
 const recordTypes = new Set(["attempt", "lifecycle_close"]);
 const commonRequired = [
-  "record_type", "worker_lifecycle_id", "model", "model_revision", "gpu_type_id",
+  "record_type", "worker_lifecycle_id", "model", "model_revision", "adapter_sha256", "gpu_type_id",
   "gpu_count", "serving_engine", "endpoint_type", "container_image_digest",
   "gpu_rate_per_second_usd", "measurement_source",
 ];
@@ -53,16 +53,18 @@ for (const route of current.routes) {
 
 export const coreConfigurationKey = (record) => [
   `${record.model}@${record.model_revision}`,
+  record.adapter_sha256,
   `${record.gpu_type_id}x${record.gpu_count}`,
   record.serving_engine,
   record.endpoint_type,
   record.container_image_digest,
 ].join("|");
 
-const configurationFrom = (record) => ({
+const configurationFrom = (record, candidateCatalog) => ({
   model: record.model,
   model_revision: record.model_revision,
-  quantization: candidates.get(record.model).quantization,
+  adapter_sha256: record.adapter_sha256,
+  quantization: candidateCatalog.get(record.model).quantization,
   gpu_type_id: record.gpu_type_id,
   gpu_count: record.gpu_count,
   serving_engine: record.serving_engine,
@@ -125,7 +127,8 @@ function summarizeGroup(records, routeId, allocations) {
   };
 }
 
-export function summarizeCoreBenchmark(records) {
+// The CLI always uses the source candidate registry; synthetic catalogs are for offline unit tests.
+export function summarizeCoreBenchmark(records, candidateCatalog = candidates) {
   if (!Array.isArray(records) || records.length === 0) throw new Error("Core benchmark requires records");
   const seenRecordIds = new Set();
   const requestIdentities = new Map();
@@ -145,8 +148,10 @@ export function summarizeCoreBenchmark(records) {
     for (const field of ["worker_lifecycle_id", "model", "model_revision", "gpu_type_id", "serving_engine", "endpoint_type", "container_image_digest"]) {
       if (typeof record[field] !== "string" || !record[field].trim()) throw new Error(`record ${index} invalid ${field}`);
     }
-    const candidate = candidates.get(record.model);
+    const candidate = candidateCatalog.get(record.model);
     if (!candidate || candidate.revision !== record.model_revision) throw new Error(`record ${index} unverified model revision`);
+    if (!/^[a-f0-9]{64}$/u.test(record.adapter_sha256)
+        || record.adapter_sha256 !== candidate.adapter_sha256) throw new Error(`record ${index} unverified adapter digest`);
     if (!Number.isInteger(record.gpu_count) || record.gpu_count < 1 || record.gpu_count > 8) {
       throw new Error(`record ${index} invalid gpu_count`);
     }
@@ -161,7 +166,7 @@ export function summarizeCoreBenchmark(records) {
     const configurationKey = coreConfigurationKey(record);
     const lifecycle = lifecycles.get(record.worker_lifecycle_id) ?? {
       configuration_key: configurationKey,
-      configuration: configurationFrom(record),
+      configuration: configurationFrom(record, candidateCatalog),
       attempts: [],
       closes: [],
       rates: new Set(),
@@ -345,7 +350,7 @@ export function summarizeCoreBenchmark(records) {
   const byConfiguration = {};
   for (const record of pricedAttempts) {
     const key = record.configuration_key;
-    byConfiguration[key] ??= {configuration: configurationFrom(record), by_route: {}};
+    byConfiguration[key] ??= {configuration: configurationFrom(record, candidateCatalog), by_route: {}};
   }
   for (const [configurationKey, configurationGroup] of Object.entries(byConfiguration)) {
     for (const routeId of routeSpecs.keys()) {

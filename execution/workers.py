@@ -93,6 +93,8 @@ class ModelStageWorker:
         candidate = candidates[0]
         require(isinstance(candidate["adapter_sha256"], str), "trained adapter is not pinned")
         serving = next(c for c in CORE_SERVING["candidates"] if c["id"] == candidate["id"])
+        require(serving["adapter_sha256"] == identity["adapter_sha256"],
+                "worker adapter differs from current candidate pin")
         require(identity["context_tokens"] <= serving["context_tokens"], "served context exceeds candidate context")
         _verify_current_plan(plan, identity, self.token_counter)
         client = self.client_factory(control, dict(identity))
@@ -199,6 +201,7 @@ class ModelStageWorker:
             "attempt_id": attempt, "outcome": outcome, "route_id": plan["route_id"], "stage_id": stage.id,
             "public_response": stage.public, "engine": "kova-ultra",
             "model": before["loaded_model"], "model_revision": before["loaded_model_revision"],
+            "adapter_sha256": before["loaded_adapter_sha256"],
             "worker_lifecycle_id": before["worker_lifecycle_id"], "measurement_source": before["source"],
             "container_image_digest": before["container_image_digest"],
             "inference_ms": max(0, finished_ns - started_ns) / 1_000_000,

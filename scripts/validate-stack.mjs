@@ -82,14 +82,14 @@ if (
   inference.candidate_selection.production_candidate_selected !== false
 ) throw new Error("benchmark_worker_candidate_selection_must_be_trusted_and_blocked");
 for (const field of [
-  "record_type", "request_id", "correlation_id", "attempt_id", "outcome", "model", "model_revision", "route_id",
+  "record_type", "request_id", "correlation_id", "attempt_id", "outcome", "model", "model_revision", "adapter_sha256", "route_id",
   "stage_id", "public_response", "worker_lifecycle_id", "measurement_source", "cold_start",
   "time_to_first_token_ms", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count",
   "serving_engine", "endpoint_type", "container_image_digest",
 ]) {
   if (!inference.telemetry.attempt_record_required.includes(field)) throw new Error(`inference_attempt_telemetry_missing:${field}`);
 }
-for (const field of ["record_type", "close_event_id", "worker_lifecycle_id", "billed_lifecycle_ms", "attributed_idle_timeout_ms"]) {
+for (const field of ["record_type", "close_event_id", "worker_lifecycle_id", "adapter_sha256", "billed_lifecycle_ms", "attributed_idle_timeout_ms"]) {
   if (!inference.telemetry.lifecycle_close_record_required.includes(field)) throw new Error(`inference_lifecycle_telemetry_missing:${field}`);
 }
 if (inference.telemetry.lifecycle_close_source !== "trusted_runtime_shutdown_observation") throw new Error("trusted_lifecycle_close_required");
@@ -126,7 +126,7 @@ if (
   inference.streaming.positive_completion_usage_required_for_success !== true ||
   inference.runtime_identity.source !== "server_provider_runtime" ||
   inference.runtime_identity.required.join(",") !==
-    "loaded_model,loaded_model_revision,worker_lifecycle_id,gpu_type_id,gpu_count,serving_engine,endpoint_type,container_image_digest" ||
+    "loaded_model,loaded_model_revision,loaded_adapter_sha256,worker_lifecycle_id,gpu_type_id,gpu_count,serving_engine,endpoint_type,container_image_digest" ||
   inference.runtime_identity.loaded_model_must_match_selected_pinned_candidate !== true ||
   inference.runtime_identity.loaded_revision_must_match_selected_pinned_candidate !== true ||
   inference.runtime_identity.validated_before_and_after_each_attempt !== true ||

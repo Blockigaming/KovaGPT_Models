@@ -59,9 +59,11 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.candidate["adapter_sha256"] = hashlib.sha256(adapter_bytes).hexdigest()
         self.addCleanup(self.candidate.update, adapter_sha256=previous_pin)
         files = {"config.json": b'{"model_type":"synthetic"}', "tokenizer.json": b'{}',
-            "tokenizer_config.json": b'{}', "fixture.safetensors": b'NOT REAL MODEL WEIGHTS',
+            "tokenizer_config.json": b'{}',
+            "adapter_config.json": b'{"peft_type":"LORA","task_type":"CAUSAL_LM","r":8,"lora_alpha":16}',
+            "model.safetensors": b'NOT REAL MODEL WEIGHTS',
             "adapter_model.safetensors": adapter_bytes,
-            "model.safetensors.index.json": b'{"weight_map":{"fixture":"fixture.safetensors"}}'}
+        }
         for name, value in files.items():
             (self.model / name).write_bytes(value)
         manifest = {"schema_version":1, "candidate_id":self.candidate["id"], "model":self.candidate["model"],
@@ -147,7 +149,7 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.controller.status()["state"], "failed")
 
     async def test_changed_weight_bytes_are_rejected_by_real_startup_verifier(self):
-        path = self.model / "fixture.safetensors"
+        path = self.model / "model.safetensors"
         path.write_bytes(b"x" * len(path.read_bytes()))
         with self.assertRaises(runtime.ServingRuntimeError):
             await self.controller.start()
@@ -219,7 +221,7 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_restart_rehashes_artifacts_and_does_not_reuse_old_loader_success(self):
         await self.controller.start()
         self.controller.stop()
-        path = self.model / "fixture.safetensors"
+        path = self.model / "model.safetensors"
         path.write_bytes(b"changed")
         with self.assertRaises(runtime.ServingRuntimeError):
             await self.controller.start()

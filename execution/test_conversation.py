@@ -13,7 +13,7 @@ from release.model_revisions import source_reference_for_route
 from execution.contracts import ALL_ROUTES, ExecutionSpec, ExecutionLimits, canonical
 from execution.runner import LocalRunner
 from execution.store import LocalJobStore
-from execution.test_support import IDENTITY, OWNER, ModelFixture, grant_for, tokens
+from execution.test_support import IDENTITY, OWNER, ModelFixture, SyntheticAdapterTestCase, grant_for, tokens
 from ultra.binding import bind_ultra_operation
 from ultra.orchestrator import build_ultra_plan
 
@@ -60,7 +60,7 @@ def spec_for(route="ultra", messages=None):
                                    stage_cost_caps={stage: 100 for stage in ids})
 
 
-class ConversationTests(unittest.TestCase):
+class ConversationTests(SyntheticAdapterTestCase):
     def run_spec(self, spec, *, debate=False):
         store = LocalJobStore()
         self.addCleanup(store.close)

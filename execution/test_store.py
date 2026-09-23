@@ -8,7 +8,7 @@ import unittest
 
 from execution.contracts import ExecutionBusy, ExecutionError, ExecutionIntegrityError, canonical
 from execution.store import LocalJobStore
-from execution.test_support import OWNER, grant_for, make_spec
+from execution.test_support import OWNER, SyntheticAdapterTestCase, grant_for, make_spec
 
 
 def result(content="PRIVATE draft", *, debate=None):
@@ -16,8 +16,9 @@ def result(content="PRIVATE draft", *, debate=None):
             "output_tokens": 3, "debate_required": debate}
 
 
-class JobStoreTests(unittest.TestCase):
+class JobStoreTests(SyntheticAdapterTestCase):
     def setUp(self):
+        super().setUp()
         self.spec = make_spec("high")
         self.grant = grant_for(self.spec)
         self.store = LocalJobStore()

@@ -45,19 +45,19 @@
   },
   "runtime_identity": {
     "source": "server_provider_runtime",
-    "required": ["loaded_model", "loaded_model_revision", "worker_lifecycle_id", "gpu_type_id", "gpu_count", "serving_engine", "endpoint_type", "container_image_digest"],
+    "required": ["loaded_model", "loaded_model_revision", "loaded_adapter_sha256", "worker_lifecycle_id", "gpu_type_id", "gpu_count", "serving_engine", "endpoint_type", "container_image_digest"],
     "loaded_model_must_match_selected_pinned_candidate": true,
     "loaded_revision_must_match_selected_pinned_candidate": true,
     "validated_before_and_after_each_attempt": true,
     "lifecycle_close_must_match_pinned_candidate": true
   },
   "telemetry": {
-    "attempt_record_required": ["record_type", "request_id", "correlation_id", "attempt_id", "outcome", "model", "model_revision", "route_id", "stage_id", "public_response", "worker_lifecycle_id", "measurement_source", "cold_start", "reasoning_effort", "worker_start_ms", "model_load_ms", "queue_ms", "inference_ms", "time_to_first_token_ms", "input_tokens", "output_tokens", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count", "serving_engine", "endpoint_type", "container_image_digest"],
+    "attempt_record_required": ["record_type", "request_id", "correlation_id", "attempt_id", "outcome", "model", "model_revision", "adapter_sha256", "route_id", "stage_id", "public_response", "worker_lifecycle_id", "measurement_source", "cold_start", "reasoning_effort", "worker_start_ms", "model_load_ms", "queue_ms", "inference_ms", "time_to_first_token_ms", "input_tokens", "output_tokens", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count", "serving_engine", "endpoint_type", "container_image_digest"],
     "request_id_semantics": "server_generated_logical_route_execution_id",
     "correlation_id_semantics": "untrusted_caller_value_never_used_for_grouping",
     "attempt_outcomes": ["success", "failed", "quarantined"],
     "postflight_integrity_failure_outcome": "quarantined",
-    "lifecycle_close_record_required": ["record_type", "close_event_id", "worker_lifecycle_id", "model", "model_revision", "measurement_source", "billed_lifecycle_ms", "attributed_idle_timeout_ms", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count", "serving_engine", "endpoint_type", "container_image_digest"],
+    "lifecycle_close_record_required": ["record_type", "close_event_id", "worker_lifecycle_id", "model", "model_revision", "adapter_sha256", "measurement_source", "billed_lifecycle_ms", "attributed_idle_timeout_ms", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count", "serving_engine", "endpoint_type", "container_image_digest"],
     "lifecycle_close_source": "trusted_runtime_shutdown_observation",
     "lifecycle_cost_source": "provider_measured_billed_lifecycle_wall_time",
     "gpu_rate_per_second_usd_semantics": "total_worker_gpu_rate_for_configured_gpu_count",

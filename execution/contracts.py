@@ -219,8 +219,9 @@ class ExecutionSpec:
             from core.current_candidates import CORE_SERVING
             candidates = [c for c in CORE_SERVING["candidates"] if c["model"] == identity["model"]
                           and c["revision"] == identity["model_revision"]]
-            require(len(candidates) == 1 and identity["adapter_sha256"] == candidates[0]["adapter_sha256"],
-                    "snapshot adapter differs from selected candidate")
+            # Persisted snapshots retain the admitted adapter identity across pin rotation.
+            # The current pin is enforced on admission and again at worker dispatch.
+            require(len(candidates) == 1, "snapshot model differs from selected candidate")
             stages = value["stages"]
             require(isinstance(stages, list) and 1 <= len(stages) <= 16, "invalid stage count")
             seen = set()
@@ -263,6 +264,13 @@ class ExecutionSpec:
     def from_plan(cls, plan, *, limits, runtime_identity, stage_cost_caps):
         require(type(limits) is ExecutionLimits, "explicit execution limits required")
         require(isinstance(plan, dict) and isinstance(stage_cost_caps, dict), "trusted plan/cost bounds required")
+        from core.current_candidates import CORE_SERVING
+        require(isinstance(runtime_identity, dict), "runtime identity required")
+        admitted = [c for c in CORE_SERVING["candidates"]
+                    if c["model"] == runtime_identity.get("model")
+                    and c["revision"] == runtime_identity.get("model_revision")]
+        require(len(admitted) == 1 and runtime_identity.get("adapter_sha256") == admitted[0]["adapter_sha256"]
+                and isinstance(admitted[0]["adapter_sha256"], str), "adapter differs from current candidate pin")
         operations = plan.get("operations", [])
         ids = [op.get("stage_id", op.get("id")) for op in operations]
         require(set(stage_cost_caps) == set(ids), "every stage requires an explicit server cost cap")

@@ -1,6 +1,7 @@
 """Synthetic fixtures for the source-only execution tests; no provider calls."""
 
 import json
+import unittest
 from threading import Lock
 from time import time_ns
 
@@ -14,11 +15,21 @@ from release.model_revisions import source_reference_for_route
 
 
 SYNTHETIC_ADAPTER_SHA256 = "f" * 64
-# This fixture is imported only by tests. No trained adapter exists in the
-# source registry; bind synthetic identities solely for in-memory execution.
-for _candidate in CORE_SERVING["candidates"]:
-    _candidate["adapter_sha256"] = SYNTHETIC_ADAPTER_SHA256
-    PINNED_CORE_CANDIDATES[_candidate["id"]]["adapter_sha256"] = SYNTHETIC_ADAPTER_SHA256
+# Bind synthetic pins for each test, restoring both registries on cleanup.
+class SyntheticAdapterTestCase(unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        previous = [(candidate, candidate["adapter_sha256"])
+                    for candidate in CORE_SERVING["candidates"]]
+        pinned = [(candidate, candidate["adapter_sha256"])
+                  for candidate in PINNED_CORE_CANDIDATES.values()]
+        def restore():
+            for candidate, digest in previous + pinned:
+                candidate["adapter_sha256"] = digest
+        self.addCleanup(restore)
+        for candidate, _ in previous + pinned:
+            candidate["adapter_sha256"] = SYNTHETIC_ADAPTER_SHA256
+
 CANDIDATE = CORE_SERVING["candidates"][0]
 IDENTITY = {"model": CANDIDATE["model"], "model_revision": CANDIDATE["revision"],
             "context_tokens": CANDIDATE["context_tokens"], "adapter_sha256": SYNTHETIC_ADAPTER_SHA256}

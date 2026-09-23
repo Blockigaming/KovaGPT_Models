@@ -16,11 +16,12 @@ from execution.private_store import PrivateJobStore, RetentionExpired
 from execution.record_cipher import KeyMaterial, RecordCipher, RecordProtectionError
 from execution.runner import LocalRunner
 from execution.store import LocalJobStore
-from execution.test_support import OWNER, ModelFixture, grant_for, make_spec
+from execution.test_support import OWNER, ModelFixture, SyntheticAdapterTestCase, grant_for, make_spec
 
 
-class PrivateStoreTests(unittest.TestCase):
+class PrivateStoreTests(SyntheticAdapterTestCase):
     def setUp(self):
+        super().setUp()
         self.now = time_ns() // 1000000
         self.expiry = self.now + 120000
         self.key = KeyMaterial("key-1", secrets.token_bytes(64))
