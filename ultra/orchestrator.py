@@ -6,7 +6,7 @@ import math
 import re
 from pathlib import Path
 
-from router.policy import resolve_route
+from router.policy import resolve_route, RUNTIME_PROFILES
 from ultra.binding import DISAGREEMENT_INSTRUCTION, JUDGE_INSTRUCTION
 from ultra.conversation import validated_conversation
 
@@ -177,6 +177,8 @@ def build_ultra_plan(request, *, admission, token_counter):
     _require(isinstance(task, str) and task.strip(), "task must be nonempty text")
     _require(len(task) <= 250_000, "task too large")
     _validate_admission(admission, surface=policy["surface"])
+    _require(admission["max_agents"] <= RUNTIME_PROFILES["ultra"]["maximum_specialists"],
+             "Ultra specialist profile limit exceeded")
     _require(callable(token_counter), "trusted token counter missing")
     domains = _domains(task)
     _require(len(domains) <= admission["max_agents"], "max_agents insufficient for detected domain coverage")
@@ -236,6 +238,7 @@ def build_ultra_plan(request, *, admission, token_counter):
     output_and_propagation_units = len(specs) + sum(len(spec["artifact_ids"]) for spec in specs)
     available = admission["max_total_tokens"] - fixed_input_tokens
     per_operation_tokens = available // output_and_propagation_units
+    per_operation_tokens = min(per_operation_tokens, RUNTIME_PROFILES["ultra"]["maximum_output_tokens"])
     _require(per_operation_tokens >= 512, "Ultra token budget too small after input and artifact reservation")
 
     operations = []

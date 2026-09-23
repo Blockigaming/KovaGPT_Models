@@ -20,6 +20,7 @@ PROFILE_ORDER = ("light", "medium", "high", "extra-high", "max", "ultra")
 SCHEMA = "kova-three-family-evaluation-evidence.v1"
 _CONFIG = json.loads((ROOT / "config/kova-three-family-evaluation.v1.json").read_text(encoding="utf-8"))
 PINNED_RUNNER_PUBLIC_KEY_B64 = _CONFIG["answer_binding"]["runner_public_key_ed25519_b64"]
+PINNED_REVIEWER_PUBLIC_KEY_B64 = _CONFIG["reviewer_public_key_ed25519_b64"]
 _REQUIRED_DIMENSIONS = _CONFIG.get("required_dimensions")
 if (
     type(_REQUIRED_DIMENSIONS) is not list
@@ -111,7 +112,8 @@ def validate_verified_dimension_coverage(payloads: list[dict]) -> tuple[str, ...
 
 
 def validate_evidence_matrix(envelopes: list[dict], *, source_commit: str,
-                             family_bindings: dict, case_bindings: dict) -> tuple[str, ...]:
+                             family_bindings: dict, case_bindings: dict,
+                             review_verdicts: dict) -> tuple[str, ...]:
     """Verify signed answers against trusted per-family and per-case input pins."""
     if type(envelopes) is not list or len(envelopes) != 120:
         raise ValueError("incomplete_evaluation_matrix")
@@ -122,6 +124,9 @@ def validate_evidence_matrix(envelopes: list[dict], *, source_commit: str,
     }
     if set(family_bindings) != FAMILIES or set(case_bindings) != expected_cases:
         raise ValueError("untrusted_or_incomplete_evaluation_inputs")
+    if type(review_verdicts) is not dict or set(review_verdicts) != expected_cases:
+        raise ValueError("independent_review_required")
+    reviewer_public_key = _trusted_reviewer_public_key()
     verified = []
     seen = set()
     for envelope in envelopes:
@@ -150,6 +155,19 @@ def validate_evidence_matrix(envelopes: list[dict], *, source_commit: str,
         )
         if payload["prompt_sha256"] != pin["prompt_sha256"]:
             raise ValueError("substituted_evaluation_prompt")
+        review = review_verdicts[case_id]
+        expected_review = {"case_id": case_id, "source_commit": source_commit,
+                           "prompt_sha256": payload["prompt_sha256"],
+                           "answer_sha256": payload["answer_sha256"], "passed": True}
+        if (type(review) is not dict or set(review) != {"payload", "signature_ed25519_b64"}
+                or review["payload"] != expected_review):
+            raise ValueError("failed_or_unbound_independent_review")
+        try:
+            reviewer_public_key.verify(
+                base64.b64decode(review["signature_ed25519_b64"], validate=True),
+                _canonical(expected_review))
+        except Exception as exc:
+            raise ValueError("invalid_independent_review_signature") from exc
         verified.append(payload)
     return validate_verified_dimension_coverage(verified)
 
@@ -215,6 +233,20 @@ def _trusted_runner_public_key() -> Ed25519PublicKey:
         return Ed25519PublicKey.from_public_bytes(raw)
     except Exception as exc:
         raise ValueError("invalid_pinned_runner_key") from exc
+
+
+def _trusted_reviewer_public_key() -> Ed25519PublicKey:
+    if not isinstance(PINNED_REVIEWER_PUBLIC_KEY_B64, str) or not PINNED_REVIEWER_PUBLIC_KEY_B64:
+        raise ValueError("trusted_reviewer_key_not_configured")
+    if PINNED_REVIEWER_PUBLIC_KEY_B64 == PINNED_RUNNER_PUBLIC_KEY_B64:
+        raise ValueError("reviewer_must_be_independent_of_runner")
+    try:
+        raw = base64.b64decode(PINNED_REVIEWER_PUBLIC_KEY_B64, validate=True)
+        if len(raw) != 32:
+            raise ValueError("wrong key length")
+        return Ed25519PublicKey.from_public_bytes(raw)
+    except Exception as exc:
+        raise ValueError("invalid_pinned_reviewer_key") from exc
 
 
 def verify_evidence(evidence: dict, *, expected_source_commit: str,

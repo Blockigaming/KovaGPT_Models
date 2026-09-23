@@ -336,7 +336,9 @@ class ModelStartupTests(unittest.TestCase):
             self.assertFalse(list(image.rglob("*.pyc")))
             self.assertEqual(sorted(str(p.relative_to(image)) for p in image.rglob("*") if p.is_file()),
                              sorted(("worker/__init__.py", "worker/model_artifact.py", "worker/model_startup.py",
-                                     "config/core-serving.v1.json", "config/model-startup.v1.json")))
+                                     "config/core-serving.v1.json", "config/model-startup.v1.json",
+                                     "core/__init__.py", "core/current_candidates.py",
+                                     "release/__init__.py", "release/model_revisions.py")))
 
     def test_unknown_missing_artifact_fields_and_coerced_run_modes_fail(self):
         for key in self.policy["artifact"]:
@@ -379,7 +381,9 @@ class ModelStartupTests(unittest.TestCase):
                 self.assertIn("--chown=0:0 --chmod=0444", line)
                 sources.extend(line.split()[3:-1])
         self.assertEqual(sorted(sources), sorted(("worker/__init__.py", "worker/model_artifact.py", "worker/model_startup.py",
-                                                 "config/core-serving.v1.json", "config/model-startup.v1.json")))
+                                                 "config/core-serving.v1.json", "config/model-startup.v1.json",
+                                                 "core/__init__.py", "core/current_candidates.py",
+                                                 "release/__init__.py", "release/model_revisions.py")))
         self.assertTrue(all((ROOT / path).is_file() for path in sources))
 
 

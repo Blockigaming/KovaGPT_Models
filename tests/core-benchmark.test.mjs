@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { coreConfigurationKey, summarizeCoreBenchmark } from "../scripts/summarize-core-benchmark.mjs";
 
-const revision = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0";
-const fp8Revision = "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a";
+const revision = "c1899de289a04d12100db370d81485cdf75e47ca";
+const fp8Revision = "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e";
 const digest = `sha256:${"a".repeat(64)}`;
 const logicalId = (value) => `kova-exec-00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
 const common = {
   worker_lifecycle_id: "lifecycle-1",
-  model: "Qwen/Qwen3.8-27B",
+  model: "kova-cosmo",
   model_revision: revision,
   gpu_type_id: "NVIDIA A100 80GB PCIe",
   gpu_count: 1,
@@ -73,8 +73,8 @@ test("Core benchmark prices one complete RunPod lifecycle", () => {
 test("Core benchmark separates model, GPU, server, endpoint type, and image", () => {
   const fp8Config = {
     worker_lifecycle_id: "lifecycle-2",
-    model: "Qwen/Qwen3.8-27B-FP8",
-    model_revision: fp8Revision,
+    model: "kova-cosmo",
+    model_revision: revision,
     gpu_type_id: "NVIDIA L40S",
     serving_engine: "sglang",
     endpoint_type: "load_balancing",
@@ -104,23 +104,23 @@ test("Core benchmark attributes failed retries to a successful request", () => {
 
 test("Core request is not successful when only a private stage succeeded", () => {
   const result = summarizeCoreBenchmark([
-    attempt({route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", time_to_first_token_ms: null}),
+    attempt({route_id: "chat:cosmo:medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", time_to_first_token_ms: null}),
     close(),
   ]);
-  const medium = group(result, "medium");
+  const medium = group(result, "chat:cosmo:medium");
   assert.equal(medium.successful_requests, 0);
   assert.equal(medium.average_compute_cost_per_successful_request_usd, null);
 });
 
 test("Core request succeeds only after every declared route stage succeeds", () => {
   const result = summarizeCoreBenchmark([
-    attempt({attempt_id: "planning", route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", time_to_first_token_ms: null}),
-    warmAttempt({attempt_id: "answer", route_id: "medium", stage_id: "answer-1", public_response: false, reasoning_effort: "medium", time_to_first_token_ms: null}),
-    warmAttempt({attempt_id: "verification", route_id: "medium", stage_id: "verification-1", reasoning_effort: "medium"}),
+    attempt({attempt_id: "planning", route_id: "chat:cosmo:medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", time_to_first_token_ms: null}),
+    warmAttempt({attempt_id: "answer", route_id: "chat:cosmo:medium", stage_id: "answer-1", public_response: false, reasoning_effort: "medium", time_to_first_token_ms: null}),
+    warmAttempt({attempt_id: "verification", route_id: "chat:cosmo:medium", stage_id: "verification-1", reasoning_effort: "medium"}),
     close({billed_lifecycle_ms: 13000}),
   ]);
-  assert.equal(group(result, "medium").successful_requests, 1);
-  assert.equal(group(result, "medium").average_request_time_to_first_token_ms, 6800);
+  assert.equal(group(result, "chat:cosmo:medium").successful_requests, 1);
+  assert.equal(group(result, "chat:cosmo:medium").average_request_time_to_first_token_ms, 6800);
 });
 
 test("Core benchmark rejects retries crossing a serving configuration or route", () => {
@@ -128,21 +128,21 @@ test("Core benchmark rejects retries crossing a serving configuration or route",
     attempt(),
     warmAttempt({
       attempt_id: "retry", worker_lifecycle_id: "lifecycle-2",
-      model: "Qwen/Qwen3.8-27B-FP8", model_revision: fp8Revision,
+      gpu_type_id: "NVIDIA L40S",
     }),
   ]), /mixes serving configuration or route/);
   assert.throws(() => summarizeCoreBenchmark([
     attempt(),
     warmAttempt({
       attempt_id: "retry", worker_lifecycle_id: "lifecycle-2",
-      route_id: "medium", stage_id: "verification-1", reasoning_effort: "medium",
+      route_id: "chat:cosmo:medium", stage_id: "verification-1", reasoning_effort: "medium",
     }),
   ]), /mixes serving configuration or route/);
 });
 
 test("Core benchmark validates stage visibility against Chat and Work DAGs", () => {
   assert.throws(() => summarizeCoreBenchmark([
-    attempt({route_id: "max", stage_id: "planning-1", public_response: true, reasoning_effort: "xhigh"}), close(),
+    attempt({route_id: "work:cosmo:max", stage_id: "planning-1", public_response: true, reasoning_effort: "xhigh"}), close(),
   ]), /public_response does not match route DAG/);
   const result = summarizeCoreBenchmark([
     attempt({route_id: "work:cosmo:light", stage_id: "answer-1"}), close(),
@@ -153,13 +153,13 @@ test("Core benchmark validates stage visibility against Chat and Work DAGs", () 
 test("shared Core lifecycle can span routes and conserves allocated overhead", () => {
   const result = summarizeCoreBenchmark([
     attempt({inference_ms: 1000}),
-    warmAttempt({request_id: logicalId(2), attempt_id: "planning", route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", inference_ms: 1000, time_to_first_token_ms: null}),
-    warmAttempt({request_id: logicalId(2), attempt_id: "answer", route_id: "medium", stage_id: "answer-1", public_response: false, reasoning_effort: "medium", inference_ms: 1000, time_to_first_token_ms: null}),
-    warmAttempt({request_id: logicalId(2), attempt_id: "verify", route_id: "medium", stage_id: "verification-1", reasoning_effort: "medium", inference_ms: 1000}),
+    warmAttempt({request_id: logicalId(2), attempt_id: "planning", route_id: "chat:cosmo:medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", inference_ms: 1000, time_to_first_token_ms: null}),
+    warmAttempt({request_id: logicalId(2), attempt_id: "answer", route_id: "chat:cosmo:medium", stage_id: "answer-1", public_response: false, reasoning_effort: "medium", inference_ms: 1000, time_to_first_token_ms: null}),
+    warmAttempt({request_id: logicalId(2), attempt_id: "verify", route_id: "chat:cosmo:medium", stage_id: "verification-1", reasoning_effort: "medium", inference_ms: 1000}),
     close({billed_lifecycle_ms: 11000}),
   ]);
   assert.ok(Math.abs(group(result).total_attributable_compute_cost_usd - 0.0045) < 1e-12);
-  assert.ok(Math.abs(group(result, "medium").total_attributable_compute_cost_usd - 0.0065) < 1e-12);
+  assert.ok(Math.abs(group(result, "chat:cosmo:medium").total_attributable_compute_cost_usd - 0.0065) < 1e-12);
   assert.ok(Math.abs(result.total_attributable_compute_cost_usd - 0.011) < 1e-12);
   assert.equal(result.lifecycle_allocations.length, 2);
 });
@@ -179,6 +179,9 @@ test("Core benchmark requires one measured cold start and idle tail per lifecycl
 });
 
 test("Core benchmark rejects malformed model, rates, timing, and serving identity", () => {
+  assert.throws(() => summarizeCoreBenchmark([
+    attempt({route_id: "work:nova:light"}), close(),
+  ]), /model differs from route family/);
   assert.throws(() => summarizeCoreBenchmark([attempt({model: "attacker/model"}), close()]), /unverified model revision/);
   assert.throws(() => summarizeCoreBenchmark([attempt({model_revision: "0".repeat(40)}), close()]), /unverified model revision/);
   assert.throws(() => summarizeCoreBenchmark([attempt({gpu_rate_per_second_usd: 0}), close()]), /gpu_rate/);
@@ -192,7 +195,7 @@ test("Core benchmark rejects malformed model, rates, timing, and serving identit
 
 test("Core benchmark treats TTFT as public-stream-only and nullable before first output", () => {
   assert.throws(() => summarizeCoreBenchmark([
-    attempt({route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium"}), close(),
+    attempt({route_id: "chat:cosmo:medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium"}), close(),
   ]), /private stage must not claim first-token timing/);
   assert.throws(() => summarizeCoreBenchmark([
     attempt({time_to_first_token_ms: null}), close(),
@@ -229,9 +232,9 @@ test("Core benchmark rejects a lifecycle shorter than its longest attempt", () =
 
 test("Core benchmark requires active time for the longest sequential request path", () => {
   assert.throws(() => summarizeCoreBenchmark([
-    attempt({attempt_id: "planning", route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", time_to_first_token_ms: null}),
-    warmAttempt({attempt_id: "answer", route_id: "medium", stage_id: "answer-1", public_response: false, reasoning_effort: "medium", time_to_first_token_ms: null}),
-    warmAttempt({attempt_id: "verification", route_id: "medium", stage_id: "verification-1", reasoning_effort: "medium"}),
+    attempt({attempt_id: "planning", route_id: "chat:cosmo:medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", inference_ms: 2500, time_to_first_token_ms: null}),
+    warmAttempt({attempt_id: "answer", route_id: "chat:cosmo:medium", stage_id: "answer-1", public_response: false, reasoning_effort: "medium", inference_ms: 2500, time_to_first_token_ms: null}),
+    warmAttempt({attempt_id: "verification", route_id: "chat:cosmo:medium", stage_id: "verification-1", reasoning_effort: "medium", inference_ms: 2500}),
     close({billed_lifecycle_ms: 11000}),
   ]), /sequential request path exceeds billed active window/);
 });

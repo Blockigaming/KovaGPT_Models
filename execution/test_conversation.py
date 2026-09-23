@@ -53,7 +53,9 @@ def spec_for(route="ultra", messages=None):
     limits = ExecutionLimits(time_ns() // 1_000_000 + 60_000, reserved, len(ids) * 100, 3, 5)
     identity = ({**IDENTITY, "model": plan["candidate_model"],
                  "model_revision": plan["candidate_revision"]}
-                if plan["engine"] == "kova-core" else IDENTITY)
+                if plan["engine"] == "kova-core" else {**IDENTITY,
+                   "model": source_reference_for_route(route).slot,
+                   "model_revision": source_reference_for_route(route).revision})
     return ExecutionSpec.from_plan(plan, limits=limits, runtime_identity=identity,
                                    stage_cost_caps={stage: 100 for stage in ids})
 

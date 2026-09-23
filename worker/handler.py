@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 from core.adapter import bind_core_operation, build_core_plan
 from core.current_candidates import CORE_SERVING
-from router.policy import CHAT_POLICIES, WORK_EFFORTS, WORK_FAMILY_POLICIES
+from router.policy import CHAT_POLICIES, WORK_EFFORTS, WORK_FAMILY_POLICIES, resolve_route
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,20 +72,20 @@ CORE_ROUTE_EFFORTS = {}
 WORK_ROUTE_REQUESTS = {}
 for route_id, policy in CHAT_POLICIES.items():
     if policy["engine"] == "kova-core":
-        CORE_ROUTE_STAGES[route_id] = _stage_ids(policy)
+        CORE_ROUTE_STAGES[route_id] = _stage_ids(resolve_route({"surface": "chat", "route_id": route_id}))
         CORE_ROUTE_EFFORTS[route_id] = policy["reasoning_effort"]
 for family in WORK_FAMILY_POLICIES:
     for name, effort in WORK_EFFORTS.items():
         if name != "Ultra":
             route_id = f"work:{family}:{name.lower().replace(' ', '-')}"
-            CORE_ROUTE_STAGES[route_id] = _stage_ids(effort)
+            CORE_ROUTE_STAGES[route_id] = _stage_ids(resolve_route({"surface": "work", "family": family, "effort": name}))
             CORE_ROUTE_EFFORTS[route_id] = effort["reasoning_effort"]
             WORK_ROUTE_REQUESTS[route_id] = {
                 "surface": "work", "family": family, "effort": name,
             }
             if family in ("cosmo", "orion"):
                 chat_route_id = f"chat:{family}:{name.lower().replace(' ', '-')}"
-                CORE_ROUTE_STAGES[chat_route_id] = _stage_ids(effort)
+                CORE_ROUTE_STAGES[chat_route_id] = _stage_ids(resolve_route({"surface": "chat", "family": family, "effort": name}))
                 CORE_ROUTE_EFFORTS[chat_route_id] = effort["reasoning_effort"]
 
 

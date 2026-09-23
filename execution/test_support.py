@@ -52,7 +52,8 @@ def make_spec(route="high", *, deadline=None, parallel=3, agents=3, task="Prove 
     reserved = sum(op["maximum_input_tokens"] + op["maximum_output_tokens"] for op in plan["operations"])
     runtime_identity = ({**IDENTITY, "model": plan["candidate_model"],
                          "model_revision": plan["candidate_revision"]}
-                        if plan["engine"] == "kova-core" else IDENTITY)
+                        if plan["engine"] == "kova-core" else {**IDENTITY, "model": source_reference_for_route(route).slot,
+                                                         "model_revision": source_reference_for_route(route).revision})
     return ExecutionSpec.from_plan(plan, limits=ExecutionLimits(
         deadline_unix_ms=deadline or time_ns() // 1_000_000 + 60_000,
         token_limit=reserved, cost_limit_microusd=len(ids) * 100,

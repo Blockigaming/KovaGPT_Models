@@ -168,28 +168,79 @@ class ThreeFamilyContractTests(unittest.TestCase):
                             dimensions=[sorted(guard.REQUIRED_DIMENSIONS)[len(envelopes) % 12]],
                             private_key=private_key,
                         ))
-        with patch.object(guard, "PINNED_RUNNER_PUBLIC_KEY_B64", trusted_public):
+        reviewer_key = Ed25519PrivateKey.generate()
+        verdicts = {}
+        for envelope in envelopes:
+            payload = envelope["payload"]
+            review = {"case_id": payload["case_id"], "source_commit": "d" * 40,
+                      "prompt_sha256": payload["prompt_sha256"],
+                      "answer_sha256": payload["answer_sha256"], "passed": True}
+            verdicts[payload["case_id"]] = {
+                "payload": review,
+                "signature_ed25519_b64": base64.b64encode(
+                    reviewer_key.sign(guard._canonical(review))).decode("ascii")}
+        review_args = {"review_verdicts": verdicts,
+                       "reviewer_public_key": reviewer_key.public_key()}
+        reviewer_key = Ed25519PrivateKey.generate()
+        verdicts = {}
+        for envelope in envelopes:
+            payload = envelope["payload"]
+            review = {"case_id": payload["case_id"], "source_commit": "d" * 40,
+                      "prompt_sha256": payload["prompt_sha256"],
+                      "answer_sha256": payload["answer_sha256"], "passed": True}
+            verdicts[payload["case_id"]] = {
+                "payload": review,
+                "signature_ed25519_b64": base64.b64encode(
+                    reviewer_key.sign(guard._canonical(review))).decode("ascii")}
+        review_args = {"review_verdicts": verdicts}
+        reviewer_public = base64.b64encode(reviewer_key.public_key().public_bytes_raw()).decode("ascii")
+        with patch.object(guard, "PINNED_RUNNER_PUBLIC_KEY_B64", trusted_public), \
+             patch.object(guard, "PINNED_REVIEWER_PUBLIC_KEY_B64", reviewer_public):
+            with patch.object(guard, "PINNED_REVIEWER_PUBLIC_KEY_B64", None), self.assertRaisesRegex(
+                    ValueError, "trusted_reviewer_key_not_configured"):
+                guard.validate_evidence_matrix(envelopes, source_commit="d" * 40,
+                                               family_bindings=families, case_bindings=case_pins,
+                                               **review_args)
+            with patch.object(guard, "PINNED_REVIEWER_PUBLIC_KEY_B64", trusted_public), self.assertRaisesRegex(
+                    ValueError, "reviewer_must_be_independent"):
+                guard.validate_evidence_matrix(envelopes, source_commit="d" * 40,
+                                               family_bindings=families, case_bindings=case_pins,
+                                               **review_args)
             self.assertEqual(set(guard.validate_evidence_matrix(
                 envelopes, source_commit="d" * 40, family_bindings=families,
-                case_bindings=case_pins)), guard.REQUIRED_DIMENSIONS)
+                case_bindings=case_pins, **review_args)), guard.REQUIRED_DIMENSIONS)
+            failed = deepcopy(verdicts)
+            first_case = envelopes[0]["payload"]["case_id"]
+            failed[first_case]["payload"]["passed"] = False
+            with self.assertRaisesRegex(ValueError, "failed_or_unbound_independent_review"):
+                guard.validate_evidence_matrix(envelopes, source_commit="d" * 40,
+                                               family_bindings=families, case_bindings=case_pins,
+                                               review_verdicts=failed)
+            forged = deepcopy(verdicts)
+            forged[first_case]["signature_ed25519_b64"] = verdicts[envelopes[1]["payload"]["case_id"]][
+                "signature_ed25519_b64"]
+            with self.assertRaisesRegex(ValueError, "invalid_independent_review_signature"):
+                guard.validate_evidence_matrix(envelopes, source_commit="d" * 40,
+                                               family_bindings=families, case_bindings=case_pins,
+                                               review_verdicts=forged)
             with self.assertRaisesRegex(ValueError, "incomplete_evaluation_matrix"):
                 guard.validate_evidence_matrix(envelopes[:-1], source_commit="d" * 40,
-                                               family_bindings=families, case_bindings=case_pins)
+                                               family_bindings=families, case_bindings=case_pins, **review_args)
             with self.assertRaisesRegex(ValueError, "duplicate_or_unconfigured_evaluation_case"):
                 guard.validate_evidence_matrix(envelopes[:-1] + [envelopes[0]],
                                                source_commit="d" * 40,
-                                               family_bindings=families, case_bindings=case_pins)
+                                               family_bindings=families, case_bindings=case_pins, **review_args)
             altered = deepcopy(envelopes)
             altered[0]["payload"]["prompt"] = "substituted"
             altered[0]["payload"]["prompt_sha256"] = hashlib.sha256(b"substituted").hexdigest()
             with self.assertRaisesRegex(ValueError, "invalid_evidence_signature"):
                 guard.validate_evidence_matrix(altered, source_commit="d" * 40,
-                                               family_bindings=families, case_bindings=case_pins)
+                                               family_bindings=families, case_bindings=case_pins, **review_args)
             changed_pins = deepcopy(case_pins)
             changed_pins[envelopes[0]["payload"]["case_id"]]["prompt_sha256"] = "f" * 64
             with self.assertRaisesRegex(ValueError, "substituted_evaluation_prompt"):
                 guard.validate_evidence_matrix(envelopes, source_commit="d" * 40,
-                                               family_bindings=families, case_bindings=changed_pins)
+                                               family_bindings=families, case_bindings=changed_pins, **review_args)
             signed_substitution = deepcopy(envelopes)
             first = signed_substitution[0]["payload"]
             first["prompt"] = "A different signed case under the same ID"
@@ -198,7 +249,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
                 private_key.sign(guard._canonical(first))).decode("ascii")
             with self.assertRaisesRegex(ValueError, "substituted_evaluation_prompt"):
                 guard.validate_evidence_matrix(signed_substitution, source_commit="d" * 40,
-                                               family_bindings=families, case_bindings=case_pins)
+                                               family_bindings=families, case_bindings=case_pins, **review_args)
 
     def test_authoritative_policy_cannot_drift(self):
         self.assertEqual(
@@ -470,14 +521,26 @@ class ThreeFamilyContractTests(unittest.TestCase):
         with self.assertRaises(contract.ContractError):
             contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-orion"},
                                          expected_sequence=1)
+        with self.assertRaisesRegex(contract.ContractError, "cost admission required"):
+            contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-cosmo"},
+                                         expected_sequence=1)
+        state = contract.append_ledger_event(state, {"kind": "cost_admission"}, expected_sequence=1)
         before_grant = deepcopy(state)
         state = contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-cosmo"},
-                                             expected_sequence=1)
+                                             expected_sequence=2)
         self.assertEqual(before_grant["family_order"], [])
         self.assertEqual(state["family_order"], ["kova-cosmo"])
         with self.assertRaises(contract.ContractError):
             contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-cosmo"},
-                                         expected_sequence=2)
+                                         expected_sequence=3)
+        with self.assertRaisesRegex(contract.ContractError, "previous family preservation required"):
+            contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-orion"},
+                                         expected_sequence=3)
+        state = contract.append_ledger_event(state, {"kind": "family_preserved", "family": "kova-cosmo"},
+                                             expected_sequence=3)
+        state = contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-orion"},
+                                             expected_sequence=4)
+        self.assertEqual(state["family_order"], ["kova-cosmo", "kova-orion"])
         with self.assertRaises(contract.ContractError):
             contract.append_ledger_event(state, {"kind": "cost_admission"}, expected_sequence=1)
         with self.assertRaises(contract.ContractError):
@@ -490,6 +553,16 @@ class ThreeFamilyContractTests(unittest.TestCase):
         self.assertTrue(state["terminal"])
         with self.assertRaises(contract.ContractError):
             contract.append_ledger_event(state, {"kind": "watchdog_health"}, expected_sequence=1)
+
+    def test_runner_dry_run_uses_existing_contract_and_blocks_execution(self):
+        from training.three_family_runner import main as runner_main
+        from io import StringIO
+        from contextlib import redirect_stdout
+        with redirect_stdout(StringIO()) as output:
+            self.assertEqual(runner_main(["--family", "kova-cosmo", "--dry-run"]), 0)
+        self.assertFalse(json.loads(output.getvalue())["training_started"])
+        with self.assertRaises(SystemExit):
+            runner_main(["--family", "kova-cosmo", "--execute"])
 
     def test_infrastructure_has_no_public_ip_and_source_gates_false(self):
         vm = (contract.ROOT / "infra/three-family-pilot-vm.bicep").read_text()

@@ -1,6 +1,22 @@
 """Resolve public Kova modes to immutable server-controlled compute policies."""
 
 from copy import deepcopy
+import json
+from pathlib import Path
+
+RUNTIME_PROFILES = json.loads((Path(__file__).resolve().parents[1] /
+    "config/kova-runtime-profiles.v1.json").read_text(encoding="utf-8"))["profiles"]
+
+
+def _bound_runtime(policy, effort):
+    profile = RUNTIME_PROFILES[effort.lower().replace(" ", "-")]
+    policy.setdefault("maximum_output_tokens", profile["maximum_output_tokens"])
+    _require(policy["maximum_output_tokens"] <= profile["maximum_output_tokens"],
+             "route exceeds declared profile output bound")
+    if "passes" in policy:
+        _require(sum(policy["passes"]) <= profile["maximum_passes"],
+                 "route exceeds declared profile pass bound")
+    return policy
 
 
 FORBIDDEN_FIELDS = frozenset((
@@ -112,8 +128,9 @@ def resolve_route(request):
             route_id = request.get("route_id")
             _require(route_id != "kova-auto", "auto requires server classifier context")
             _require(route_id in CHAT_POLICIES, "invalid chat compatibility route")
-            return {"surface": "chat", "route_id": route_id,
-                    "compatibility_alias": True, **deepcopy(CHAT_POLICIES[route_id])}
+            return _bound_runtime({"surface": "chat", "route_id": route_id,
+                    "compatibility_alias": True, **deepcopy(CHAT_POLICIES[route_id])},
+                    "light" if route_id == "instant" else route_id)
         _require(set(request) == {"surface", "family", "effort"},
                  "unsupported chat route fields")
         family, effort = request.get("family"), request.get("effort")
@@ -132,7 +149,7 @@ def resolve_route(request):
         })
         if effort == "Ultra":
             policy.update({"judge": True, "synthesis": True})
-        return policy
+        return _bound_runtime(policy, effort)
 
     _require(set(request) == {"surface", "family", "effort"}, "unsupported work route fields")
     family = request.get("family")
@@ -151,4 +168,4 @@ def resolve_route(request):
     })
     if effort == "Ultra":
         policy.update({"judge": True, "synthesis": True})
-    return policy
+    return _bound_runtime(policy, effort)

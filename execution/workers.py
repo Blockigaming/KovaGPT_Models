@@ -8,6 +8,7 @@ Neither tools nor arbitrary model-supplied commands are executed by this module.
 from time import perf_counter_ns
 
 from core.adapter import build_core_plan
+from release.model_revisions import source_reference_for_route
 from execution.contracts import ExecutionError, ExecutionIntegrityError, canonical, require
 from ultra.orchestrator import build_ultra_plan
 from ultra.binding import bind_ultra_operation, judge_requires_debate, validate_disagreements
@@ -82,6 +83,9 @@ class ModelStageWorker:
         require(stage in spec.stages, "worker stage differs from its execution snapshot")
         plan = spec.plan
         identity = spec.snapshot()["runtime_identity"]
+        source = source_reference_for_route(plan["route_id"])
+        require(identity["model"] == source.slot and identity["model_revision"] == source.revision,
+                "worker identity differs from selected route family")
         candidates = [c for c in PINNED_CORE_CANDIDATES.values()
                       if c["model"] == identity["model"] and c["model_revision"] == identity["model_revision"]]
         require(len(candidates) == 1, "worker model/revision not in the pinned candidate allowlist")

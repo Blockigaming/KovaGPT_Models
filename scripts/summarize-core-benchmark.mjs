@@ -1,8 +1,17 @@
 import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { execFileSync } from "node:child_process";
 
-const serving = JSON.parse(readFileSync(new URL("../config/core-serving.v1.json", import.meta.url), "utf8"));
-const routePolicy = JSON.parse(readFileSync(new URL("../config/route-policy.v1.json", import.meta.url), "utf8"));
+const current = JSON.parse(execFileSync("python3", ["-E", "-S", "-B", "-c", `
+import json
+from core.current_candidates import CORE_SERVING
+from router.policy import resolve_route
+routes = [resolve_route({'surface':'chat','route_id':route}) for route in ('instant','medium','high','extra-high','max')]
+routes += [resolve_route({'surface':surface,'family':family,'effort':effort}) for surface, families in (('chat',('cosmo','orion')),('work',('cosmo','orion','nova'))) for family in families for effort in ('Light','Medium','High','Extra High','Max')]
+print(json.dumps({'serving':CORE_SERVING,'routes':routes}))
+`], { cwd: fileURLToPath(new URL("..", import.meta.url)), encoding: "utf8" }));
+const serving = current.serving;
+const servingCapabilities = JSON.parse(readFileSync(new URL("../config/core-serving.v1.json", import.meta.url), "utf8"));
 const candidates = new Map(serving.candidates.map((candidate) => [candidate.model, candidate]));
 const outcomes = new Set(["success", "failed", "quarantined"]);
 const recordTypes = new Set(["attempt", "lifecycle_close"]);
@@ -35,16 +44,11 @@ const stageIds = (policy) => {
 };
 
 const routeSpecs = new Map();
-for (const route of routePolicy.chat.filter((item) => item.engine === "kova-core")) {
-  const stages = stageIds(route);
-  routeSpecs.set(route.id, {stages, public_stage: stages.at(-1), reasoning_effort: route.reasoning_effort});
-}
-for (const family of routePolicy.work.families) {
-  for (const effort of routePolicy.work.effort_profiles.filter((item) => item.engine === "kova-core")) {
-    const routeId = `work:${family}:${effort.name.toLowerCase().replaceAll(" ", "-")}`;
-    const stages = stageIds(effort);
-    routeSpecs.set(routeId, {stages, public_stage: stages.at(-1), reasoning_effort: effort.reasoning_effort});
-  }
+for (const route of current.routes) {
+  const [planning_passes, answer_passes, critic_passes, verification_passes] = route.passes;
+  const stages = stageIds({planning_passes, answer_passes, critic_passes, verification_passes});
+  routeSpecs.set(route.route_id, {stages, public_stage: stages.at(-1), reasoning_effort: route.reasoning_effort,
+    model: `kova-${route.profile}`});
 }
 
 export const coreConfigurationKey = (record) => [
@@ -146,8 +150,8 @@ export function summarizeCoreBenchmark(records) {
     if (!Number.isInteger(record.gpu_count) || record.gpu_count < 1 || record.gpu_count > 8) {
       throw new Error(`record ${index} invalid gpu_count`);
     }
-    if (!serving.serving_engine_candidates.includes(record.serving_engine)) throw new Error(`record ${index} invalid serving_engine`);
-    if (!serving.endpoint_type_candidates.includes(record.endpoint_type)) throw new Error(`record ${index} invalid endpoint_type`);
+    if (!servingCapabilities.serving_engine_candidates.includes(record.serving_engine)) throw new Error(`record ${index} invalid serving_engine`);
+    if (!servingCapabilities.endpoint_type_candidates.includes(record.endpoint_type)) throw new Error(`record ${index} invalid endpoint_type`);
     if (!/^sha256:[a-f0-9]{64}$/u.test(record.container_image_digest)) throw new Error(`record ${index} invalid container_image_digest`);
     if (!Number.isFinite(record.gpu_rate_per_second_usd) || record.gpu_rate_per_second_usd <= 0) {
       throw new Error(`record ${index} invalid gpu_rate_per_second_usd`);
@@ -179,6 +183,7 @@ export function summarizeCoreBenchmark(records) {
       seenRecordIds.add(`attempt:${record.attempt_id}`);
       const routeSpec = routeSpecs.get(record.route_id);
       if (!routeSpec) throw new Error(`record ${index} invalid route_id`);
+      if (record.model !== routeSpec.model) throw new Error(`record ${index} model differs from route family`);
       if (!outcomes.has(record.outcome)) throw new Error(`record ${index} invalid outcome`);
       if (!["low", "medium", "xhigh"].includes(record.reasoning_effort)) throw new Error(`record ${index} invalid reasoning_effort`);
       if (record.reasoning_effort !== routeSpec.reasoning_effort) throw new Error(`record ${index} reasoning_effort does not match route`);

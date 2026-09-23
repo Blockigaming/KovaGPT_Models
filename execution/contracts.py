@@ -15,6 +15,7 @@ from router.entitlements import (
     CHAT_ALLOWED_BY_TIER, COMPAT_CHAT_ALLOWED_BY_TIER, WORK_ALLOWED_BY_TIER,
 )
 from router.policy import CHAT_FAMILIES, CHAT_POLICIES, WORK_FAMILIES, WORK_EFFORTS
+from release.model_revisions import source_reference_for_route
 
 
 class ExecutionError(ValueError):
@@ -209,6 +210,9 @@ class ExecutionSpec:
                         and plan["candidate_revision"] == identity["model_revision"], "Core identity mismatch")
             else:
                 require(plan["model_selection_required"] is True, "Ultra live model remains unselected")
+                source = source_reference_for_route(plan["route_id"])
+                require(identity["model"] == source.slot and identity["model_revision"] == source.revision,
+                        "Ultra identity differs from selected route family")
             stages = value["stages"]
             require(isinstance(stages, list) and 1 <= len(stages) <= 16, "invalid stage count")
             seen = set()

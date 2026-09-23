@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from training.three_family_contract import validate_all
+from training.three_family_contract import validate
 
 FAMILIES = ("kova-cosmo", "kova-orion", "kova-nova")
 
@@ -24,7 +24,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if bool(args.family) == bool(args.package):
         parser.error("select exactly one family or --package")
-    report = validate_all()
+    report = validate()
     if args.execute:
         parser.error("training blocked: exact dataset approval and paid authority are absent")
     print(json.dumps({

@@ -471,6 +471,22 @@ def append_ledger_event(state: dict, event: dict, *, expected_sequence: int) -> 
             need(family == FAMILIES[len(order)], "out-of-order family grant")
             order.append(family)
     need(kind != "training_grant" or family in FAMILIES, "training grant requires a family")
+    if kind == "family_preserved":
+        need(family in FAMILIES and family in state.get("family_order", []),
+             "preservation requires a granted family")
+        need(not any(item.get("kind") == "family_preserved" and item.get("family") == family
+                     for item in state.get("events", [])), "duplicate family preservation")
+    if kind == "training_grant":
+        events = state.get("events", [])
+        need(any(item.get("kind") == "watchdog_health" for item in events),
+             "watchdog health required before family grant")
+        need(any(item.get("kind") == "cost_admission" for item in events),
+             "cost admission required before family grant")
+        previous = FAMILIES.index(family) - 1
+        if previous >= 0:
+            need(any(item.get("kind") == "family_preserved" and
+                     item.get("family") == FAMILIES[previous] for item in events),
+                 "previous family preservation required before grant")
     assigned = expected_sequence + 1
     committed = json.loads(json.dumps(event))
     committed["sequence"] = assigned

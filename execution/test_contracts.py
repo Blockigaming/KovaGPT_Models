@@ -9,6 +9,13 @@ from execution.test_support import IDENTITY, grant_for, make_plan, make_spec
 
 
 class ExecutionContractTests(unittest.TestCase):
+    def test_ultra_snapshot_rejects_another_family_identity(self):
+        spec = make_spec("work:nova:ultra")
+        changed = spec.snapshot()
+        changed["runtime_identity"] = dict(IDENTITY)
+        with self.assertRaisesRegex(ExecutionError, "invalid execution snapshot"):
+            ExecutionSpec(canonical(changed))
+
     def test_all_36_explicit_and_migration_routes_keep_bounded_budgets(self):
         self.assertEqual(len(ALL_ROUTES), 36)
         for route in sorted(ALL_ROUTES):

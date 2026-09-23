@@ -46,6 +46,7 @@
     "runner_public_key_ed25519_b64": null
   },
   "human_review_required": true,
+  "reviewer_public_key_ed25519_b64": null,
   "all_critical_cases_must_pass": true,
   "evaluation_execution_authorized": false,
   "deployment_authorized": false

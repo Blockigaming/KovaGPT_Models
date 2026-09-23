@@ -74,9 +74,12 @@ def specification(prepared, route="high"):
                                token_counter=tokens)
     ids = [op.get("stage_id", op.get("id")) for op in plan["operations"]]
     cap = sum(op["maximum_input_tokens"] + op["maximum_output_tokens"] for op in plan["operations"])
+    from release.model_revisions import source_reference_for_route
     identity = ({**IDENTITY, "model": plan["candidate_model"],
                  "model_revision": plan["candidate_revision"]}
-                if plan["engine"] == "kova-core" else IDENTITY)
+                if plan["engine"] == "kova-core" else {**IDENTITY,
+                   "model": source_reference_for_route(route).slot,
+                   "model_revision": source_reference_for_route(route).revision})
     return ExecutionSpec.from_plan(plan, limits=ExecutionLimits(time_ns() // 1000000 + 60000,
         cap, len(ids) * 100, 3, 5), runtime_identity=identity, stage_cost_caps={key: 100 for key in ids})
 

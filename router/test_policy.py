@@ -1,9 +1,22 @@
 import unittest
+from unittest.mock import patch
 
-from router.policy import resolve_route
+from router.policy import resolve_route, RUNTIME_PROFILES
 
 
 class RoutePolicyTests(unittest.TestCase):
+    def test_declared_profile_caps_are_checked_at_routing(self):
+        for effort in ("Light", "Medium", "High", "Extra High", "Max"):
+            route = resolve_route({"surface": "work", "family": "nova", "effort": effort})
+            profile = RUNTIME_PROFILES[effort.lower().replace(" ", "-")]
+            self.assertLessEqual(route["maximum_output_tokens"], profile["maximum_output_tokens"])
+            self.assertLessEqual(sum(route["passes"]), profile["maximum_passes"])
+        with patch.dict(RUNTIME_PROFILES["max"], {"maximum_passes": 1}):
+            with self.assertRaisesRegex(ValueError, "profile pass bound"):
+                resolve_route({"surface": "work", "family": "nova", "effort": "Max"})
+        with patch.dict(RUNTIME_PROFILES["light"], {"maximum_output_tokens": 1}):
+            with self.assertRaisesRegex(ValueError, "profile output bound"):
+                resolve_route({"surface": "work", "family": "nova", "effort": "Light"})
     def test_instant_is_one_pass_core_without_activity(self):
         route = resolve_route({"surface": "chat", "route_id": "instant"})
         self.assertEqual(route["engine"], "kova-core")
