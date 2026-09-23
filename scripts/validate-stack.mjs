@@ -393,14 +393,17 @@ if (activity.rules.must_follow_real_runtime_or_tool_event !== true || activity.r
   throw new Error("activity_must_be_truthfully_grounded");
 }
 if (!activity.required_fields.includes("grounding_operation_id")) throw new Error("activity_runtime_grounding_id_required");
-if (completion.baseline_percent !== 0 || completion.current_verified_percent !== 22 || completion.live_model_routes !== 0 || completion.target_model_routes !== 25) {
+if (completion.baseline_percent !== 0 || completion.current_verified_percent !== 22 || completion.live_model_routes !== 0 || completion.target_model_routes !== 37) {
   throw new Error("completion_progress_contract_mismatch");
 }
 if (
-  evaluations.status !== "all_routes_blocked" || evaluations.target_routes !== 25 ||
+  evaluations.status !== "all_routes_blocked" || evaluations.target_routes !== 37 ||
   evaluations.passing_routes.length !== 0 ||
   evaluations.offline_contract_evidence.status !== "passed" ||
-  evaluations.offline_contract_evidence.route_contracts_checked !== 25 ||
+  evaluations.offline_contract_evidence.route_contracts_checked !== 37 ||
+  evaluations.offline_contract_evidence.engine_split.auto !== 1 ||
+  evaluations.offline_contract_evidence.engine_split.core !== 30 ||
+  evaluations.offline_contract_evidence.engine_split.ultra !== 6 ||
   evaluations.offline_contract_evidence.actual_model_outputs_evaluated !== false ||
   evaluations.offline_contract_evidence.quality_or_factuality_claimed !== false ||
   evaluations.offline_contract_evidence.paid_provider_calls !== 0 ||

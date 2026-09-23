@@ -14,7 +14,6 @@ from router.policy import CHAT_FAMILIES, CHAT_POLICIES, WORK_EFFORTS, WORK_FAMIL
 
 
 SELECTION_SCHEMA = "kova-models.v2"
-EXTRA_HIGH_ALIASES = frozenset(("extra_high", "extra-high"))
 AUTO_ALIASES = frozenset(("auto", "kova-auto"))
 WORK_EFFORT_ALIASES = {effort: effort for effort in WORK_EFFORTS}
 WORK_EFFORT_ALIASES.update({effort.lower().replace(" ", "-"): effort for effort in WORK_EFFORTS})
@@ -87,21 +86,16 @@ def resolve_application_selection(value, *, grant, prompt=None, auto_budget=None
                 "unsupported selection fields")
         mode = value["mode_id"]
         require(isinstance(mode, str), "invalid Chat mode")
-        if mode in AUTO_ALIASES:
-            if not auto_enabled:
-                raise ExecutionBlocked("Auto is not enabled by the server for this request")
-            route = classify_auto(prompt, entitlement=grant.tier, budget=auto_budget)
-            route_id = route["route_id"]
-            features = tuple(route["feature_ids"])
-            by_auto = True
-        else:
-            route_id = "extra-high" if mode in EXTRA_HIGH_ALIASES else mode
-            require(route_id in CHAT_POLICIES, "invalid Chat mode")
-            by_auto, features = False, ()
-        grant.authorize(grant.owner_id, route_id,
-                        application_mode_id=mode if not by_auto else None)
-        application_id = "extra_high" if route_id == "extra-high" else route_id
-        return ResolvedSelection(route_id, "chat", application_id, by_auto, features)
+        require(mode in AUTO_ALIASES, "migration Chat aliases are not v2 selections")
+        if not auto_enabled:
+            raise ExecutionBlocked("Auto is not enabled by the server for this request")
+        route = classify_auto(prompt, entitlement=grant.tier, budget=auto_budget)
+        alias = route["route_id"]
+        family = CHAT_POLICIES[alias]["profile"]
+        effort = "light" if alias == "instant" else alias
+        route_id = f"chat:{family}:{effort}"
+        grant.authorize(grant.owner_id, route_id)
+        return ResolvedSelection(route_id, "chat", None, True, tuple(route["feature_ids"]))
     require(set(value) == {"schema_version", "surface", "family", "effort"}, "unsupported selection fields")
     family, raw_effort = value["family"], value["effort"]
     require(isinstance(family, str) and family in WORK_FAMILIES, "invalid Work family")

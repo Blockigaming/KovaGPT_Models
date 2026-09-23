@@ -142,11 +142,17 @@ def validate_evidence_matrix(envelopes: list[dict], *, source_commit: str,
         family_pin = family_bindings[family]
         if type(pin) is not dict or type(family_pin) is not dict:
             raise ValueError("invalid_evaluation_input_pin")
+        variant_adapters = family_pin.get("variant_adapters")
+        if (type(variant_adapters) is not dict or set(variant_adapters) != set(VARIANTS)
+                or variant_adapters["configured_base"] is not None
+                or not _hex(variant_adapters["trained_adapter"], 64)
+                or variant_adapters["trained_adapter"] == "0" * 64):
+            raise ValueError("invalid_variant_artifact_binding")
         payload = verify_evidence(
             envelope, expected_source_commit=source_commit, expected_family=family,
             expected_base_revision=family_pin["base_revision"],
             expected_base_manifest_sha256=family_pin["base_manifest_sha256"],
-            expected_adapter_sha256=family_pin["adapter_sha256"],
+            expected_adapter_sha256=variant_adapters[variant],
             expected_runner_sha256=family_pin["runner_sha256"],
             expected_case_id=case_id, expected_variant=variant,
             expected_case_category=category, expected_runtime_profile=pin["runtime_profile"],
@@ -173,7 +179,7 @@ def validate_evidence_matrix(envelopes: list[dict], *, source_commit: str,
 
 
 def create_evidence(*, source_commit: str, family: str, base_revision: str,
-                    base_manifest_sha256: str, adapter_sha256: str,
+                    base_manifest_sha256: str, adapter_sha256: str | None,
                     runner_sha256: str, case_id: str, prompt: str, answer: str,
                     runtime_profile: str, conversation_id: str, session_id: str,
                     dimensions: list[str], private_key: Ed25519PrivateKey,
@@ -182,16 +188,20 @@ def create_evidence(*, source_commit: str, family: str, base_revision: str,
         raise ValueError("unknown_family")
     if not _hex(source_commit, 40) or not _hex(base_revision, 40):
         raise ValueError("invalid_source_or_base_revision")
-    for name, value in (("base_manifest", base_manifest_sha256), ("adapter", adapter_sha256),
+    if variant not in VARIANTS or case_category not in CASE_CATEGORIES:
+        raise ValueError("invalid_evaluation_matrix_cell")
+    if (adapter_sha256 is None) != (variant == "configured_base"):
+        raise ValueError("variant_adapter_binding_mismatch")
+    for name, value in (("base_manifest", base_manifest_sha256),
                         ("runner", runner_sha256)):
         if not _hex(value, 64):
             raise ValueError(f"invalid_{name}_sha256")
+    if variant == "trained_adapter" and (not _hex(adapter_sha256, 64) or adapter_sha256 == "0" * 64):
+        raise ValueError("invalid_adapter_sha256")
     if not all(_identifier(value) for value in (case_id, conversation_id, session_id)):
         raise ValueError("invalid_evaluation_context")
     if runtime_profile not in PROFILES:
         raise ValueError("invalid_runtime_profile")
-    if variant not in VARIANTS or case_category not in CASE_CATEGORIES:
-        raise ValueError("invalid_evaluation_matrix_cell")
     if not isinstance(prompt, str) or not prompt or not isinstance(answer, str) or not answer:
         raise ValueError("empty_evaluation_binding")
     dimensions = list(_validated_dimensions(dimensions))

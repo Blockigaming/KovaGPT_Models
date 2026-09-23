@@ -28,7 +28,7 @@ def command_plan() -> list[dict]:
         "controllerPrincipalObjectId=${CONTROLLER_PRINCIPAL_OBJECT_ID}",
         "deadlineUtc=${PILOT_DEADLINE_UTC}",
     ]
-    return [
+    steps = [
         {
             "id": 1,
             "name": "recheck_live_price",
@@ -129,6 +129,23 @@ def command_plan() -> list[dict]:
         },
         {"id": 18, "name": "reconcile_final_charge", "argv": ["az", "costmanagement", "query", "--type", "ActualCost", "--scope", "${SUBSCRIPTION_SCOPE}"], "mode": "read_only"},
     ]
+    # Group-scoped what-if requires both target groups to exist. The setup is
+    # explicit in the plan but remains blocked until a separate paid release.
+    steps.insert(2, {
+        "name": "prepare_pilot_and_watchdog_resource_groups",
+        "argvs": [
+            ["az", "group", "create", "--name", "${PILOT_RESOURCE_GROUP}",
+             "--location", "eastus", "--output", "json"],
+            ["az", "group", "create", "--name", "${WATCHDOG_RESOURCE_GROUP}",
+             "--location", "eastus", "--output", "json"],
+        ],
+        "resource_creation_authorized": False,
+        "must_succeed_before_step": 4,
+        "mode": "print_only_resource_creation",
+    })
+    for ordinal, step in enumerate(steps, 1):
+        step["id"] = ordinal
+    return steps
 
 
 def main(argv=None) -> int:

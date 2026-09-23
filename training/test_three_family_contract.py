@@ -21,16 +21,22 @@ from training import three_family_contract as contract
 class ThreeFamilyContractTests(unittest.TestCase):
     def test_operator_has_exact_dry_run_sequence(self):
         plan = command_plan()
-        self.assertEqual([step["id"] for step in plan], list(range(1, 19)))
+        self.assertEqual([step["id"] for step in plan], list(range(1, 20)))
         self.assertTrue(all(step["mode"] != "execute" for step in plan))
-        self.assertEqual(plan[15]["mode"], "print_only_destructive")
+        self.assertEqual(plan[16]["mode"], "print_only_destructive")
         self.assertIn("--retail-price-evidence", plan[0]["verify_argv"])
-        self.assertIn("provisionPilot=true", plan[2]["argv"])
-        self.assertIn("provisionWatchdog=true", plan[3]["argv"])
-        self.assertIn("pilotSuffix=${PILOT_SUFFIX}", plan[3]["argv"])
-        self.assertIn("provisionPilot=true", plan[4]["argv"])
-        self.assertIn("--all-families", plan[6]["argv"])
-        cleanup = json.dumps(plan[15:17])
+        self.assertEqual(plan[2]["mode"], "print_only_resource_creation")
+        self.assertFalse(plan[2]["resource_creation_authorized"])
+        self.assertEqual(plan[2]["must_succeed_before_step"], 4)
+        self.assertEqual({argv[4] for argv in plan[2]["argvs"]},
+                         {"${PILOT_RESOURCE_GROUP}", "${WATCHDOG_RESOURCE_GROUP}"})
+        self.assertTrue(all(argv[:3] == ["az", "group", "create"] for argv in plan[2]["argvs"]))
+        self.assertIn("provisionPilot=true", plan[3]["argv"])
+        self.assertIn("provisionWatchdog=true", plan[4]["argv"])
+        self.assertIn("pilotSuffix=${PILOT_SUFFIX}", plan[4]["argv"])
+        self.assertIn("provisionPilot=true", plan[5]["argv"])
+        self.assertIn("--all-families", plan[7]["argv"])
+        cleanup = json.dumps(plan[16:18])
         self.assertIn("${PILOT_RESOURCE_GROUP}", cleanup)
         self.assertIn("${WATCHDOG_RESOURCE_GROUP}", cleanup)
 
@@ -140,7 +146,9 @@ class ThreeFamilyContractTests(unittest.TestCase):
         trusted_public = base64.b64encode(private_key.public_key().public_bytes_raw()).decode("ascii")
         families = {
             family: {"base_revision": "e" * 40, "base_manifest_sha256": "a" * 64,
-                     "adapter_sha256": "b" * 64, "runner_sha256": "c" * 64}
+                     "variant_adapters": {"configured_base": None,
+                                          "trained_adapter": "b" * 64},
+                     "runner_sha256": "c" * 64}
             for family in guard.FAMILIES
         }
         case_pins, envelopes = {}, []
@@ -161,7 +169,8 @@ class ThreeFamilyContractTests(unittest.TestCase):
                         envelopes.append(guard.create_evidence(
                             source_commit="d" * 40, family=family,
                             base_revision="e" * 40, base_manifest_sha256="a" * 64,
-                            adapter_sha256="b" * 64, runner_sha256="c" * 64,
+                            adapter_sha256=None if variant == "configured_base" else "b" * 64,
+                            runner_sha256="c" * 64,
                             variant=variant, case_category=category, case_id=case_id,
                             prompt=prompt, answer="I am Kova.", runtime_profile=profile,
                             conversation_id=f"conversation-{index}", session_id=f"session-{index}",
@@ -209,6 +218,16 @@ class ThreeFamilyContractTests(unittest.TestCase):
             self.assertEqual(set(guard.validate_evidence_matrix(
                 envelopes, source_commit="d" * 40, family_bindings=families,
                 case_bindings=case_pins, **review_args)), guard.REQUIRED_DIMENSIONS)
+            fake_base = deepcopy(envelopes)
+            base_payload = fake_base[0]["payload"]
+            self.assertEqual(base_payload["variant"], "configured_base")
+            base_payload["adapter_sha256"] = "b" * 64
+            fake_base[0]["signature_ed25519_b64"] = base64.b64encode(
+                private_key.sign(guard._canonical(base_payload))).decode("ascii")
+            with self.assertRaisesRegex(ValueError, "evidence_binding_mismatch:adapter_sha256"):
+                guard.validate_evidence_matrix(fake_base, source_commit="d" * 40,
+                                               family_bindings=families, case_bindings=case_pins,
+                                               **review_args)
             failed = deepcopy(verdicts)
             first_case = envelopes[0]["payload"]["case_id"]
             failed[first_case]["payload"]["passed"] = False
@@ -262,7 +281,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
                          "authoritative_three_family_policy_no_drift")
         original = Path.read_text
         for relative in ("core/adapter.py", "core/current_candidates.py",
-                         "worker/handler.py", "worker/model_artifact.py"):
+                         "worker/handler.py", "worker/model_artifact.py", "release/rollout.py"):
             def changed(path, *args, **kwargs):
                 source = original(path, *args, **kwargs)
                 return source + "\n# loads core-serving.v1.json\n" if str(path).endswith(relative) else source

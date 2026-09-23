@@ -1,5 +1,6 @@
 import unittest
 
+from core.current_candidates import NATIVE_CONTEXT_TOKENS
 from ultra.orchestrator import build_ultra_plan
 
 
@@ -102,6 +103,12 @@ class UltraPlannerTests(unittest.TestCase):
         self.assertLessEqual(reserved, plan["maximum_total_tokens"])
         with self.assertRaisesRegex(ValueError, "after input and artifact reservation"):
             self.build(self.request("x" * 100_000), max_total_tokens=4096)
+
+    def test_large_valid_admission_still_fits_each_native_context_window(self):
+        plan = self.build(self.request("Write a short general report."), max_total_tokens=131072)
+        for operation in plan["operations"]:
+            self.assertLessEqual(operation["maximum_input_tokens"] +
+                                 operation["maximum_output_tokens"], NATIVE_CONTEXT_TOKENS)
 
     def test_plus_work_ultra_is_admitted_and_preserves_distinct_family_behavior(self):
         plans = []

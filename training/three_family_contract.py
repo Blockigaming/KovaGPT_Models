@@ -440,7 +440,10 @@ def validate_cost_lifecycle_operator():
     need(lifecycle["remote_ledger"]["exclusive_lease_seconds"] == 60)
     need(tuple(lifecycle["sequential_family_order"]) == FAMILIES)
     operator = load_json(ROOT / "config/kova-three-family-operator-plan.v1.json")
-    need([step["id"] for step in operator["steps"]] == list(range(1, 19)))
+    need([step["id"] for step in operator["steps"]] == list(range(1, 20)))
+    need(operator["steps"][2] == {"id": 3,
+         "name": "prepare_pilot_and_watchdog_resource_groups",
+         "dry_run": "enumerate_required_creation_no_execution"})
     need(all(step["dry_run"] for step in operator["steps"]))
     need(operator["paid_execution_statement"].endswith("No production deployment is authorized."))
     pilot = load_json(ROOT / "config/kova-three-family-pilot.v1.json")

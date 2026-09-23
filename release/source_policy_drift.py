@@ -16,7 +16,7 @@ PUBLIC_SOURCE = (
 )
 CURRENT_RUNTIME_SOURCE = (
     "core/adapter.py", "core/current_candidates.py", "worker/handler.py",
-    "worker/model_artifact.py",
+    "worker/model_artifact.py", "release/rollout.py",
 )
 FORBIDDEN_PUBLIC = ("Qwen/", "Qwen3-", "qwen3-", "Kova 5.6", "chat-shared")
 

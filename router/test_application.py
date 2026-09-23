@@ -58,6 +58,21 @@ class ApplicationBridgeTests(unittest.TestCase):
         with self.assertRaises(ExecutionError):
             self.resolve(value, grant=grant("free"))
 
+    def test_v2_rejects_migration_aliases_and_normalizes_auto_to_canonical(self):
+        for mode in ("instant", "medium", "high", "extra-high", "extra_high", "max", "ultra"):
+            with self.subTest(mode=mode), self.assertRaises(ExecutionError):
+                self.resolve({"schema_version": SELECTION_SCHEMA, "surface": "chat", "mode_id": mode})
+        selected = self.resolve(
+            {"schema_version": SELECTION_SCHEMA, "surface": "chat", "mode_id": "auto"},
+            grant=grant("free", routes={"chat:cosmo:light"}), prompt="What is two plus two?",
+            auto_enabled=True,
+            auto_budget={"ultra_authorized": False, "remaining_usd": 0,
+                         "estimated_ultra_usd": 1},
+        )
+        self.assertEqual(selected.route_id, "chat:cosmo:light")
+        self.assertTrue(selected.selected_by_auto)
+        self.assertIsNone(selected.application_mode_id)
+
     def test_exact_route_allowlist_is_still_required(self):
         with self.assertRaises(ExecutionBlocked):
             self.resolve(self.canonical(), grant=grant("free", routes={"instant"}))

@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from router.policy import resolve_route, RUNTIME_PROFILES
+from core.current_candidates import NATIVE_CONTEXT_TOKENS
 from ultra.binding import DISAGREEMENT_INSTRUCTION, JUDGE_INSTRUCTION
 from ultra.conversation import validated_conversation
 
@@ -239,6 +240,11 @@ def build_ultra_plan(request, *, admission, token_counter):
     available = admission["max_total_tokens"] - fixed_input_tokens
     per_operation_tokens = available // output_and_propagation_units
     per_operation_tokens = min(per_operation_tokens, RUNTIME_PROFILES["ultra"]["maximum_output_tokens"])
+    per_operation_tokens = min(
+        per_operation_tokens,
+        *(max(0, (NATIVE_CONTEXT_TOKENS - spec["template_input_tokens"]) //
+               (1 + len(spec["artifact_ids"]))) for spec in specs),
+    )
     _require(per_operation_tokens >= 512, "Ultra token budget too small after input and artifact reservation")
 
     operations = []

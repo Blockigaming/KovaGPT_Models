@@ -83,6 +83,18 @@ class RolloutTests(unittest.TestCase):
         with self.assertRaises(RolloutRejected):
             self.promote()
 
+    def test_current_policy_or_family_revision_expires_a_staged_plan(self):
+        original = Path.read_bytes
+        for relative in ("config/current-product-policy.v3.json", "router/entitlements.py",
+                         "release/model_revisions.py", "core/current_candidates.py"):
+            def changed(path):
+                data = original(path)
+                return data + b"\n# changed" if str(path).endswith(relative) else data
+            with self.subTest(relative=relative), patch.object(Path, "read_bytes", changed):
+                self.assertNotEqual(policy_digest(), self.plan["policy_sha256"])
+                with self.assertRaises(RolloutRejected):
+                    validate_plan(self.plan)
+
     def test_missing_failed_unknown_or_manual_pending_route_gates_block_every_route(self):
         for route in evidence(self.plan, 0)["routes"]:
             for bad in (None, "fail", "unknown", "pending_human_review", True):
