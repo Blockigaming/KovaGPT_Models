@@ -168,11 +168,21 @@ class ThreeFamilyContractTests(unittest.TestCase):
             )
 
     def test_public_evaluation_requires_source_pinned_full_adapter_bundles(self):
+        weights = {
+            family: hashlib.sha256(f"weights:{family}".encode()).hexdigest()
+            for family in guard.FAMILIES
+        }
+        bundles = {
+            family: hashlib.sha256(f"bundle:{family}".encode()).hexdigest()
+            for family in guard.FAMILIES
+        }
         families = {
-            family: {"variant_adapters": {"configured_base": None,
-                                         "trained_adapter": "b" * 64},
+            family: {"base_revision": guard.MODEL_SOURCE_REFERENCES[family].revision,
+                     "base_manifest_sha256": guard.MANIFEST_SHA256[family],
+                     "variant_adapters": {"configured_base": None,
+                                         "trained_adapter": weights[family]},
                      "variant_adapter_bundles": {"configured_base": None,
-                                                 "trained_adapter": "f" * 64}}
+                                                 "trained_adapter": bundles[family]}}
             for family in guard.FAMILIES
         }
         with patch.object(guard, "_trusted_reviewed_case_bindings", return_value={}):
@@ -182,8 +192,9 @@ class ThreeFamilyContractTests(unittest.TestCase):
                     case_bindings={}, review_verdicts={})
             registry = deepcopy(guard.CORE_SERVING)
             for candidate in registry["candidates"]:
-                candidate["adapter_sha256"] = "b" * 64
-                candidate["adapter_bundle_sha256"] = "f" * 64
+                family = candidate["id"]
+                candidate["adapter_sha256"] = weights[family]
+                candidate["adapter_bundle_sha256"] = bundles[family]
             with patch.object(guard, "CORE_SERVING", registry):
                 guard._require_trusted_family_adapter_bindings(families)
                 changed_bundle = deepcopy(families)
@@ -197,6 +208,54 @@ class ThreeFamilyContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "untrusted_variant_artifact_binding"):
                     guard.validate_evidence_matrix(
                         [], source_commit="d" * 40, family_bindings=changed_weights,
+                        case_bindings={}, review_verdicts={})
+                wrong_revision = deepcopy(families)
+                wrong_revision["kova-cosmo"]["base_revision"] = families["kova-orion"]["base_revision"]
+                with self.assertRaisesRegex(ValueError, "untrusted_base_revision_binding"):
+                    guard.validate_evidence_matrix(
+                        [], source_commit="d" * 40, family_bindings=wrong_revision,
+                        case_bindings={}, review_verdicts={})
+                wrong_manifest = deepcopy(families)
+                wrong_manifest["kova-cosmo"]["base_manifest_sha256"] = families["kova-orion"][
+                    "base_manifest_sha256"]
+                with self.assertRaisesRegex(ValueError, "untrusted_base_manifest_binding"):
+                    guard.validate_evidence_matrix(
+                        [], source_commit="d" * 40, family_bindings=wrong_manifest,
+                        case_bindings={}, review_verdicts={})
+                wrong_registry_revision = deepcopy(registry)
+                next(candidate for candidate in wrong_registry_revision["candidates"]
+                     if candidate["id"] == "kova-cosmo")["revision"] = families["kova-orion"]["base_revision"]
+                with patch.object(guard, "CORE_SERVING", wrong_registry_revision), \
+                     self.assertRaisesRegex(ValueError, "untrusted_base_revision_binding"):
+                    guard.validate_evidence_matrix(
+                        [], source_commit="d" * 40, family_bindings=families,
+                        case_bindings={}, review_verdicts={})
+                with patch.object(guard, "sha256_file", return_value="0" * 64), \
+                     self.assertRaisesRegex(ValueError, "trusted_base_manifest_source_mismatch"):
+                    guard.validate_evidence_matrix(
+                        [], source_commit="d" * 40, family_bindings=families,
+                        case_bindings={}, review_verdicts={})
+                duplicate_weights = deepcopy(registry)
+                next(candidate for candidate in duplicate_weights["candidates"]
+                     if candidate["id"] == "kova-orion")["adapter_sha256"] = weights["kova-cosmo"]
+                duplicate_weight_bindings = deepcopy(families)
+                duplicate_weight_bindings["kova-orion"]["variant_adapters"]["trained_adapter"] = weights[
+                    "kova-cosmo"]
+                with patch.object(guard, "CORE_SERVING", duplicate_weights), \
+                     self.assertRaisesRegex(ValueError, "duplicate_trusted_family_adapter_artifact"):
+                    guard.validate_evidence_matrix(
+                        [], source_commit="d" * 40, family_bindings=duplicate_weight_bindings,
+                        case_bindings={}, review_verdicts={})
+                duplicate_bundles = deepcopy(registry)
+                next(candidate for candidate in duplicate_bundles["candidates"]
+                     if candidate["id"] == "kova-orion")["adapter_bundle_sha256"] = bundles["kova-cosmo"]
+                duplicate_bundle_bindings = deepcopy(families)
+                duplicate_bundle_bindings["kova-orion"]["variant_adapter_bundles"]["trained_adapter"] = bundles[
+                    "kova-cosmo"]
+                with patch.object(guard, "CORE_SERVING", duplicate_bundles), \
+                     self.assertRaisesRegex(ValueError, "duplicate_trusted_family_adapter_artifact"):
+                    guard.validate_evidence_matrix(
+                        [], source_commit="d" * 40, family_bindings=duplicate_bundle_bindings,
                         case_bindings={}, review_verdicts={})
 
     def test_signed_evaluation_matrix_rejects_missing_replayed_and_substituted_cases(self):

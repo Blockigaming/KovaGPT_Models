@@ -93,11 +93,16 @@ class RolloutTests(unittest.TestCase):
                          "release/model_revisions.py", "core/current_candidates.py",
                          "prompts/kova-identity.v3.txt", "core/identity.py",
                          "config/kova-three-family-dataset.v2.json", "worker/handler.py",
+                         "config/qwen3-0.6b-download-manifest.v1.json",
+                         "config/qwen3-1.7b-download-manifest.v1.json",
+                         "config/qwen3-4b-download-manifest.v1.json",
                          "worker/model_artifact.py", "worker/model_startup.py",
                          "worker/serving_runtime.py", "execution/contracts.py",
                          "scripts/summarize-core-benchmark.mjs", "ultra/binding.py",
                          "execution/workers.py", "execution/source_context.py",
-                         "evaluation/three_family_guard.py", "config/inference-contract.v1.json"):
+                         "evaluation/three_family_guard.py", "config/inference-contract.v1.json",
+                         "training/three_family_contract.py",
+                         "config/completion-target.v1.json"):
             def changed(path):
                 data = original(path)
                 return data + b"\n# changed" if str(path).endswith(relative) else data

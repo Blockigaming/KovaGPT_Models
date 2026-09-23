@@ -11,6 +11,8 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from core.current_candidates import CORE_SERVING
+from release.model_revisions import MODEL_SOURCE_REFERENCES
+from training.three_family_contract import MANIFEST_PATHS, MANIFEST_SHA256
 
 ROOT = Path(__file__).resolve().parents[1]
 FAMILIES = {"kova-cosmo", "kova-orion", "kova-nova"}
@@ -238,7 +240,7 @@ def validate_evidence_matrix(envelopes: list[dict], *, source_commit: str,
 
 
 def _require_trusted_family_adapter_bindings(family_bindings: dict) -> None:
-    """Tie public evaluation to full artifact pins in the source candidate registry."""
+    """Tie public evidence to source pins, without asserting vendor provenance."""
     candidates = CORE_SERVING.get("candidates")
     if (type(family_bindings) is not dict or set(family_bindings) != FAMILIES
             or type(candidates) is not list or len(candidates) != len(FAMILIES)
@@ -248,20 +250,40 @@ def _require_trusted_family_adapter_bindings(family_bindings: dict) -> None:
     registry = {candidate.get("id"): candidate for candidate in candidates}
     if set(registry) != FAMILIES:
         raise ValueError("untrusted_variant_artifact_binding")
+    pinned_weights = set()
+    pinned_bundles = set()
     for family in FAMILIES:
         candidate = registry[family]
+        pin = family_bindings[family]
+        if type(pin) is not dict:
+            raise ValueError("untrusted_variant_artifact_binding")
+        source = MODEL_SOURCE_REFERENCES[family]
+        if (candidate.get("model") != family
+                or candidate.get("revision") != source.revision
+                or pin.get("base_revision") != source.revision):
+            raise ValueError("untrusted_base_revision_binding")
+        manifest_sha256 = MANIFEST_SHA256[family]
+        if pin.get("base_manifest_sha256") != manifest_sha256:
+            raise ValueError("untrusted_base_manifest_binding")
+        try:
+            if sha256_file(ROOT / MANIFEST_PATHS[family]) != manifest_sha256:
+                raise ValueError("trusted_base_manifest_source_mismatch")
+        except OSError as exc:
+            raise ValueError("trusted_base_manifest_source_mismatch") from exc
         weights = candidate.get("adapter_sha256")
         bundle = candidate.get("adapter_bundle_sha256")
         if (not _hex(weights, 64) or weights == "0" * 64
                 or not _hex(bundle, 64) or bundle == "0" * 64):
             raise ValueError("trusted_adapter_bundle_not_pinned")
-        pin = family_bindings[family]
-        if (type(pin) is not dict
-                or type(pin.get("variant_adapters")) is not dict
+        if (type(pin.get("variant_adapters")) is not dict
                 or type(pin.get("variant_adapter_bundles")) is not dict
                 or pin["variant_adapters"].get("trained_adapter") != weights
                 or pin["variant_adapter_bundles"].get("trained_adapter") != bundle):
             raise ValueError("untrusted_variant_artifact_binding")
+        if weights in pinned_weights or bundle in pinned_bundles:
+            raise ValueError("duplicate_trusted_family_adapter_artifact")
+        pinned_weights.add(weights)
+        pinned_bundles.add(bundle)
 
 
 def _validate_evidence_matrix_authenticated(envelopes: list[dict], *, source_commit: str,

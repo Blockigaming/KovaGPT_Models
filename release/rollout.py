@@ -72,6 +72,9 @@ def policy_digest():
     paths = ("release/rollout.py", "config/current-product-policy.v3.json",
              "prompts/kova-identity.v3.txt", "core/identity.py",
              "config/kova-three-family-dataset.v2.json",
+             "config/qwen3-0.6b-download-manifest.v1.json",
+             "config/qwen3-1.7b-download-manifest.v1.json",
+             "config/qwen3-4b-download-manifest.v1.json",
              "config/kova-runtime-profiles.v1.json", "router/policy.py",
              "config/ultra-orchestration.v1.json", "config/activity-event.v1.json",
              "config/kova-three-family-evaluation.v1.json", "config/model-rollout.v1.json",
@@ -84,7 +87,8 @@ def policy_digest():
              "worker/serving_runtime.py", "execution/contracts.py",
              "scripts/summarize-core-benchmark.mjs",
              "evaluation/three_family_guard.py", "config/inference-contract.v1.json",
-             "config/evaluation-gates.v1.json",
+             "training/three_family_contract.py",
+             "config/completion-target.v1.json", "config/evaluation-gates.v1.json",
              "evaluations/offline-suite.v1.json")
     return digest({path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in paths})
 
