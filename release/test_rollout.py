@@ -85,7 +85,11 @@ class RolloutTests(unittest.TestCase):
 
     def test_current_policy_or_family_revision_expires_a_staged_plan(self):
         original = Path.read_bytes
-        for relative in ("config/current-product-policy.v3.json", "router/entitlements.py",
+        for relative in ("release/rollout.py", "evaluation/offline.py",
+                         "ultra/conversation.py", "config/ultra-orchestration.v1.json",
+                         "config/activity-event.v1.json", "config/kova-three-family-evaluation.v1.json",
+                         "config/model-rollout.v1.json",
+                         "config/current-product-policy.v3.json", "router/entitlements.py",
                          "release/model_revisions.py", "core/current_candidates.py",
                          "prompts/kova-identity.v3.txt", "core/identity.py",
                          "config/kova-three-family-dataset.v2.json", "worker/handler.py",
