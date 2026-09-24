@@ -1007,17 +1007,24 @@ class ThreeFamilyContractTests(unittest.TestCase):
     def test_ledger_assigns_sequence_and_rejects_stale_duplicate_out_of_order(self):
         from datetime import datetime, timedelta, timezone
         now = datetime(2026, 9, 24, 12, 1, tzinfo=timezone.utc)
+        lifecycle = {
+            "lifecycle_id": "three-family-pilot", "ledger_id": "ledger-first",
+            "admission_scope": "three-family",
+            "pilot_resource_group_id": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/kova-pilot",
+            "watchdog_resource_group_id": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/kova-watchdog",
+        }
         def health(family):
             return {"kind": "watchdog_health", "family": family, "healthy": True,
                     "rule_id": "tested-rule", "observed_at_utc": "2026-09-24T12:00:00Z",
                     "expires_at_utc": "2026-09-24T12:05:00Z"}
-        def cost(family, remaining="3.3000"):
+        def cost(family, remaining="3.6500"):
             return {"kind": "cost_admission", "family": family,
                     "account_price_verified": True, "quote_sha256": "a" * 64,
                     "remaining_budget_usd": remaining,
                     "observed_at_utc": "2026-09-24T12:00:00Z",
                     "expires_at_utc": "2026-09-24T12:05:00Z"}
-        state = {"sequence": 0, "terminal": False, "family_order": [], "events": []}
+        state = {"sequence": 0, "terminal": False, "family_order": [], "events": [],
+                 **lifecycle}
         state = contract.append_ledger_event(state, health("kova-cosmo"),
                                              expected_sequence=0, now=now)
         self.assertEqual(state["events"][-1]["sequence"], 1)
@@ -1029,9 +1036,11 @@ class ThreeFamilyContractTests(unittest.TestCase):
                                          expected_sequence=1, now=now)
         with self.assertRaisesRegex(contract.ContractError, "remaining family budget insufficient"):
             contract.append_ledger_event(state, cost("kova-cosmo", "3.2000"),
-                                         expected_sequence=1, now=now)
+                                         expected_sequence=1, now=now,
+                                         trusted_lifecycle=lifecycle)
         state = contract.append_ledger_event(state, cost("kova-cosmo"),
-                                             expected_sequence=1, now=now)
+                                             expected_sequence=1, now=now,
+                                             trusted_lifecycle=lifecycle)
         before_grant = deepcopy(state)
         state = contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-cosmo"},
                                              expected_sequence=2, now=now)
@@ -1087,9 +1096,11 @@ class ThreeFamilyContractTests(unittest.TestCase):
                                              expected_sequence=4, now=now)
         with self.assertRaisesRegex(contract.ContractError, "remaining family budget insufficient"):
             contract.append_ledger_event(state, cost("kova-orion", "3.3000"),
-                                         expected_sequence=5, now=now)
+                                         expected_sequence=5, now=now,
+                                         trusted_lifecycle=lifecycle)
         state = contract.append_ledger_event(state, cost("kova-orion", "3.9000"),
-                                             expected_sequence=5, now=now)
+                                             expected_sequence=5, now=now,
+                                             trusted_lifecycle=lifecycle)
         with self.assertRaisesRegex(contract.ContractError, "stale admission"):
             contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-orion"},
                                          expected_sequence=6, now=now + timedelta(minutes=5))
@@ -1102,17 +1113,39 @@ class ThreeFamilyContractTests(unittest.TestCase):
             contract.append_ledger_event(state, {**cost("kova-nova"), "sequence": 3},
                                          expected_sequence=2)
 
+        cosmo = {**lifecycle, "admission_scope": "cosmo-only"}
+        cosmo_state = {"sequence": 1, "terminal": False, "family_order": [],
+                       "events": [health("kova-cosmo")], **cosmo}
+        with self.assertRaisesRegex(contract.ContractError, "remaining family budget insufficient"):
+            contract.append_ledger_event(cosmo_state, cost("kova-cosmo", "3.2999"),
+                                         expected_sequence=1, now=now,
+                                         trusted_lifecycle=cosmo)
+        contract.append_ledger_event(cosmo_state, cost("kova-cosmo", "3.3000"),
+                                     expected_sequence=1, now=now,
+                                     trusted_lifecycle=cosmo)
+
     def test_terminal_ledger_rejects_post_cleanup_events(self):
         from datetime import datetime, timezone
         now = datetime(2026, 9, 24, 12, 1, tzinfo=timezone.utc)
-        state = {"sequence": 0, "terminal": False, "family_order": [], "events": []}
+        lifecycle = {
+            "lifecycle_id": "cosmo-pilot", "ledger_id": "ledger-123",
+            "admission_scope": "cosmo-only",
+            "pilot_resource_group_id": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/kova-pilot",
+            "watchdog_resource_group_id": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/kova-watchdog",
+        }
+        state = {"sequence": 0, "terminal": False, "family_order": [], "events": [],
+                 **lifecycle}
         with self.assertRaisesRegex(contract.ContractError, "trusted cleanup verifier key"):
             contract.append_ledger_event(state, {"kind": "cleanup_terminal"},
-                                         expected_sequence=0, now=now)
+                                         expected_sequence=0, now=now,
+                                         trusted_lifecycle=lifecycle)
         signer = Ed25519PrivateKey.generate()
         public = signer.public_key().public_bytes_raw()
         payload = {
             "schema_version": 1, "ledger_sequence": 0,
+            "lifecycle_id": lifecycle["lifecycle_id"],
+            "ledger_id": lifecycle["ledger_id"],
+            "admission_scope": lifecycle["admission_scope"],
             "pilot_resource_group_id": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/kova-pilot",
             "watchdog_resource_group_id": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/kova-watchdog",
             "pilot_remaining_resources": [], "watchdog_remaining_resources": [],
@@ -1143,28 +1176,50 @@ class ThreeFamilyContractTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(contract.ContractError):
                 contract.append_ledger_event(state, signed_receipt(wrong),
                                              expected_sequence=0, now=now,
-                                             cleanup_public_key=public)
+                                             cleanup_public_key=public,
+                                             trusted_lifecycle=lifecycle)
         forged = signed_receipt(payload)
         forged["cleanup_receipt"]["payload"]["final_cost_usd"] = "0.1000"
         with self.assertRaisesRegex(contract.ContractError, "untrusted cleanup receipt"):
             contract.append_ledger_event(state, forged, expected_sequence=0,
-                                         now=now, cleanup_public_key=public)
+                                         now=now, cleanup_public_key=public,
+                                         trusted_lifecycle=lifecycle)
         state = contract.append_ledger_event(state, signed_receipt(payload),
                                              expected_sequence=0, now=now,
-                                             cleanup_public_key=public)
+                                             cleanup_public_key=public,
+                                             trusted_lifecycle=lifecycle)
         self.assertTrue(state["terminal"])
         with self.assertRaises(contract.ContractError):
             contract.append_ledger_event(state, {"kind": "watchdog_health"}, expected_sequence=1)
         # A failed run may have a grant but no adapter. Verified deletion and
         # final cost must still allow its ledger to terminate.
         failure = {"sequence": 1, "terminal": False, "family_order": ["kova-cosmo"],
-                   "events": [{"kind": "training_grant", "family": "kova-cosmo", "sequence": 1}]}
+                   "events": [{"kind": "training_grant", "family": "kova-cosmo", "sequence": 1}],
+                   **lifecycle}
         failed_run_receipt = {**payload, "ledger_sequence": 1,
                               "final_cost_usd": "3.3000"}
         closed = contract.append_ledger_event(failure, signed_receipt(failed_run_receipt),
                                               expected_sequence=1, now=now,
-                                              cleanup_public_key=public)
+                                              cleanup_public_key=public,
+                                              trusted_lifecycle=lifecycle)
         self.assertTrue(closed["terminal"])
+        # A different lifecycle's otherwise valid signature cannot close ours.
+        other = {**lifecycle, "pilot_resource_group_id": lifecycle[
+            "pilot_resource_group_id"].replace("kova-pilot", "another-pilot")}
+        replay = {**payload, **other}
+        with self.assertRaisesRegex(contract.ContractError, "zero residual resources"):
+            contract.append_ledger_event({"sequence": 0, "terminal": False,
+                                          "events": [], "family_order": [], **lifecycle},
+                                         signed_receipt(replay), expected_sequence=0, now=now,
+                                         cleanup_public_key=public,
+                                         trusted_lifecycle=lifecycle)
+        # The original scope, not the number of grants, sets the terminal cap.
+        full = {**lifecycle, "admission_scope": "three-family"}
+        full_state = {**failure, **full}
+        full_receipt = {**failed_run_receipt, **full, "final_cost_usd": "4.0000"}
+        self.assertTrue(contract.append_ledger_event(
+            full_state, signed_receipt(full_receipt), expected_sequence=1, now=now,
+            cleanup_public_key=public, trusted_lifecycle=full)["terminal"])
 
     def test_runner_dry_run_uses_existing_contract_and_blocks_execution(self):
         from training.three_family_runner import main as runner_main

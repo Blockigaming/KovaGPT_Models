@@ -179,7 +179,7 @@ def execute(*, snapshot: Path, output: Path, quote: Path, subscription_id: str,
         quote=quote, source_commit=source_commit, subscription_id=subscription_id,
         lifecycle_id=preflight["lifecycle_id"],
         preflight_ledger_sequence=preflight["preflight_ledger_sequence"],
-        azure_instance=preflight["azure_instance"])
+        azure_instance=preflight["azure_instance"], runtime_evidence=runtime_evidence)
     need(committed["training_runs_consumed"] == 1 and
          committed["allocation_deadline_utc"] == admission["allocation_deadline_utc"],
          "single-use grant did not commit")

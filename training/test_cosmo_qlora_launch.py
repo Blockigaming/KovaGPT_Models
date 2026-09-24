@@ -146,10 +146,28 @@ class LaunchTests(unittest.TestCase):
         quote = self.signed()
         admission = self.check()
         vm = {"resource_id": "/subscriptions/" + self.subscription +
-              "/resourceGroups/pilot/providers/Microsoft.Compute/virtualMachines/cosmo",
+              "/resourceGroups/pilot/providers/Microsoft.Compute/virtualMachines/kova-t4-test01",
               "vm_id": "12345678-1234-1234-1234-123456789abd",
               "system_assigned_identity_principal_id":
               "12345678-1234-1234-1234-123456789abe"}
+        network_prefix = ("/subscriptions/" + self.subscription +
+                          "/resourceGroups/pilot/providers/Microsoft.Network/")
+        nic = network_prefix + "networkInterfaces/kova-t4-nic-test01"
+        live_network = {
+            "vm_nic_ids": [nic], "vm_nic_id": nic, "nic_public_ip_id": None,
+            "subnet_id": network_prefix + "virtualNetworks/kova-t4-vnet-test01/subnets/pilot",
+            "subnet_default_outbound_access": False,
+            "nat_gateway_id": network_prefix + "natGateways/kova-t4-egress-nat-test01",
+            "nat_gateway_public_ip_id": network_prefix + "publicIPAddresses/kova-t4-egress-ip-test01",
+            "nat_gateway_sku": "Standard", "nat_public_ip_sku": "Standard",
+            "network_security_group_id": network_prefix +
+            "networkSecurityGroups/kova-t4-egress-nsg-test01",
+            "inbound_deny_rule": "deny-all-inbound",
+            "allowed_outbound_tcp_ports": [80, 443],
+            "other_outbound_denied": True,
+            "verified_from_azure_control_plane": True,
+            "observed_at_utc": "2026-09-24T12:00:00Z",
+        }
         runtime = {"schema_version": 1, "kind": "kova_cosmo_qlora_runtime_preflight",
                    "issuer": authority.ISSUER, "quote_sha256": admission["quote_sha256"],
                    "source_commit": self.commit, "subscription_id": self.subscription,
@@ -157,7 +175,8 @@ class LaunchTests(unittest.TestCase):
                    "azure_instance": vm, "allocation_deadline_utc":
                    admission["allocation_deadline_utc"],
                    "observed_at_utc": "2026-09-24T12:00:00Z",
-                   "watchdog_healthy": True, "cleanup_scope_verified": True}
+                   "watchdog_healthy": True, "cleanup_scope_verified": True,
+                   "azure_network": live_network}
         outside = TemporaryDirectory()
         self.addCleanup(outside.cleanup)
         runtime_path = Path(outside.name) / "runtime.json"
@@ -180,6 +199,21 @@ class LaunchTests(unittest.TestCase):
                 subscription_id=self.subscription,
                 deadline_utc=admission["allocation_deadline_utc"],
                 now=self.now, root=self.root)
+        for key, value in (("nic_public_ip_id", "https://public.example.test/"),
+                           ("nat_gateway_id", "untrusted-nat"),
+                           ("network_security_group_id", "untrusted-nsg"),
+                           ("subnet_default_outbound_access", True),
+                           ("other_outbound_denied", False)):
+            changed = deepcopy(runtime)
+            changed["azure_network"][key] = value
+            save_runtime(changed)
+            with self.subTest(key=key), self.assertRaises(grant.GrantRejected):
+                grant.read_runtime_preflight(runtime_path,
+                    quote_sha256=admission["quote_sha256"], source_commit=self.commit,
+                    subscription_id=self.subscription,
+                    deadline_utc=admission["allocation_deadline_utc"],
+                    now=self.now, root=self.root)
+        save_runtime(runtime)
 
         compute = {"resourceId": vm["resource_id"], "vmId": vm["vm_id"],
                    "location": "eastus", "vmSize": launch.SKU,
@@ -195,6 +229,7 @@ class LaunchTests(unittest.TestCase):
                        **{key: request[key] for key in (
                            "source_commit", "subscription_id", "quote_sha256",
                            "lifecycle_id", "preflight_ledger_sequence",
+                           "network_evidence_sha256",
                            "azure_instance", "request_nonce", "allocation_deadline_utc",
                            "all_in_ceiling_usd")},
                        "ledger_sequence": 4, "ledger_commit_id": "atomic-commit",
@@ -218,7 +253,7 @@ class LaunchTests(unittest.TestCase):
                     quote=quote, source_commit=self.commit,
                     subscription_id=self.subscription, lifecycle_id="one-pilot",
                     preflight_ledger_sequence=3, azure_instance=vm, now=self.now,
-                    root=self.root, transport=transport,
+                    root=self.root, transport=transport, runtime_evidence=runtime_path,
                     instance_transport=lambda _url: compute)
 
         self.assertEqual(call(committed)["training_runs_consumed"], 1)

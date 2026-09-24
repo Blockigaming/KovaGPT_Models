@@ -35,6 +35,9 @@ python3 -m training.cosmo_qlora_training --execute \
 ```
 
 The authority must sign the runtime preflight for the exact quote and source,
+including a fresh Azure control-plane read of the executing VM's sole NIC,
+private subnet, attached Standard NAT and IP, outbound 80/443 rules, and
+inbound denial. The grant request binds that signed network proof by digest.
 then atomically commit a single-use training grant bound to the VM resource ID,
 immutable VM ID, managed identity token, lifecycle, ledger sequence, and
 two-hour deadline. The trainer checks installed package versions and a tiny
@@ -192,7 +195,9 @@ Keep billing identifiers and price exports out of this public source branch.
    real GPU is NVIDIA T4 with capability 7.5, the pinned image and runtime are
    compatible, and the independent watchdog remains healthy. The private VM
    must have the reviewed NAT gateway/Standard IP and 80/443-only outbound
-   rule, no VM public IP, and no inbound rule. The operator's
+   rule, no VM public IP, and no inbound rule. Verify the *deployed* NIC,
+   subnet, gateway and NSG against the VM resource ID; what-if cannot prove
+   that the live VM retained this graph. The operator's
    image check must read the executing VM's Azure IMDS and match its resource
    ID, immutable VM ID, SKU, region, and exact image reference; a JSON claim
    alone is insufficient. Download and hash-check only the pinned nine-file

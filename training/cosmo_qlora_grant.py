@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import hashlib
 import os
 from pathlib import Path
+import re
 import secrets
 
 from training import cosmo_lifecycle_authority as authority
@@ -25,6 +27,43 @@ def need(condition: bool, reason: str) -> None:
         raise GrantRejected(reason)
 
 
+def verified_network(payload: dict, instance: dict, *, current: datetime) -> dict:
+    """Validate the authority's fresh postdeployment Azure control-plane read."""
+    need(type(payload) is dict and set(payload) == {
+        "vm_nic_ids", "vm_nic_id", "nic_public_ip_id", "subnet_id",
+        "subnet_default_outbound_access", "nat_gateway_id",
+        "nat_gateway_public_ip_id", "nat_gateway_sku", "nat_public_ip_sku",
+        "network_security_group_id", "inbound_deny_rule",
+        "allowed_outbound_tcp_ports", "other_outbound_denied",
+        "verified_from_azure_control_plane", "observed_at_utc",
+    }, "signed live network evidence missing")
+    match = re.fullmatch(
+        r"(/subscriptions/[0-9a-f-]{36}/resourceGroups/[a-zA-Z0-9_.()\-]{1,90})"
+        r"/providers/Microsoft\.Compute/virtualMachines/kova-t4-([a-z0-9]{3,16})",
+        instance["resource_id"], re.IGNORECASE)
+    need(match is not None, "VM ID is not a scoped pilot instance")
+    prefix = match.group(1) + "/providers/Microsoft.Network/"
+    suffix = match.group(2)
+    nic = prefix + "networkInterfaces/kova-t4-nic-" + suffix
+    expected = {
+        "vm_nic_ids": [nic], "vm_nic_id": nic, "nic_public_ip_id": None,
+        "subnet_id": prefix + "virtualNetworks/kova-t4-vnet-" + suffix + "/subnets/pilot",
+        "subnet_default_outbound_access": False,
+        "nat_gateway_id": prefix + "natGateways/kova-t4-egress-nat-" + suffix,
+        "nat_gateway_public_ip_id": prefix + "publicIPAddresses/kova-t4-egress-ip-" + suffix,
+        "nat_gateway_sku": "Standard", "nat_public_ip_sku": "Standard",
+        "network_security_group_id": prefix + "networkSecurityGroups/kova-t4-egress-nsg-" + suffix,
+        "inbound_deny_rule": "deny-all-inbound", "allowed_outbound_tcp_ports": [80, 443],
+        "other_outbound_denied": True, "verified_from_azure_control_plane": True,
+    }
+    need(all(payload[key] == value for key, value in expected.items()),
+         "live VM NIC, NAT or NSG differs from approved network")
+    observed = authority.timestamp(payload["observed_at_utc"])
+    need(observed <= current < observed + timedelta(minutes=5),
+         "live network observation is stale")
+    return payload
+
+
 def read_runtime_preflight(path: Path, *, quote_sha256: str, source_commit: str,
                            subscription_id: str, deadline_utc: str,
                            now: datetime | None = None,
@@ -38,7 +77,7 @@ def read_runtime_preflight(path: Path, *, quote_sha256: str, source_commit: str,
             "schema_version", "kind", "issuer", "quote_sha256", "source_commit",
             "subscription_id", "lifecycle_id", "preflight_ledger_sequence",
             "azure_instance", "allocation_deadline_utc", "observed_at_utc",
-            "watchdog_healthy", "cleanup_scope_verified",
+            "watchdog_healthy", "cleanup_scope_verified", "azure_network",
         } and payload["schema_version"] == 1,
              "signed runtime evidence shape mismatch")
         need(payload["quote_sha256"] == quote_sha256 and
@@ -62,6 +101,8 @@ def read_runtime_preflight(path: Path, *, quote_sha256: str, source_commit: str,
              type(payload["lifecycle_id"]) is str and
              0 < len(payload["lifecycle_id"]) <= 256,
              "missing authoritative lifecycle")
+        verified_network(payload["azure_network"], instance,
+                         current=current.astimezone(timezone.utc))
         return payload
     except (authority.AuthorityError, KeyError, TypeError, AttributeError,
             OSError, ValueError) as exc:
@@ -71,6 +112,7 @@ def read_runtime_preflight(path: Path, *, quote_sha256: str, source_commit: str,
 def acquire_training_grant(*, quote: Path, source_commit: str,
                            subscription_id: str, lifecycle_id: str,
                            preflight_ledger_sequence: int, azure_instance: dict,
+                           runtime_evidence: Path,
                            now: datetime | None = None, root: Path = launch.ROOT,
                            transport=None, instance_transport=None) -> dict:
     """Bind a signed quote to an atomic one-run ledger commit and real Azure VM."""
@@ -85,6 +127,17 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
          0 < preflight_ledger_sequence < 2**63,
          "lifecycle and ledger sequence required")
     try:
+        preflight = read_runtime_preflight(
+            runtime_evidence, quote_sha256=admission["quote_sha256"],
+            source_commit=source_commit, subscription_id=subscription_id,
+            deadline_utc=admission["allocation_deadline_utc"], now=current,
+            root=root)
+        need(preflight["lifecycle_id"] == lifecycle_id and
+             preflight["preflight_ledger_sequence"] == preflight_ledger_sequence and
+             preflight["azure_instance"] == azure_instance,
+             "grant is not bound to the signed live network preflight")
+        network_sha256 = hashlib.sha256(authority.canonical(
+            preflight["azure_network"])).hexdigest()
         trust = authority.load_trust_policy(root)
         need(trust["status"] == "authority_pinned", "independent authority is absent")
         instance = authority.validate_azure_instance(azure_instance)
@@ -114,6 +167,7 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
             "schema_version": 1, "kind": "kova_cosmo_qlora_training_grant_request",
             "source_commit": source_commit, "subscription_id": subscription_id,
             "quote_sha256": admission["quote_sha256"],
+            "network_evidence_sha256": network_sha256,
             "lifecycle_id": lifecycle_id,
             "preflight_ledger_sequence": preflight_ledger_sequence,
             "azure_instance": instance,
@@ -134,6 +188,7 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
         need(set(payload) == {
             "schema_version", "kind", "issuer", "source_commit", "subscription_id",
             "quote_sha256", "lifecycle_id", "preflight_ledger_sequence",
+            "network_evidence_sha256",
             "ledger_sequence", "ledger_commit_id", "ledger_append_only",
             "ledger_status", "grant_id", "azure_instance",
             "azure_identity_token_sha256", "request_nonce",
@@ -145,7 +200,8 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
              "training grant shape mismatch")
         need(all(payload[k] == request[k] for k in (
             "source_commit", "subscription_id", "quote_sha256", "lifecycle_id",
-            "preflight_ledger_sequence", "azure_instance", "request_nonce",
+            "preflight_ledger_sequence", "network_evidence_sha256",
+            "azure_instance", "request_nonce",
             "allocation_deadline_utc", "all_in_ceiling_usd")),
              "training grant request binding mismatch")
         need(payload["ledger_append_only"] is True and

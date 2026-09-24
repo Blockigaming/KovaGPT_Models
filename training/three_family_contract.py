@@ -656,8 +656,32 @@ def _verify_preservation_receipt(event: dict, *, family: str, grant_sequence: in
         raise ContractError("untrusted artifact preservation receipt") from None
 
 
+def _trusted_lifecycle(state: dict, trusted: dict | None) -> dict:
+    """The remote ledger must load this immutable context from its own lease."""
+    required = {"lifecycle_id", "ledger_id", "admission_scope",
+                "pilot_resource_group_id", "watchdog_resource_group_id"}
+    need(type(trusted) is dict and set(trusted) == required and
+         all(state.get(key) == trusted[key] for key in required),
+         "independently trusted lifecycle binding required")
+    need(type(trusted["lifecycle_id"]) is str and trusted["lifecycle_id"] and
+         type(trusted["ledger_id"]) is str and trusted["ledger_id"] and
+         trusted["admission_scope"] in ("cosmo-only", "three-family"),
+         "invalid original lifecycle admission scope")
+    group = re.compile(
+        r"/subscriptions/[0-9a-f-]{36}/resourceGroups/[a-zA-Z0-9_.()\-]{1,90}\Z",
+        re.IGNORECASE)
+    pilot = trusted["pilot_resource_group_id"]
+    watchdog = trusted["watchdog_resource_group_id"]
+    need(type(pilot) is str and type(watchdog) is str and
+         group.fullmatch(pilot) is not None and group.fullmatch(watchdog) is not None and
+         pilot.casefold() != watchdog.casefold() and
+         pilot.split("/")[2].casefold() == watchdog.split("/")[2].casefold(),
+         "trusted lifecycle must bind two groups in one subscription")
+    return trusted
+
+
 def _verify_cleanup_receipt(event: dict, *, expected_sequence: int,
-                            cosmo_only: bool, public_key: bytes | None,
+                            lifecycle: dict, public_key: bytes | None,
                             now: datetime) -> None:
     """Require independent, signed deletion inventory and final cost reconciliation.
 
@@ -676,7 +700,8 @@ def _verify_cleanup_receipt(event: dict, *, expected_sequence: int,
          "signed cleanup receipt required")
     payload = receipt["payload"]
     need(type(payload) is dict and set(payload) == {
-        "schema_version", "ledger_sequence", "pilot_resource_group_id",
+        "schema_version", "ledger_sequence", "lifecycle_id", "ledger_id",
+        "admission_scope", "pilot_resource_group_id",
         "watchdog_resource_group_id", "pilot_remaining_resources",
         "watchdog_remaining_resources", "subscription_scoped_residual_resources",
         "pilot_deleted_at_utc", "watchdog_deleted_at_utc", "verified_at_utc",
@@ -687,6 +712,9 @@ def _verify_cleanup_receipt(event: dict, *, expected_sequence: int,
     need(type(payload["schema_version"]) is int and payload["schema_version"] == 1 and
          type(payload["ledger_sequence"]) is int and
          payload["ledger_sequence"] == expected_sequence and
+         all(payload[key] == lifecycle[key] for key in (
+             "lifecycle_id", "ledger_id", "admission_scope",
+             "pilot_resource_group_id", "watchdog_resource_group_id")) and
          payload["pilot_remaining_resources"] == [] and
          payload["watchdog_remaining_resources"] == [] and
          payload["subscription_scoped_residual_resources"] == [] and
@@ -713,7 +741,7 @@ def _verify_cleanup_receipt(event: dict, *, expected_sequence: int,
         final_cost = Decimal(payload["final_cost_usd"])
     except (KeyError, TypeError, ValueError, InvalidOperation):
         raise ContractError("invalid cleanup timestamps or final cost") from None
-    ceiling = Decimal("3.3000" if cosmo_only else "6.0000")
+    ceiling = Decimal("3.3000" if lifecycle["admission_scope"] == "cosmo-only" else "6.0000")
     need(pilot_deleted <= verified and watchdog_deleted <= verified and
          now - timedelta(minutes=5) <= verified <= now and
          final_cost.is_finite() and 0 <= final_cost <= ceiling,
@@ -740,7 +768,8 @@ def _verify_cleanup_receipt(event: dict, *, expected_sequence: int,
 def append_ledger_event(state: dict, event: dict, *, expected_sequence: int,
                         now: datetime | None = None,
                         preservation_public_key: bytes | None = None,
-                        cleanup_public_key: bytes | None = None) -> dict:
+                        cleanup_public_key: bytes | None = None,
+                        trusted_lifecycle: dict | None = None) -> dict:
     """Pure reference transition used by the independent leased remote ledger."""
     need(type(state) is dict and type(event) is dict, "invalid ledger state")
     need(state.get("terminal") is False, "ledger is terminal")
@@ -770,6 +799,7 @@ def append_ledger_event(state: dict, event: dict, *, expected_sequence: int,
              type(event.get("rule_id")) is str and event["rule_id"],
              "independent watchdog proof required")
     if kind == "cost_admission":
+        lifecycle = _trusted_lifecycle(state, trusted_lifecycle)
         events = state.get("events", [])
         need(len(state.get("family_order", [])) < len(FAMILIES) and
              family == FAMILIES[len(state.get("family_order", []))] and
@@ -787,8 +817,11 @@ def append_ledger_event(state: dict, event: dict, *, expected_sequence: int,
             raise ContractError("remaining family budget required") from None
         cost = _validated_cost_guard()
         ancillary = sum(Decimal(v) for v in cost["category_upper_bounds"].values())
+        need(lifecycle["admission_scope"] == "three-family" or family == "kova-cosmo",
+             "Cosmo-only ledger cannot admit another family")
         compute = (Decimal(cost["conditional_cosmo_only_pilot"]["maximum_compute_reservation_usd"])
-                   if family == "kova-cosmo" else Decimal(cost["family_allowances"][family]))
+                   if lifecycle["admission_scope"] == "cosmo-only" else
+                   Decimal(cost["family_allowances"][family]))
         required = compute + ancillary + Decimal(cost["emergency_cleanup_margin"])
         need(remaining.is_finite() and required <= remaining <= Decimal("6.0000"),
              "remaining family budget insufficient")
@@ -821,8 +854,9 @@ def append_ledger_event(state: dict, event: dict, *, expected_sequence: int,
     if kind == "cleanup_terminal":
         # Failure cleanup still has to close after verified deletion and cost
         # reconciliation, even if training never produced an adapter to preserve.
+        lifecycle = _trusted_lifecycle(state, trusted_lifecycle)
         _verify_cleanup_receipt(event, expected_sequence=expected_sequence,
-                                cosmo_only=len(state.get("family_order", [])) <= 1,
+                                lifecycle=lifecycle,
                                 public_key=cleanup_public_key, now=now)
     assigned = expected_sequence + 1
     committed = json.loads(json.dumps(event))
