@@ -332,6 +332,11 @@ def validate_compatibility_evaluation_profiles():
 def _validated_cost_guard() -> dict:
     cost = load_json(ROOT / "config/kova-three-family-cost-guard.v1.json")
     need(cost["combined_hard_ceiling"] == "6.0000")
+    need(cost["conditional_cosmo_only_pilot"] == {
+        "hard_ceiling_usd": "3.3000", "maximum_allocation_seconds": 7200,
+        "maximum_compute_reservation_usd": "1.1500",
+        "other_families_authorized": False,
+    }, "Cosmo-only owner ceiling drift")
     need(cost["emergency_cleanup_margin"] == "1.2500")
     need(cost["provider_compute_meter_increment_seconds"] == 60)
     need(cost["meter_categories"] == ["compute_allocation_time", *COST_CATEGORY_BOUNDS])
@@ -364,6 +369,29 @@ def worst_case_total(*, hourly_compute_rate: Decimal, lifecycle_seconds: int = 2
 def admit_bootstrap(hourly_compute_rate: Decimal) -> Decimal:
     total = worst_case_total(hourly_compute_rate=hourly_compute_rate)
     need(total <= Decimal("6.0000"), "live-price worst case exceeds six-dollar ceiling")
+    return total
+
+
+def admit_conditional_cosmo_pilot(hourly_compute_rate: Decimal) -> Decimal:
+    """Check the separate owner limit before a Cosmo-only pilot is proposed.
+
+    This is a worst-case reservation check, not a release to spend or a real-time
+    billing hard stop. The independent controller still needs verified meters.
+    """
+    cost = _validated_cost_guard()
+    proposal = cost["conditional_cosmo_only_pilot"]
+    seconds = proposal["maximum_allocation_seconds"]
+    total = worst_case_total(hourly_compute_rate=hourly_compute_rate,
+                             lifecycle_seconds=seconds)
+    ancillary = sum(Decimal(value) for value in cost["category_upper_bounds"].values())
+    compute = total - ancillary - Decimal(cost["emergency_cleanup_margin"])
+    need(Decimal(proposal["maximum_compute_reservation_usd"]) + ancillary +
+         Decimal(cost["emergency_cleanup_margin"]) == Decimal(proposal["hard_ceiling_usd"]),
+         "Cosmo reservation does not cover the conditional ceiling")
+    need(total <= Decimal(proposal["hard_ceiling_usd"]),
+         "Cosmo worst case exceeds conditional $3.30 ceiling")
+    need(compute <= Decimal(proposal["maximum_compute_reservation_usd"]),
+         "Cosmo compute reservation exceeded")
     return total
 
 
@@ -413,11 +441,16 @@ def validate_live_price_evidence(path: Path) -> dict:
         raise ContractError("invalid live price") from None
     need(rate.is_finite() and rate > 0 and unit_rate == rate, "invalid live price")
     total = admit_bootstrap(rate)
+    cosmo_total = admit_conditional_cosmo_pilot(rate)
     return {
         "status": "live_price_admitted",
         "hourly_compute_rate_usd": str(rate),
         "worst_case_total_usd": str(total),
         "hard_ceiling_usd": "6.0000",
+        "conditional_cosmo_only_worst_case_usd": str(cosmo_total),
+        "conditional_cosmo_only_hard_ceiling_usd": "3.3000",
+        "conditional_cosmo_only_maximum_allocation_seconds": 7200,
+        "conditional_cosmo_only_compute_reservation_usd": "1.1500",
     }
 
 

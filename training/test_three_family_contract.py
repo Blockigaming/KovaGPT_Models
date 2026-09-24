@@ -626,6 +626,30 @@ class ThreeFamilyContractTests(unittest.TestCase):
         with self.assertRaises(contract.ContractError):
             contract.admit_bootstrap(Decimal("NaN"))
 
+    def test_conditional_cosmo_only_limit_is_enforced_separately(self):
+        self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.526")),
+                         Decimal("3.2020"))
+        self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.575")),
+                         Decimal("3.3000"))
+        with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
+            contract.admit_conditional_cosmo_pilot(Decimal("0.5751"))
+        self.assertLessEqual(contract.admit_bootstrap(Decimal("0.60")), Decimal("6.0000"))
+        with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
+            contract.admit_conditional_cosmo_pilot(Decimal("0.60"))
+        original = contract.load_json
+        cost = original(contract.ROOT / "config/kova-three-family-cost-guard.v1.json")
+        for update in ({"hard_ceiling_usd": "6.0000"},
+                       {"maximum_allocation_seconds": 21600},
+                       {"maximum_compute_reservation_usd": "1.2500"},
+                       {"other_families_authorized": True}):
+            altered = deepcopy(cost)
+            altered["conditional_cosmo_only_pilot"].update(update)
+            def fake_load(path, **kwargs):
+                return altered if path.name == "kova-three-family-cost-guard.v1.json" else original(path, **kwargs)
+            with self.subTest(update=update), patch.object(contract, "load_json", side_effect=fake_load):
+                with self.assertRaisesRegex(contract.ContractError, "Cosmo-only owner ceiling"):
+                    contract.admit_conditional_cosmo_pilot(Decimal("0.526"))
+
     def test_cost_guard_rejects_understated_or_nonfinite_ancillary_bounds(self):
         original = contract.load_json
         cost = original(contract.ROOT / "config/kova-three-family-cost-guard.v1.json")
@@ -652,7 +676,15 @@ class ThreeFamilyContractTests(unittest.TestCase):
                 "skuName": "NC4as T4 v3", "meterName": "NC4as T4 v3",
                 "isPrimaryMeterRegion": True,
             }]}))
-            self.assertEqual(contract.validate_live_price_evidence(path)["status"], "live_price_admitted")
+            admitted = contract.validate_live_price_evidence(path)
+            self.assertEqual(admitted["status"], "live_price_admitted")
+            self.assertEqual(admitted["conditional_cosmo_only_worst_case_usd"], "3.2020")
+            value = json.loads(path.read_text())
+            value["Items"][0]["retailPrice"] = 0.60
+            value["Items"][0]["unitPrice"] = 0.60
+            path.write_text(json.dumps(value))
+            with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
+                contract.validate_live_price_evidence(path)
             value = json.loads(path.read_text())
             value["Items"][0]["retailPrice"] = 1.0
             value["Items"][0]["unitPrice"] = 1.0
