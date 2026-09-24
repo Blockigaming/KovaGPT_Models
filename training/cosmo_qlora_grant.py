@@ -22,6 +22,11 @@ class GrantRejected(ValueError):
     pass
 
 
+MIN_GRANT_LEAD = timedelta(minutes=45)
+MAX_GRANT_RESPONSE_DELAY = timedelta(seconds=60)
+MAX_CLOCK_SKEW = timedelta(seconds=2)
+
+
 def need(condition: bool, reason: str) -> None:
     if not condition:
         raise GrantRejected(reason)
@@ -119,7 +124,9 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
                            subscription_id: str, lifecycle_id: str,
                            preflight_ledger_sequence: int, azure_instance: dict,
                            runtime_evidence: Path,
-                           now: datetime | None = None, root: Path = launch.ROOT,
+                           now: datetime | None = None,
+                           response_now: datetime | None = None,
+                           root: Path = launch.ROOT,
                            transport=None, instance_transport=None) -> dict:
     """Bind a signed quote to an atomic one-run ledger commit and real Azure VM."""
     admission = launch.assess_signed_quote(
@@ -153,9 +160,9 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
              "VM is in a different subscription")
         deadline = authority.timestamp(admission["allocation_deadline_utc"])
         cleanup_trigger = authority.timestamp(admission["watchdog_cleanup_trigger_utc"])
-        need(current < cleanup_trigger <= deadline <=
+        need(current + MIN_GRANT_LEAD <= cleanup_trigger <= deadline <=
              current + timedelta(seconds=launch.MAX_ALLOCATION_SECONDS),
-             "watchdog cleanup has begun or allocation deadline expired")
+             "insufficient time for one training grant before watchdog cleanup")
         compute = (instance_transport or authority._imds_transport)(
             authority.AZURE_COMPUTE_IMDS_URL)
         image = compute["storageProfile"]["imageReference"]
@@ -195,6 +202,12 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
         response = (transport or authority._https_transport)(trust["endpoint"], token, request)
         payload, digest = authority.verify_envelope(
             response, expected_kind="kova_cosmo_qlora_training_grant", root=root)
+        received = response_now or (now if now is not None else datetime.now(timezone.utc))
+        need(received.tzinfo is not None and
+             current <= received.astimezone(timezone.utc) <=
+             current + MAX_GRANT_RESPONSE_DELAY,
+             "grant response clock or elapsed time invalid")
+        received = received.astimezone(timezone.utc)
         need(set(payload) == {
             "schema_version", "kind", "issuer", "source_commit", "subscription_id",
             "quote_sha256", "lifecycle_id", "preflight_ledger_sequence",
@@ -234,8 +247,9 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
              launch.CEILING, "training grant does not cover the worst-case bound")
         issued = authority.timestamp(payload["issued_at_utc"])
         expires = authority.timestamp(payload["expires_at_utc"])
-        need(current - timedelta(minutes=5) <= issued <= current and
-             current < expires <= cleanup_trigger and
+        need(current - timedelta(minutes=5) <= issued <=
+             received + MAX_CLOCK_SKEW and
+             received < expires <= cleanup_trigger and
              authority.timestamp(token_expiry) >= expires,
              "training grant is stale or exceeds the deadline")
         return {"status": "one_training_run_committed", "grant_id": payload["grant_id"],

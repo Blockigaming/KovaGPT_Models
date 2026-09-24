@@ -49,6 +49,9 @@ snapshot with output in a separate tree. The independent server protocol,
 signer, cleanup watchdog and verified account prices are not provisioned.
 It refuses a grant and stops model work once the signed watchdog cleanup
 trigger arrives, leaving the remaining priced window for resource deletion.
+At grant time it requires at least 45 minutes until cleanup begins, reserving
+time for model loading, the at-most-30-minute training job and preservation;
+an actual completion inside that interval remains unverified.
 
 The intended paid command order after an owner release is shown below. These
 commands are **review text only**: the account-specific parameters, trusted
@@ -74,7 +77,7 @@ az deployment group what-if --resource-group "$WATCHDOG_RESOURCE_GROUP" \
   --template-file infra/three-family-watchdog.bicep --parameters \
   provisionWatchdog=true suffix="$WATCHDOG_SUFFIX" subscriptionId="$SUBSCRIPTION_ID" \
   pilotResourceGroupName="$PILOT_RESOURCE_GROUP" pilotSuffix="$PILOT_SUFFIX" \
-  controllerPrincipalObjectId="$CONTROLLER_PRINCIPAL_OBJECT_ID" deadlineUtc="$PILOT_CLEANUP_TRIGGER_UTC"
+  deadlineUtc="$PILOT_CLEANUP_TRIGGER_UTC"
 # Future independent controller must first prove its ledger, grant, deletion and cost controls.
 # The source VM template includes a separate Standard outbound NAT/IP, a private
 # subnet and an outbound 80/443 NSG; the VM NIC has no public IP or inbound path.
@@ -82,7 +85,7 @@ az deployment group create --resource-group "$WATCHDOG_RESOURCE_GROUP" \
   --template-file infra/three-family-watchdog.bicep --parameters \
   provisionWatchdog=true suffix="$WATCHDOG_SUFFIX" subscriptionId="$SUBSCRIPTION_ID" \
   pilotResourceGroupName="$PILOT_RESOURCE_GROUP" pilotSuffix="$PILOT_SUFFIX" \
-  controllerPrincipalObjectId="$CONTROLLER_PRINCIPAL_OBJECT_ID" deadlineUtc="$PILOT_CLEANUP_TRIGGER_UTC"
+  deadlineUtc="$PILOT_CLEANUP_TRIGGER_UTC"
 az deployment group create --resource-group "$PILOT_RESOURCE_GROUP" \
   --template-file infra/three-family-pilot-vm.bicep --parameters \
   provisionPilot=true suffix="$PILOT_SUFFIX" adminUsername="$PILOT_ADMIN_USERNAME" \
@@ -197,9 +200,13 @@ Keep billing identifiers and price exports out of this public source branch.
    window. That lead time is a scheduling minimum, not a guarantee that Azure
    will delete resources within 15 minutes.
 2. Provision the independent authority, append-only grant ledger, and watchdog
-   in a separate approved operation. Test its ability to deallocate and delete
-   the **exclusive** pilot group. Test that the watchdog itself and its storage
-   stop accruing charges, with evidence preserved outside both groups. If its
+   in a separate approved operation. The watchdog Bicep does not provision
+   a ledger: a separate storage-enforced immutable or append-only service is
+   mandatory, and its full retention cost must fit the same all-in bound.
+   Test its ability to deallocate and delete
+   the **exclusive** pilot group. Test that the watchdog stops accruing charges
+   and bound the external ledger's retention charges, preserving terminal
+   evidence outside both groups. If its
    cleanup fails, the controller must stop and the operator must deallocate and
    remove only the named pilot resources using a separate trusted control path.
 3. Have the authority issue a short-lived signed, subscription-bound quote.

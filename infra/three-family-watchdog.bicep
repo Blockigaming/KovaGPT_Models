@@ -11,55 +11,10 @@ param pilotResourceGroupName string
 @minLength(3)
 @maxLength(16)
 param pilotSuffix string
-param controllerPrincipalObjectId string
 @description('Immutable UTC cleanup deadline supplied by the future authorized controller.')
 param deadlineUtc string
 
 var managementEndpoint = environment().resourceManager
-
-resource ledger 'Microsoft.Storage/storageAccounts@2023-05-01' = if (provisionWatchdog) {
-  name: 'kovaledger${suffix}'
-  location: location
-  sku: {
-    name: 'Standard_LRS'
-  }
-  kind: 'StorageV2'
-  properties: {
-    allowBlobPublicAccess: false
-    allowSharedKeyAccess: false
-    minimumTlsVersion: 'TLS1_2'
-    publicNetworkAccess: 'Enabled'
-  }
-}
-
-resource ledgerBlob 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = if (provisionWatchdog) {
-  parent: ledger
-  name: 'default'
-  properties: {
-    deleteRetentionPolicy: {
-      enabled: true
-      days: 7
-    }
-  }
-}
-
-resource lifecycleContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = if (provisionWatchdog) {
-  parent: ledgerBlob
-  name: 'lifecycle-ledger'
-  properties: {
-    publicAccess: 'None'
-  }
-}
-
-resource controllerLedgerWriter 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (provisionWatchdog) {
-  name: guid(ledger!.id, controllerPrincipalObjectId, 'ledger-writer')
-  scope: ledger
-  properties: {
-    principalId: controllerPrincipalObjectId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
-  }
-}
 
 resource pilotGroup 'Microsoft.Resources/resourceGroups@2022-09-01' existing = {
   name: pilotResourceGroupName
@@ -146,4 +101,4 @@ module watchdogPilotContributor 'three-family-watchdog-pilot-role.bicep' = if (p
 
 output resourceCreationAuthorized bool = false
 output spendingAuthorized bool = false
-output ledgerAccountName string = provisionWatchdog ? ledger!.name : ''
+output externalAppendOnlyLedgerRequired bool = true

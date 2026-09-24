@@ -30,8 +30,8 @@ export function validateSource() {
   assert.match(watchdog, /param pilotSuffix string/);
   assert.match(watchdog, /virtualMachines\/kova-t4-\$\{pilotSuffix\}\/deallocate/);
   assert.match(watchdog, /greaterOrEquals\(ticks\(utcNow\(\)\), ticks\(parameters/);
-  assert.match(watchdog, /allowSharedKeyAccess: false/);
-  assert.match(watchdog, /allowBlobPublicAccess: false/);
+  assert.doesNotMatch(watchdog, /Microsoft\.Storage\/storageAccounts|controllerLedgerWriter/);
+  assert.match(watchdog, /output externalAppendOnlyLedgerRequired bool = true/);
   assert.match(watchdog, /deallocate_after_deadline/);
   assert.match(watchdog, /delete_pilot_group/);
   assert.match(watchdog, /watchdogPilotContributor/);

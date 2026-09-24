@@ -70,6 +70,7 @@ def policy_digest():
     # A staged plan must expire when any current family, entitlement, model,
     # planner, or evidence source changes. Archived routing files are excluded.
     paths = ("release/rollout.py", "config/current-product-policy.v3.json",
+             "config/kova-private-lineage.v1.json",
              "prompts/kova-identity.v3.txt", "core/identity.py",
              "config/kova-three-family-dataset.v2.json",
              "config/qwen3-0.6b-download-manifest.v1.json",

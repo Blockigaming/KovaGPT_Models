@@ -26,8 +26,7 @@ def command_plan() -> list[dict]:
         "subscriptionId=${SUBSCRIPTION_ID}",
         "pilotResourceGroupName=${PILOT_RESOURCE_GROUP}",
         "pilotSuffix=${PILOT_SUFFIX}",
-        "controllerPrincipalObjectId=${CONTROLLER_PRINCIPAL_OBJECT_ID}",
-        "deadlineUtc=${PILOT_DEADLINE_UTC}",
+        "deadlineUtc=${PILOT_CLEANUP_TRIGGER_UTC}",
     ]
     steps = [
         {

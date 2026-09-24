@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -295,7 +295,7 @@ class LaunchTests(unittest.TestCase):
             return {"payload": payload,
                     "signature": self.key.sign(authority.canonical(payload)).hex()}
 
-        def call(transport):
+        def call(transport, *, now=None, response_now=None):
             with patch.object(authority, "_executing_azure_identity", return_value=(
                     "synthetic-token", token_sha, "2026-09-24T14:30:00Z")), \
                  patch.object(authority, "_load_bearer_token", return_value="synthetic"), \
@@ -303,11 +303,32 @@ class LaunchTests(unittest.TestCase):
                 return grant.acquire_training_grant(
                     quote=quote, source_commit=self.commit,
                     subscription_id=self.subscription, lifecycle_id="one-pilot",
-                    preflight_ledger_sequence=3, azure_instance=vm, now=self.now,
+                    preflight_ledger_sequence=3, azure_instance=vm,
+                    now=now or self.now, response_now=response_now,
                     root=self.root, transport=transport, runtime_evidence=runtime_path,
                     instance_transport=lambda _url: compute)
 
         self.assertEqual(call(committed)["training_runs_consumed"], 1)
+        def signed_later(endpoint, token, request):
+            envelope = committed(endpoint, token, request)
+            envelope["payload"]["issued_at_utc"] = "2026-09-24T12:01:02Z"
+            envelope["signature"] = self.key.sign(
+                authority.canonical(envelope["payload"])).hex()
+            return envelope
+        self.assertEqual(call(signed_later, response_now=datetime(
+            2026, 9, 24, 12, 1, 2, tzinfo=timezone.utc))["training_runs_consumed"], 1)
+        def signed_expired(endpoint, token, request):
+            envelope = committed(endpoint, token, request)
+            envelope["payload"]["expires_at_utc"] = "2026-09-24T12:01:01Z"
+            envelope["signature"] = self.key.sign(
+                authority.canonical(envelope["payload"])).hex()
+            return envelope
+        with self.assertRaises(grant.GrantRejected):
+            call(signed_expired, response_now=datetime(
+                2026, 9, 24, 12, 1, 2, tzinfo=timezone.utc))
+        with self.assertRaises(grant.GrantRejected):
+            call(committed, response_now=datetime(
+                2026, 9, 24, 12, 2, 1, tzinfo=timezone.utc))
         with self.assertRaises(grant.GrantRejected):
             call(lambda e, t, r: committed(e, t, r, runs=2))
         for key, bad in (("watchdog_cleanup_trigger_utc", "2026-09-24T13:16:00Z"),
@@ -323,6 +344,15 @@ class LaunchTests(unittest.TestCase):
         compute["storageProfile"]["imageReference"]["exactVersion"] = "latest"
         with self.assertRaises(grant.GrantRejected):
             call(committed)
+        compute["storageProfile"]["imageReference"]["exactVersion"] = "24.04.202609040"
+        updated = deepcopy(runtime)
+        updated["observed_at_utc"] = "2026-09-24T12:30:00Z"
+        updated["azure_network"]["observed_at_utc"] = "2026-09-24T12:30:00Z"
+        save_runtime(updated)
+        transport = Mock()
+        with self.assertRaises(grant.GrantRejected):
+            call(transport, now=datetime(2026, 9, 24, 12, 31, tzinfo=timezone.utc))
+        transport.assert_not_called()
 
 
 if __name__ == "__main__":

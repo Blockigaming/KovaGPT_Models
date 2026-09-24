@@ -1283,7 +1283,8 @@ class ThreeFamilyContractTests(unittest.TestCase):
         self.assertIn("param pilotSuffix string", watchdog)
         self.assertIn("kova-t4-${pilotSuffix}/deallocate", watchdog)
         self.assertIn("delete_pilot_group", watchdog)
-        self.assertIn("allowSharedKeyAccess: false", watchdog)
+        self.assertNotIn("Microsoft.Storage/storageAccounts", watchdog)
+        self.assertIn("output externalAppendOnlyLedgerRequired bool = true", watchdog)
 
     def test_tampering_with_a_safety_gate_is_rejected(self):
         value = contract.load_json(contract.ROOT / "config/kova-three-family-pilot.v1.json")
