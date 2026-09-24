@@ -25,16 +25,24 @@ def _identity(metadata):
 
 
 def _protected(directory: Path, entries: list[Path]) -> bool:
-    # Only a read-only mount or a different owner with read-only permissions
-    # can protect the tree from the unprivileged training process. A process
-    # running as root cannot claim ownership-based protection.
+    # Every ancestor must resist rename/replacement by the training identity.
+    # A read-only snapshot mount alone does not protect its mount point when
+    # the runner can write the parent directory.
+    if not directory.is_absolute() or os.geteuid() == 0:
+        return False
     paths = [directory, *directory.rglob("*"), *entries]
     try:
+        ancestors_protected = all(
+            stat.S_ISDIR(metadata.st_mode) and metadata.st_uid != os.geteuid() and
+            not metadata.st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+            for metadata in (path.lstat() for path in directory.parents))
+        if not ancestors_protected:
+            return False
         mounted_read_only = bool(os.statvfs(directory).f_flag & os.ST_RDONLY)
-        return mounted_read_only or (os.geteuid() != 0 and all(
+        return mounted_read_only or all(
             path.lstat().st_uid != os.geteuid() and
             not path.lstat().st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
-            for path in paths))
+            for path in paths)
     except OSError:
         return False
 

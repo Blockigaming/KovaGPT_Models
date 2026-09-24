@@ -10,6 +10,7 @@ import unittest
 import copy
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives import serialization
 from evaluation import three_family_guard as guard
 from training.three_family_operator import command_plan
 
@@ -54,6 +55,29 @@ class ThreeFamilyContractTests(unittest.TestCase):
             self.assertFalse(report["protected_for_loading"])
             with self.assertRaisesRegex(ValueError, "snapshot_must_be_protected"):
                 snapshot_verifier.verify_snapshot(root, manifest, require_protected=True)
+            parent = root / "writable-parent"
+            parent.mkdir(mode=0o777)
+            parent.chmod(0o777)
+            child = parent / "snapshot"
+            child.mkdir()
+            (child / "weights.safetensors").write_bytes(b"abcd")
+            child.chmod(0o555)
+            (child / "weights.safetensors").chmod(0o444)
+            try:
+                # A read-only mount on the snapshot does not stop rename by a
+                # runner with write permission on its parent.
+                with patch.object(snapshot_verifier.os, "geteuid", return_value=987654), \
+                     patch.object(snapshot_verifier.os, "statvfs",
+                                  return_value=SimpleNamespace(f_flag=os.ST_RDONLY)), \
+                     self.assertRaisesRegex(ValueError, "snapshot_must_be_protected"):
+                    snapshot_verifier.verify_snapshot(child, manifest, require_protected=True)
+            finally:
+                child.chmod(0o755)
+                (child / "weights.safetensors").chmod(0o644)
+                parent.chmod(0o755)
+                (child / "weights.safetensors").unlink()
+                child.rmdir()
+                parent.rmdir()
             original = snapshot_verifier.os.fstat
             calls = 0
 
@@ -712,6 +736,9 @@ class ThreeFamilyContractTests(unittest.TestCase):
                        lambda cfg: cfg["category_upper_bounds"].update(managed_disks="NaN"),
                        lambda cfg: cfg["category_upper_bounds"].pop("managed_disks"),
                        lambda cfg: cfg["meter_categories"].pop(),
+                       lambda cfg: cfg["family_allowances"].update(**{"kova-orion": "-1.0000"}),
+                       lambda cfg: cfg["family_allowances"].update(**{"kova-nova": "0.0100"}),
+                       lambda cfg: cfg["family_allowances"].pop("kova-cosmo"),
                        lambda cfg: cfg.update(independent_signed_admission_required=False),
                        lambda cfg: cfg.update(post_run_cost_evidence_required=False),
                        lambda cfg: cfg.update(zero_residual_billable_resources_required=False)):
@@ -1002,8 +1029,43 @@ class ThreeFamilyContractTests(unittest.TestCase):
         with self.assertRaisesRegex(contract.ContractError, "fresh family watchdog and cost"):
             contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-orion"},
                                          expected_sequence=3, now=now)
-        state = contract.append_ledger_event(state, {"kind": "family_preserved", "family": "kova-cosmo"},
-                                             expected_sequence=3)
+        signer = Ed25519PrivateKey.generate()
+        verifier_key = signer.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
+        receipt = {
+            "schema_version": 1, "family": "kova-cosmo", "grant_sequence": 3,
+            "artifact_sha256": "b" * 64, "verified_sha256": "b" * 64,
+            "destination_uri": "https://preserved.example.test/adapters/cosmo",
+            "immutable_version": "verified-object-version-1",
+            "protected_destination": True, "outside_pilot_group": True,
+            "verification_succeeded": True, "verified_at_utc": "2026-09-24T12:00:00Z",
+        }
+        def signed_preservation(payload):
+            signature = signer.sign(json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                                               ensure_ascii=True, allow_nan=False).encode("ascii"))
+            return {"kind": "family_preserved", "family": "kova-cosmo",
+                    "artifact_sha256": "b" * 64,
+                    "preservation_receipt": {"payload": payload,
+                                             "signature_ed25519_hex": signature.hex()}}
+        event = signed_preservation(receipt)
+        with self.assertRaisesRegex(contract.ContractError, "trusted preservation verifier key"):
+            contract.append_ledger_event(state, event, expected_sequence=3, now=now)
+        for alteration in (lambda payload: payload.update(verified_sha256="c" * 64),
+                           lambda payload: payload.update(protected_destination=False),
+                           lambda payload: payload.update(grant_sequence=2)):
+            wrong = deepcopy(receipt)
+            alteration(wrong)
+            with self.assertRaises(contract.ContractError):
+                contract.append_ledger_event(state, signed_preservation(wrong),
+                                             expected_sequence=3, now=now,
+                                             preservation_public_key=verifier_key)
+        forged = deepcopy(event)
+        forged["preservation_receipt"]["payload"]["destination_uri"] = "https://other.example.test/"
+        with self.assertRaisesRegex(contract.ContractError, "untrusted artifact preservation receipt"):
+            contract.append_ledger_event(state, forged, expected_sequence=3, now=now,
+                                         preservation_public_key=verifier_key)
+        state = contract.append_ledger_event(state, event, expected_sequence=3, now=now,
+                                             preservation_public_key=verifier_key)
         with self.assertRaisesRegex(contract.ContractError, "fresh family watchdog and cost"):
             contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-orion"},
                                          expected_sequence=4, now=now)

@@ -45,6 +45,9 @@ COST_CATEGORY_BOUNDS = {
     "network_transfer": "0.1000", "public_ip_and_network": "0.1000",
     "shutdown_delay": "0.1000", "failed_allocation_attempts": "0.1000",
 }
+FAMILY_ALLOWANCES = {
+    "kova-cosmo": "1.2500", "kova-orion": "1.5000", "kova-nova": "1.7500",
+}
 MANIFEST_PATHS = {
     "kova-cosmo": "config/qwen3-0.6b-download-manifest.v1.json",
     "kova-orion": "config/qwen3-1.7b-download-manifest.v1.json",
@@ -339,6 +342,9 @@ def _validated_cost_guard() -> dict:
         "other_families_authorized": False,
     }, "Cosmo-only owner ceiling drift")
     need(cost["emergency_cleanup_margin"] == "1.2500")
+    need(type(cost.get("family_allowances")) is dict and
+         cost["family_allowances"] == FAMILY_ALLOWANCES,
+         "unapproved family allowances")
     for requirement in ("independent_signed_admission_required",
                         "post_run_cost_evidence_required",
                         "zero_residual_billable_resources_required"):
@@ -592,8 +598,65 @@ def _fresh_admission(event: dict, *, now: datetime) -> None:
          "stale admission")
 
 
+def _verify_preservation_receipt(event: dict, *, family: str, grant_sequence: int,
+                                 public_key: bytes | None, now: datetime) -> None:
+    """Check a separately trusted verifier's receipt for a read-back artifact.
+
+    The future remote authority must pin this verifier key independently of
+    the ledger event and sign only after reading back the immutable export.
+    With no provisioned key, preservation and the next grant fail closed.
+    """
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    need(type(public_key) is bytes and len(public_key) == 32,
+         "trusted preservation verifier key required")
+    need(set(event) == {"kind", "family", "artifact_sha256", "preservation_receipt"},
+         "artifact preservation event shape mismatch")
+    receipt = event["preservation_receipt"]
+    need(type(receipt) is dict and set(receipt) == {"payload", "signature_ed25519_hex"},
+         "protected destination receipt required")
+    payload = receipt["payload"]
+    need(type(payload) is dict and set(payload) == {
+        "schema_version", "family", "grant_sequence", "artifact_sha256",
+        "verified_sha256", "destination_uri", "immutable_version",
+        "protected_destination", "outside_pilot_group", "verification_succeeded",
+        "verified_at_utc",
+    }, "protected destination receipt shape mismatch")
+    digest = event["artifact_sha256"]
+    need(type(digest) is str and HEX64.fullmatch(digest) is not None and
+         payload["schema_version"] == 1 and payload["family"] == family and
+         type(payload["grant_sequence"]) is int and payload["grant_sequence"] == grant_sequence and
+         payload["artifact_sha256"] == digest and payload["verified_sha256"] == digest,
+         "artifact verification does not bind the grant")
+    uri = payload["destination_uri"]
+    need(type(uri) is str and uri.startswith("https://") and "?" not in uri and
+         type(payload["immutable_version"]) is str and payload["immutable_version"] and
+         payload["protected_destination"] is True and
+         payload["outside_pilot_group"] is True and
+         payload["verification_succeeded"] is True,
+         "artifact destination is not verified and protected")
+    try:
+        verified = datetime.strptime(payload["verified_at_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        raise ContractError("invalid artifact verification timestamp") from None
+    need(now - timedelta(minutes=5) <= verified <= now,
+         "stale artifact verification receipt")
+    signature = receipt["signature_ed25519_hex"]
+    need(type(signature) is str and re.fullmatch(r"[0-9a-f]{128}", signature) is not None,
+         "invalid artifact preservation signature")
+    try:
+        message = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                             ensure_ascii=True, allow_nan=False).encode("ascii")
+        Ed25519PublicKey.from_public_bytes(public_key).verify(bytes.fromhex(signature), message)
+    except (InvalidSignature, ValueError, TypeError, RecursionError):
+        raise ContractError("untrusted artifact preservation receipt") from None
+
+
 def append_ledger_event(state: dict, event: dict, *, expected_sequence: int,
-                        now: datetime | None = None) -> dict:
+                        now: datetime | None = None,
+                        preservation_public_key: bytes | None = None) -> dict:
     """Pure reference transition used by the independent leased remote ledger."""
     need(type(state) is dict and type(event) is dict, "invalid ledger state")
     need(state.get("terminal") is False, "ledger is terminal")
@@ -651,6 +714,13 @@ def append_ledger_event(state: dict, event: dict, *, expected_sequence: int,
              "preservation requires a granted family")
         need(not any(item.get("kind") == "family_preserved" and item.get("family") == family
                      for item in state.get("events", [])), "duplicate family preservation")
+        grants = [item for item in state.get("events", [])
+                  if item.get("kind") == "training_grant" and item.get("family") == family]
+        need(len(grants) == 1 and type(grants[0].get("sequence")) is int,
+             "preservation must bind one training grant")
+        _verify_preservation_receipt(event, family=family,
+                                     grant_sequence=grants[0]["sequence"],
+                                     public_key=preservation_public_key, now=now)
     if kind == "training_grant":
         events = state.get("events", [])
         need(len(events) >= 2 and events[-2].get("kind") == "watchdog_health" and

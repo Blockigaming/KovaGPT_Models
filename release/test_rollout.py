@@ -120,6 +120,7 @@ class RolloutTests(unittest.TestCase):
                          "requirements/kova-three-family-bitsandbytes-py312-linux.lock",
                          "infra/three-family-pilot-vm.bicep",
                          "infra/three-family-watchdog.bicep",
+                         "infra/three-family-watchdog-pilot-role.bicep",
                          "config/completion-target.v1.json"):
             def changed(path):
                 data = original(path)

@@ -42,6 +42,59 @@ NF4 CUDA operation before it opens model weights, and accepts a protected
 snapshot with output in a separate tree. The independent server protocol,
 signer, cleanup watchdog and verified account prices are not provisioned.
 
+The intended paid command order after an owner release is shown below. These
+commands are **review text only**: the account-specific parameters, trusted
+authority, rate proof, watchdog self-cleanup, SSH key, and approved resource
+group names do not exist in an executable launch configuration. Never copy
+the deployment lines into an interactive shell on this source head.
+
+```sh
+az account show --query '{id:id,state:state}' -o json
+az provider show --namespace Microsoft.Network --query registrationState -o tsv
+az vm list-usage --location eastus -o json
+az vm list-skus --location eastus --size Standard_NC4as_T4_v3 --all -o json
+az vm image show --location eastus --urn Canonical:ubuntu-24_04-lts:server:24.04.202609040 -o json
+# Signed, independent account quote + rate worksheet must pass before the lines below.
+az group create --name "$PILOT_RESOURCE_GROUP" --location eastus
+az group create --name "$WATCHDOG_RESOURCE_GROUP" --location eastus
+az deployment group what-if --resource-group "$PILOT_RESOURCE_GROUP" \
+  --template-file infra/three-family-pilot-vm.bicep --parameters \
+  provisionPilot=true suffix="$PILOT_SUFFIX" adminUsername="$PILOT_ADMIN_USERNAME" \
+  ubuntuImageVersion=24.04.202609040 sshPublicKey="$PILOT_SSH_PUBLIC_KEY"
+az deployment group what-if --resource-group "$WATCHDOG_RESOURCE_GROUP" \
+  --template-file infra/three-family-watchdog.bicep --parameters \
+  provisionWatchdog=true suffix="$WATCHDOG_SUFFIX" subscriptionId="$SUBSCRIPTION_ID" \
+  pilotResourceGroupName="$PILOT_RESOURCE_GROUP" pilotSuffix="$PILOT_SUFFIX" \
+  controllerPrincipalObjectId="$CONTROLLER_PRINCIPAL_OBJECT_ID" deadlineUtc="$PILOT_DEADLINE_UTC"
+# Future independent controller must first prove its ledger, grant, deletion and cost controls.
+az deployment group create --resource-group "$WATCHDOG_RESOURCE_GROUP" \
+  --template-file infra/three-family-watchdog.bicep --parameters \
+  provisionWatchdog=true suffix="$WATCHDOG_SUFFIX" subscriptionId="$SUBSCRIPTION_ID" \
+  pilotResourceGroupName="$PILOT_RESOURCE_GROUP" pilotSuffix="$PILOT_SUFFIX" \
+  controllerPrincipalObjectId="$CONTROLLER_PRINCIPAL_OBJECT_ID" deadlineUtc="$PILOT_DEADLINE_UTC"
+az deployment group create --resource-group "$PILOT_RESOURCE_GROUP" \
+  --template-file infra/three-family-pilot-vm.bicep --parameters \
+  provisionPilot=true suffix="$PILOT_SUFFIX" adminUsername="$PILOT_ADMIN_USERNAME" \
+  ubuntuImageVersion=24.04.202609040 sshPublicKey="$PILOT_SSH_PUBLIC_KEY"
+# The approved controller then verifies IMDS, T4, immutable snapshot, grant, and training.
+```
+
+On any stop condition, an independent control identity must deallocate and
+remove only the exclusive pilot group, then verify deletion. Preserve the
+terminal ledger outside the watchdog group before removing that group.
+These commands are also **disabled cleanup instructions**, not executed here:
+
+```sh
+az vm deallocate --resource-group "$PILOT_RESOURCE_GROUP" --name "kova-t4-$PILOT_SUFFIX"
+az group delete --name "$PILOT_RESOURCE_GROUP" --yes --no-wait
+az group exists --name "$PILOT_RESOURCE_GROUP"
+# Require false; inspect all residual disks, NICs and resources in the subscription.
+# Export the signed terminal evidence to a separately protected destination.
+az group delete --name "$WATCHDOG_RESOURCE_GROUP" --yes --no-wait
+az group exists --name "$WATCHDOG_RESOURCE_GROUP"
+# Require false, then reconcile every delayed charge against the owner ceiling.
+```
+
 ## Cost arithmetic and what it proves
 
 | Reservation | USD |
@@ -56,13 +109,16 @@ signer, cleanup watchdog and verified account prices are not provisioned.
 
 At the earlier **public retail** `$0.5260` per hour VM rate, two hours of
 compute is `$1.0520`, and the listed reservations total `$3.2020`. This is an
-estimate, with `$0.0980` remaining. A subscription-specific compute rate
-above `$0.5750` per hour fails the `$1.1500` compute reservation. The listed
+estimate, with `$0.0980` remaining. Algebraically, if all other reservations
+were valid, `2 × account VM hourly rate + $0.9000 + $1.2500 ≤ $3.3000`
+requires an account VM rate no higher than `$0.5750` per hour. The listed
 ancillary figures are **source assumptions**, not verified subscription
 quotes. They must be checked against every service used, including the
 watchdog, its storage and transactions, GPU driver setup, disks, data transfer,
-and resource deletion latency. A two-hour timer or Azure budget alert cannot
-guarantee the eventual invoice is at most `$3.30`.
+resource deletion latency, and applicable tax if the owner ceiling covers the
+invoice total. A two-hour timer or Azure budget alert cannot guarantee the
+eventual invoice is at most `$3.30`. There is **no verified all-in cost bound**
+on this head.
 
 ## Read-only evidence to refresh in the intended subscription
 
@@ -81,10 +137,14 @@ az vm image show --location eastus \
   --urn Canonical:ubuntu-24_04-lts:server:24.04.202609040 -o json
 ```
 
-The earlier owner capture showed family quota `0/4` and regional quota `0/14`,
-an unrestricted SKU, and that image version. It does not prove today's
-quota, live allocation capacity, account prices, or that the image boots the
-pinned CUDA 12.8 / bitsandbytes stack. `what-if` may validate the proposed
+The owner-side portal read on 2026-09-24 showed East US T4 family quota
+`0/4` and total regional quota `0/14` in use, in the intended active
+subscription. `Microsoft.Compute` and `Microsoft.Storage` were Registered,
+but `Microsoft.Network` was **NotRegistered**. The subscription is billed
+through an active Microsoft Customer Agreement billing profile. This does
+not refresh the earlier SKU and exact image listing, guarantee live capacity,
+establish account prices, or prove that the image boots the pinned CUDA 12.8 /
+bitsandbytes stack. No provider registration has been changed. `what-if` may validate the proposed
 resource graph, but it does not reserve a GPU. Capacity and exact hardware
 identity can be confirmed only after an approved allocation.
 
@@ -93,8 +153,9 @@ type (MCA/MPA or EA), locate the exact East US compute meter, and price every
 ancillary meter above. The public Retail Prices API is useful for comparison
 only. Microsoft documents separate [billing-profile price sheets](https://learn.microsoft.com/en-us/rest/api/cost-management/price-sheet/download-by-billing-profile?view=rest-cost-management-2025-03-01)
 for MCA/MPA and [billing-account price sheets](https://learn.microsoft.com/en-us/rest/api/cost-management/price-sheet/download-by-billing-account?view=rest-cost-management-2025-03-01)
-for EA. The billing agreement and IDs are not present in this workspace, so
-there is no correct account-specific API command to fill in here yet.
+for EA. The MCA profile has been identified privately, but the current
+account-specific price sheet and all ancillary meters have **not** been read.
+Keep billing identifiers and price exports out of this public source branch.
 
 ## Paid sequence awaiting final approval
 
@@ -139,8 +200,13 @@ Do not proceed to training from a failed or incomplete step.
 
 ## Open launch blockers
 
-- This session is not authenticated to the Azure subscription. Account-specific
-  pricing and current quota/SKU/image results have not been refreshed here.
+- Current quota is sufficient for four T4 family cores and for four regional
+  cores, but `Microsoft.Network` is NotRegistered. Registration would change
+  subscription state and is outside this review-only release. SKU restrictions,
+  exact East US image, and live capacity remain unverified.
+- The billing account and MCA profile were identified, but subscription rates,
+  all ancillary and control-plane meters, and the tax treatment remain unknown.
+  The `$3.2020` public-rate calculation is not an account quote or a hard cap.
 - The independent authority endpoint/signing key, atomic remote grants,
   watchdog health and self-cleanup proof, signed VM preflight, and signed
   subscription quote do not
