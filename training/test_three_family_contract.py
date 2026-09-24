@@ -924,7 +924,10 @@ class ThreeFamilyContractTests(unittest.TestCase):
                 },
             }))
             self.assertEqual(contract.validate_probe_evidence(path)["status"], "untrusted_probe_shape_valid")
-            with self.assertRaisesRegex(contract.ContractError, "IMDS image proof"):
+            from training import cosmo_lifecycle_authority as authority
+            with patch.object(authority, "_imds_transport",
+                              side_effect=authority.AuthorityError("unavailable")), \
+                 self.assertRaisesRegex(contract.ContractError, "IMDS image proof"):
                 contract.validate_probe_evidence(path, require_live_imds=True)
             metadata = {
                 "resourceId": json.loads(path.read_text())["azure_vm_resource_id"],
@@ -936,7 +939,6 @@ class ThreeFamilyContractTests(unittest.TestCase):
                     "exactVersion": "24.04.202609040",
                 }},
             }
-            from training import cosmo_lifecycle_authority as authority
             with patch.object(authority, "_imds_transport", return_value=metadata):
                 self.assertTrue(contract.validate_probe_evidence(
                     path, require_live_imds=True)["live_azure_image_verified"])
