@@ -2,7 +2,7 @@
   "schema_version":1,
   "currency":"USD",
   "combined_hard_ceiling":"6.0000",
-  "conditional_cosmo_only_pilot":{"hard_ceiling_usd":"3.3000","maximum_allocation_seconds":7200,"maximum_compute_reservation_usd":"0.9000","other_families_authorized":false},
+  "conditional_cosmo_only_pilot":{"hard_ceiling_usd":"3.3000","minimum_allocation_seconds":5400,"maximum_allocation_seconds":7200,"maximum_compute_reservation_usd":"0.9000","other_families_authorized":false},
   "emergency_cleanup_margin":"1.2500",
   "provider_compute_meter_increment_seconds":60,
   "meter_categories":["compute_allocation_time","managed_disks","snapshots","storage_capacity","storage_transactions","network_transfer","public_ip_and_network","nat_gateway_hours","nat_gateway_data_processed","logic_app_executions","shutdown_delay","failed_allocation_attempts"],

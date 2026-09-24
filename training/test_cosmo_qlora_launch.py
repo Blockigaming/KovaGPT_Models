@@ -46,6 +46,7 @@ class LaunchTests(unittest.TestCase):
             "observed_at_utc": "2026-09-24T12:00:00Z",
             "expires_at_utc": "2026-09-24T12:05:00Z",
             "allocation_deadline_utc": "2026-09-24T13:59:00Z",
+            "watchdog_cleanup_trigger_utc": "2026-09-24T13:15:00Z",
             "region": "eastus", "vm_sku": launch.SKU, "image_urn": launch.IMAGE,
             "model_revision": launch.MODEL_REVISION,
             "model_manifest_sha256": contract.MANIFEST_SHA256["kova-cosmo"],
@@ -79,9 +80,44 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual((planned["train_records"], planned["validation_records"]), (27, 15))
         self.assertFalse(planned["paid_actions_enabled"])
         self.assertEqual(planned["all_in_ceiling_usd"], "3.3000")
+        self.assertEqual(planned["minimum_signed_allocation_seconds"], 5400)
         assessed = self.check()
-        self.assertEqual(assessed["worst_case_all_in_usd"], "3.2000")
+        self.assertEqual(assessed["worst_case_all_in_usd"], "3.1934")
+        self.assertEqual(assessed["signed_allocation_seconds"], 7140)
         self.assertFalse(assessed["paid_actions_enabled"])
+
+    def test_shorter_signed_window_fits_only_when_compute_reservation_covers_it(self):
+        payload = deepcopy(self.payload)
+        payload["account_compute_hourly_usd"] = "0.5260"
+        payload["allocation_deadline_utc"] = "2026-09-24T13:30:00Z"
+        result = self.check(payload)
+        self.assertEqual(result["signed_allocation_seconds"], 5400)
+        self.assertEqual(result["worst_case_all_in_usd"], "3.1890")
+        payload["allocation_deadline_utc"] = "2026-09-24T13:42:00Z"
+        self.assertEqual(self.check(payload)["worst_case_all_in_usd"], "3.2942")
+        payload["allocation_deadline_utc"] = "2026-09-24T13:43:00Z"
+        with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
+            self.check(payload)
+        payload["allocation_deadline_utc"] = "2026-09-24T13:29:59Z"
+        with self.assertRaisesRegex(launch.LaunchRejected, "90-120 minute"):
+            self.check(payload)
+        payload["allocation_deadline_utc"] = "2026-09-24T13:30:00Z"
+        payload["account_compute_hourly_usd"] = "0.6001"
+        with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
+            self.check(payload)
+
+    def test_cleanup_trigger_must_precede_signed_cost_deadline(self):
+        payload = deepcopy(self.payload)
+        payload["allocation_deadline_utc"] = "2026-09-24T13:30:00Z"
+        payload["watchdog_cleanup_trigger_utc"] = "2026-09-24T13:15:00Z"
+        self.assertEqual(self.check(payload)["watchdog_cleanup_trigger_utc"],
+                         "2026-09-24T13:15:00Z")
+        for trigger in ("2026-09-24T13:15:01Z", "2026-09-24T12:01:00Z",
+                        "2026-09-24T12:00:59Z"):
+            with self.subTest(trigger=trigger):
+                payload["watchdog_cleanup_trigger_utc"] = trigger
+                with self.assertRaisesRegex(launch.LaunchRejected, "insufficient deletion time"):
+                    self.check(payload)
 
     def test_unsigned_tampered_and_unpinned_authorities_fail(self):
         path = self.signed()
@@ -99,7 +135,7 @@ class LaunchTests(unittest.TestCase):
     def test_retailability_budget_quotas_identity_and_watchdog_fail_closed(self):
         edits = (
             ("account_meter_source", "azure_retail_price_api"),
-            ("account_compute_hourly_usd", "0.4501"),
+            ("account_compute_hourly_usd", "0.4600"),
             ("source_commit", "e" * 40),
             ("dataset_sha256", "a" * 64),
             ("model_revision", "a" * 40),

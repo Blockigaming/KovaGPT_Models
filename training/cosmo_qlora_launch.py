@@ -26,6 +26,8 @@ IMAGE = "Canonical:ubuntu-24_04-lts:server:24.04.202609040"
 MODEL_REVISION = "c1899de289a04d12100db370d81485cdf75e47ca"
 MAX_QUOTE_AGE = timedelta(minutes=10)
 MAX_ALLOCATION_SECONDS = 7200
+MIN_ALLOCATION_SECONDS = 5400
+MIN_CLEANUP_LEAD = timedelta(minutes=15)
 CEILING = Decimal("3.3000")
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
@@ -66,6 +68,7 @@ def proposal() -> dict:
     cost = contract._validated_cost_guard()
     pilot = cost["conditional_cosmo_only_pilot"]
     need(pilot["maximum_allocation_seconds"] == MAX_ALLOCATION_SECONDS and
+         pilot["minimum_allocation_seconds"] == MIN_ALLOCATION_SECONDS and
          Decimal(pilot["hard_ceiling_usd"]) == CEILING and
          pilot["other_families_authorized"] is False,
          "Cosmo-only limit drifted")
@@ -92,6 +95,7 @@ def proposal() -> dict:
         "train_records": 27, "validation_records": 15,
         "image_urn": IMAGE, "sku": SKU,
         "maximum_allocation_seconds": MAX_ALLOCATION_SECONDS,
+        "minimum_signed_allocation_seconds": MIN_ALLOCATION_SECONDS,
         "maximum_training_seconds": 1800,
         "maximum_optimizer_steps": 7,
         "compute_reservation_usd": str(compute),
@@ -124,6 +128,7 @@ def assess_signed_quote(path: Path, *, source_commit: str, subscription_id: str,
     expected = {
         "schema_version", "kind", "issuer", "subscription_id", "source_commit",
         "observed_at_utc", "expires_at_utc", "allocation_deadline_utc",
+        "watchdog_cleanup_trigger_utc",
         "region", "vm_sku", "image_urn", "model_revision", "model_manifest_sha256",
         "dataset_sha256", "train_records", "validation_records", "gpu_name",
         "quota", "sku_restrictions", "account_compute_hourly_usd",
@@ -141,12 +146,17 @@ def assess_signed_quote(path: Path, *, source_commit: str, subscription_id: str,
         observed = authority.timestamp(payload["observed_at_utc"])
         expires = authority.timestamp(payload["expires_at_utc"])
         deadline = authority.timestamp(payload["allocation_deadline_utc"])
+        cleanup_trigger = authority.timestamp(payload["watchdog_cleanup_trigger_utc"])
     except authority.AuthorityError as exc:
         raise LaunchRejected("invalid UTC admission window") from exc
     need(observed <= current < expires <= observed + MAX_QUOTE_AGE,
          "account quote is stale or future-dated")
-    need(current < deadline <= observed + timedelta(seconds=MAX_ALLOCATION_SECONDS),
-         "allocation deadline exceeds two hours")
+    allocation_seconds = int((deadline - observed).total_seconds())
+    need(current < deadline and
+         MIN_ALLOCATION_SECONDS <= allocation_seconds <= MAX_ALLOCATION_SECONDS,
+         "signed allocation window outside approved 90-120 minute bounds")
+    need(current < cleanup_trigger <= deadline - MIN_CLEANUP_LEAD,
+         "watchdog cleanup trigger leaves insufficient deletion time")
     need(payload["subscription_id"] == subscription_id and
          payload["source_commit"] == source_commit and
          payload["region"] == "eastus" and payload["vm_sku"] == SKU and
@@ -189,7 +199,8 @@ def assess_signed_quote(path: Path, *, source_commit: str, subscription_id: str,
         raise LaunchRejected("invalid ancillary account rate") from exc
     need(all(bounds[k] <= Decimal(cost["category_upper_bounds"][k])
              for k in category), "ancillary cost exceeds category reservation")
-    total = contract.admit_conditional_cosmo_pilot(rate)
+    total = contract.admit_conditional_cosmo_pilot(
+        rate, lifecycle_seconds=allocation_seconds)
     # Even when the signed quote passes, no paid operation is authorized here.
     return {
         "status": "signed_subscription_quote_checked_paid_execution_blocked",
@@ -198,6 +209,8 @@ def assess_signed_quote(path: Path, *, source_commit: str, subscription_id: str,
         "worst_case_all_in_usd": str(total),
         "all_in_ceiling_usd": str(CEILING),
         "allocation_deadline_utc": payload["allocation_deadline_utc"],
+        "watchdog_cleanup_trigger_utc": payload["watchdog_cleanup_trigger_utc"],
+        "signed_allocation_seconds": allocation_seconds,
         "paid_actions_enabled": False,
     }
 

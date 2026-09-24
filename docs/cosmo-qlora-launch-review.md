@@ -14,7 +14,7 @@ This document is an approval worksheet, not an authorization to spend.
 | Snapshot | `config/qwen3-0.6b-download-manifest.v1.json`, complete SHA-256 `d1dd63b2ee120b0944a58021a21608a46bb03074f87adbafb067b2aedccaf162` |
 | Approved data | `data/kova-identity-shared.v2.jsonl`, SHA-256 `fa6406b2be2e607f8a40565bf9340db226a6fb8def4d5342d30dc38105696051`, 27 train + 15 validation |
 | Training | 4-bit NF4 QLoRA, FP16 compute, rank 16 / alpha 32 / dropout 0.05, one epoch, at most seven optimizer steps and 1,800 training seconds |
-| Allocation | At most 7,200 seconds measured from the authorized deadline, including setup, download, probe, training, preservation, and shutdown |
+| Allocation | Signed window 5,400–7,200 seconds from the authority's observation to its cost deadline, including setup, download, probe, training, preservation, shutdown, and deletion; a full two hours is allowed only if its entire cost fits the owner ceiling |
 
 The new source preflight is `python3 -m training.cosmo_qlora_launch`;
 `python3 -m training.cosmo_qlora_training` prepares the approved split. Neither
@@ -37,10 +37,10 @@ python3 -m training.cosmo_qlora_training --execute \
 The authority must sign the runtime preflight for the exact quote and source,
 including a fresh Azure control-plane read of the executing VM's sole NIC,
 private subnet, attached Standard NAT and IP, outbound 80/443 rules, and
-inbound denial. The grant request binds that signed network proof by digest.
-then atomically commit a single-use training grant bound to the VM resource ID,
+inbound denial. The grant request binds that signed network proof by digest,
+then atomically commits a single-use training grant bound to the VM resource ID,
 immutable VM ID, managed identity token, lifecycle, ledger sequence, and
-two-hour deadline. The trainer checks installed package versions and a tiny
+signed cost deadline of at most two hours. The trainer checks installed package versions and a tiny
 NF4 CUDA operation before it opens model weights, and accepts a protected
 snapshot with output in a separate tree. The independent server protocol,
 signer, cleanup watchdog and verified account prices are not provisioned.
@@ -69,7 +69,7 @@ az deployment group what-if --resource-group "$WATCHDOG_RESOURCE_GROUP" \
   --template-file infra/three-family-watchdog.bicep --parameters \
   provisionWatchdog=true suffix="$WATCHDOG_SUFFIX" subscriptionId="$SUBSCRIPTION_ID" \
   pilotResourceGroupName="$PILOT_RESOURCE_GROUP" pilotSuffix="$PILOT_SUFFIX" \
-  controllerPrincipalObjectId="$CONTROLLER_PRINCIPAL_OBJECT_ID" deadlineUtc="$PILOT_DEADLINE_UTC"
+  controllerPrincipalObjectId="$CONTROLLER_PRINCIPAL_OBJECT_ID" deadlineUtc="$PILOT_CLEANUP_TRIGGER_UTC"
 # Future independent controller must first prove its ledger, grant, deletion and cost controls.
 # The source VM template includes a separate Standard outbound NAT/IP, a private
 # subnet and an outbound 80/443 NSG; the VM NIC has no public IP or inbound path.
@@ -77,7 +77,7 @@ az deployment group create --resource-group "$WATCHDOG_RESOURCE_GROUP" \
   --template-file infra/three-family-watchdog.bicep --parameters \
   provisionWatchdog=true suffix="$WATCHDOG_SUFFIX" subscriptionId="$SUBSCRIPTION_ID" \
   pilotResourceGroupName="$PILOT_RESOURCE_GROUP" pilotSuffix="$PILOT_SUFFIX" \
-  controllerPrincipalObjectId="$CONTROLLER_PRINCIPAL_OBJECT_ID" deadlineUtc="$PILOT_DEADLINE_UTC"
+  controllerPrincipalObjectId="$CONTROLLER_PRINCIPAL_OBJECT_ID" deadlineUtc="$PILOT_CLEANUP_TRIGGER_UTC"
 az deployment group create --resource-group "$PILOT_RESOURCE_GROUP" \
   --template-file infra/three-family-pilot-vm.bicep --parameters \
   provisionPilot=true suffix="$PILOT_SUFFIX" adminUsername="$PILOT_ADMIN_USERNAME" \
@@ -120,11 +120,18 @@ az group exists --name "$WATCHDOG_RESOURCE_GROUP"
 
 At the earlier **public retail** `$0.5260` per hour VM rate, two hours of
 compute is `$1.0520`, and the revised reservations total **`$3.4520`**,
-**`$0.1520` over** the ceiling. The older `$3.2020` estimate omitted explicit
+**`$0.1520` over** the ceiling. A *90-minute* signed window would reserve
+`$0.7890` compute and **`$3.1890` all in** under the same unverified ancillary
+assumptions, leaving `$0.1110` of the `$3.30` source reservation unused. At
+that public compute rate a 102-minute signed window totals `$3.2942`, while
+103 minutes totals `$3.3030` and fails admission. The older `$3.2020`
+estimate omitted explicit
 NAT gateway and Logic App charges and cannot authorize the pilot. Algebraically,
 if all other reservations were sufficient,
 `2 × account VM hourly rate + $1.1500 + $1.2500 ≤ $3.3000`
-requires an account VM rate no higher than **`$0.4500` per hour**. The listed
+requires an account VM rate no higher than **`$0.4500` per hour** for a full
+two hours. For 90 minutes the same fixed assumptions allow up to `$0.6000`
+per compute hour. The listed
 ancillary figures are **source assumptions**, not verified subscription
 quotes; the independent admission must reject any account meter or maximum
 quantity exceeding its category reservation, including the NAT gateway hourly
@@ -178,7 +185,12 @@ Keep billing identifiers and price exports out of this public source branch.
 
 1. Identify the subscription, exclusive empty pilot group, separate watchdog
    group, exact identity/principal, SSH key, image, preserved output storage,
-   and complete billing meters. Review the account-specific all-in bound.
+   and complete billing meters. Choose and sign a 90–120 minute deadline only
+   after the independently verified account-rate calculation fits `$3.30`.
+   Bind the watchdog's verified trigger to the quote at least 15 minutes
+   before that deadline; all resource cleanup must finish inside the priced
+   window. That lead time is a scheduling minimum, not a guarantee that Azure
+   will delete resources within 15 minutes.
 2. Provision the independent authority, append-only grant ledger, and watchdog
    in a separate approved operation. Test its ability to deallocate and delete
    the **exclusive** pilot group. Test that the watchdog itself and its storage
@@ -192,7 +204,7 @@ Keep billing identifiers and price exports out of this public source branch.
    key is unset today, so this command fails closed.
 4. **Only after a separate approval of the actual run:** create one VM without
    public IP in the exclusive group, set an independent deallocation/deletion
-   deadline no later than two hours, and record its resource ID. Verify the
+   trigger at least 15 minutes before the priced deadline and record its resource ID. Verify the
    real GPU is NVIDIA T4 with capability 7.5, the pinned image and runtime are
    compatible, and the independent watchdog remains healthy. The private VM
    must have the reviewed NAT gateway/Standard IP and 80/443-only outbound
@@ -232,9 +244,10 @@ Do not proceed to training from a failed or incomplete step.
   exact East US image, and live capacity remain unverified.
 - The billing account and MCA profile were identified, but subscription rates,
   all ancillary and control-plane meters, and the tax treatment remain unknown.
-  The revised `$3.4520` calculation using that earlier public rate exceeds
-  the ceiling by `$0.1520`; an account compute rate at most `$0.4500` per hour
-  plus independently verified ancillary bounds is required. The public-rate
+  The revised two-hour `$3.4520` calculation using that earlier public rate exceeds
+  the ceiling by `$0.1520`; either a verified account compute rate at most
+  `$0.4500` per hour for a full two hours or a shorter signed allocation fitting
+  the verified all-in calculation is required. The public-rate
   calculation is not an account quote or a hard cap.
 - The independent authority endpoint/signing key, atomic remote grants,
   watchdog health and self-cleanup proof, signed VM preflight, and signed

@@ -714,6 +714,17 @@ class ThreeFamilyContractTests(unittest.TestCase):
             contract.admit_conditional_cosmo_pilot(Decimal("0.4501"))
         self.assertEqual(contract.worst_case_total(hourly_compute_rate=Decimal("0.526"),
                          lifecycle_seconds=7200), Decimal("3.4520"))
+        self.assertEqual(contract.admit_conditional_cosmo_pilot(
+            Decimal("0.526"), lifecycle_seconds=5400), Decimal("3.1890"))
+        self.assertEqual(contract.admit_conditional_cosmo_pilot(
+            Decimal("0.526"), lifecycle_seconds=6120), Decimal("3.2942"))
+        with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
+            contract.admit_conditional_cosmo_pilot(Decimal("0.526"), lifecycle_seconds=6180)
+        for invalid in (0, 5399, 7201, True, "5400"):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                    contract.ContractError, "Cosmo allocation window"):
+                contract.admit_conditional_cosmo_pilot(Decimal("0.526"),
+                                                       lifecycle_seconds=invalid)
         with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
             contract.admit_conditional_cosmo_pilot(Decimal("0.526"))
         self.assertLessEqual(contract.admit_bootstrap(Decimal("0.60")), Decimal("6.0000"))
@@ -722,6 +733,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
         original = contract.load_json
         cost = original(contract.ROOT / "config/kova-three-family-cost-guard.v1.json")
         for update in ({"hard_ceiling_usd": "6.0000"},
+                       {"minimum_allocation_seconds": 1},
                        {"maximum_allocation_seconds": 21600},
                        {"maximum_compute_reservation_usd": "1.2500"},
                        {"other_families_authorized": True}):

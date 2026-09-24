@@ -339,7 +339,8 @@ def _validated_cost_guard() -> dict:
     cost = load_json(ROOT / "config/kova-three-family-cost-guard.v1.json")
     need(cost["combined_hard_ceiling"] == "6.0000")
     need(cost["conditional_cosmo_only_pilot"] == {
-        "hard_ceiling_usd": "3.3000", "maximum_allocation_seconds": 7200,
+        "hard_ceiling_usd": "3.3000", "minimum_allocation_seconds": 5400,
+        "maximum_allocation_seconds": 7200,
         "maximum_compute_reservation_usd": "0.9000",
         "other_families_authorized": False,
     }, "Cosmo-only owner ceiling drift")
@@ -374,7 +375,8 @@ def worst_case_total(*, hourly_compute_rate: Decimal, lifecycle_seconds: int = 2
     cost = _validated_cost_guard()
     increment = cost["provider_compute_meter_increment_seconds"]
     increments = (Decimal(lifecycle_seconds) / Decimal(increment)).to_integral_value(rounding=ROUND_CEILING)
-    compute = (increments * Decimal(increment) / Decimal(3600)) * hourly_compute_rate
+    compute = ((increments * Decimal(increment) / Decimal(3600)) * hourly_compute_rate).quantize(
+        Decimal("0.0001"), rounding=ROUND_CEILING)
     ancillary = sum(Decimal(value) for value in cost["category_upper_bounds"].values())
     return compute + ancillary + Decimal(cost["emergency_cleanup_margin"])
 
@@ -385,7 +387,8 @@ def admit_bootstrap(hourly_compute_rate: Decimal) -> Decimal:
     return total
 
 
-def admit_conditional_cosmo_pilot(hourly_compute_rate: Decimal) -> Decimal:
+def admit_conditional_cosmo_pilot(hourly_compute_rate: Decimal, *,
+                                  lifecycle_seconds: int | None = None) -> Decimal:
     """Check the separate owner limit before a Cosmo-only pilot is proposed.
 
     This is a worst-case reservation check, not a release to spend or a real-time
@@ -393,7 +396,10 @@ def admit_conditional_cosmo_pilot(hourly_compute_rate: Decimal) -> Decimal:
     """
     cost = _validated_cost_guard()
     proposal = cost["conditional_cosmo_only_pilot"]
-    seconds = proposal["maximum_allocation_seconds"]
+    seconds = (proposal["maximum_allocation_seconds"] if lifecycle_seconds is None
+               else lifecycle_seconds)
+    need(type(seconds) is int and proposal["minimum_allocation_seconds"] <= seconds <=
+         proposal["maximum_allocation_seconds"], "Cosmo allocation window outside approved bounds")
     total = worst_case_total(hourly_compute_rate=hourly_compute_rate,
                              lifecycle_seconds=seconds)
     ancillary = sum(Decimal(value) for value in cost["category_upper_bounds"].values())
