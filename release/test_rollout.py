@@ -102,6 +102,13 @@ class RolloutTests(unittest.TestCase):
                          "execution/workers.py", "execution/source_context.py",
                          "evaluation/three_family_guard.py", "config/inference-contract.v1.json",
                          "training/three_family_contract.py",
+                         "training/cosmo_qlora_launch.py",
+                         "training/cosmo_qlora_training.py",
+                         "config/kova-cosmo-qlora.v1.json",
+                         "config/kova-three-family-cost-guard.v1.json",
+                         "config/kova-cosmo-lifecycle-trust.v1.json",
+                         "infra/three-family-pilot-vm.bicep",
+                         "infra/three-family-watchdog.bicep",
                          "config/completion-target.v1.json"):
             def changed(path):
                 data = original(path)

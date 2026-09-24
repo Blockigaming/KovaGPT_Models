@@ -88,6 +88,12 @@ def policy_digest():
              "scripts/summarize-core-benchmark.mjs",
              "evaluation/three_family_guard.py", "config/inference-contract.v1.json",
              "training/three_family_contract.py",
+             "training/cosmo_qlora_launch.py", "training/cosmo_qlora_training.py",
+             "config/kova-cosmo-qlora.v1.json",
+             "config/kova-three-family-cost-guard.v1.json",
+             "config/kova-cosmo-lifecycle-trust.v1.json",
+             "infra/three-family-pilot-vm.bicep",
+             "infra/three-family-watchdog.bicep",
              "config/completion-target.v1.json", "config/evaluation-gates.v1.json",
              "evaluations/offline-suite.v1.json")
     return digest({path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in paths})

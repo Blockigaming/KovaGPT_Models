@@ -1,0 +1,212 @@
+"""Prepare the approved 42-record Cosmo QLoRA job without loading model weights.
+
+The currently checked-in paid gates remain false. The actual trainer is kept
+behind those gates and an independent signed account admission. Its safety
+cannot be established by the guest process alone; an external watchdog and
+authority must be reviewed and tested before any paid run.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import sys
+import time
+
+from training import cosmo_qlora_launch as launch
+from training import three_family_contract as contract
+from training.snapshot_verifier import verify_snapshot
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class TrainingRejected(ValueError):
+    pass
+
+
+def need(value: bool, message: str) -> None:
+    if not value:
+        raise TrainingRejected(message)
+
+
+def prepared_rows() -> tuple[list[dict], list[dict]]:
+    """Require exact approved bytes, then build prompt/completion conversations."""
+    contract.validate_dataset()
+    dataset = contract.load_json(ROOT / "config/kova-three-family-dataset.v2.json")
+    system = (ROOT / dataset["prompt_path"]).read_text(encoding="utf-8")
+    rows = (json.loads(line) for line in (ROOT / dataset["dataset_path"]).read_text(
+        encoding="utf-8").splitlines())
+    train, validation = [], []
+    for row in rows:
+        prompt = [{"role": "system", "content": system}, row["messages"][0]]
+        if row.get("trusted_runtime"):
+            need(row["split"] == "validation", "training includes a provenance fixture")
+            prompt[0] = {"role": "system", "content": system + "\nTrusted test runtime: " +
+                         json.dumps(row["trusted_runtime"], sort_keys=True)}
+        prepared = {"prompt": prompt, "completion": [row["messages"][1]]}
+        (train if row["split"] == "train" else validation).append(prepared)
+    need(len(train) == 27 and len(validation) == 15,
+         "42-record approved split mismatch")
+    return train, validation
+
+
+def validate_token_masks(tokenizer, rows: list[dict], max_length: int) -> None:
+    """Reject token truncation and any training row without completion loss."""
+    need(len(rows) == 42 and max_length == 1024, "invalid token check scope")
+    from training.cosmo_runtime_probe import completion_tokens
+    for row in rows:
+        completion_tokens(tokenizer, row, max_length)
+
+
+def source_plan() -> dict:
+    proposal = launch.proposal()
+    train, validation = prepared_rows()
+    recipe = contract.load_json(ROOT / "config/kova-cosmo-qlora.v1.json")
+    need(recipe["method"] == "four_bit_qlora_lora_sft" and
+         recipe["quantization"] == {"bits": 4, "type": "nf4",
+                                    "double_quant": True, "compute_dtype": "float16"} and
+         recipe["training"]["completion_only_masking"] is True and
+         recipe["retry"] == {"automatic": False, "maximum_attempts": 1},
+         "QLoRA method drifted")
+    return {
+        "status": "cosmo_42_record_qlora_prepared_execution_blocked",
+        "family": "kova-cosmo", "train_records": len(train),
+        "validation_records": len(validation),
+        "dataset_sha256": proposal["dataset_sha256"],
+        "model_revision": proposal["model_revision"],
+        "maximum_optimizer_steps": recipe["training"]["maximum_optimizer_steps"],
+        "maximum_training_seconds": recipe["training"]["maximum_elapsed_seconds"],
+        "paid_actions_enabled": False,
+    }
+
+
+def execute(*, snapshot: Path, output: Path, quote: Path, subscription_id: str) -> dict:
+    """Future paid path. Admission is deliberately unreachable on this head."""
+    source_plan()
+    pilot = contract.load_json(ROOT / "config/kova-three-family-pilot.v1.json")
+    dataset = contract.load_json(ROOT / "config/kova-three-family-dataset.v2.json")
+    recipe = contract.load_json(ROOT / "config/kova-cosmo-qlora.v1.json")
+    cost = contract.load_json(ROOT / "config/kova-three-family-cost-guard.v1.json")
+    need(pilot["resource_creation_authorized"] is True and
+         pilot["spending_authorized"] is True and
+         pilot["model_download_authorized"] is True and
+         pilot["training_authorized"] is True and
+         dataset["training_authorized"] is True and
+         cost["spending_authorized"] is True,
+         "owner release and source authorization absent")
+    need(recipe["training_authorized"] is True and
+         os.environ.get("KOVA_CONFIRM_PAID_TRAINING") == "YES",
+         "training authorization absent")
+    source_commit = launch.clean_source_commit()
+    admission = launch.assess_signed_quote(
+        quote, source_commit=source_commit, subscription_id=subscription_id)
+    # Source review must replace this hold only after the independent authority
+    # and control-plane watchdog are live and verified in the chosen account.
+    need(admission["paid_actions_enabled"] is True,
+         "independent paid controller is not released")
+    need(snapshot.is_absolute() and output.is_absolute() and
+         not output.exists() and not output.is_symlink(),
+         "snapshot or new external output directory invalid")
+    repository = ROOT.resolve(strict=True)
+    model_root = snapshot.resolve(strict=True)
+    parent = output.parent.resolve(strict=True)
+    need(repository not in model_root.parents and repository != model_root and
+         repository not in parent.parents and repository != parent,
+         "training files must be outside the source tree")
+    lineage = contract.load_json(ROOT / "config/kova-private-lineage.v1.json")
+    manifest = contract._pinned_manifest("kova-cosmo", lineage["families"]["kova-cosmo"])
+    verify_snapshot(model_root, manifest)
+    os.environ.update({"HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1",
+                       "TRANSFORMERS_OFFLINE": "1", "HF_HUB_DISABLE_TELEMETRY": "1",
+                       "WANDB_DISABLED": "true"})
+    import torch
+    from datasets import Dataset
+    from peft import LoraConfig, prepare_model_for_kbit_training
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    from trl import SFTConfig, SFTTrainer
+    from training.cosmo_hardware import verify_nvidia_t4
+
+    verify_nvidia_t4(torch)
+    tokenizer = AutoTokenizer.from_pretrained(str(model_root), local_files_only=True,
+                                               trust_remote_code=False)
+    train, validation = prepared_rows()
+    validate_token_masks(tokenizer, train + validation, 1024)
+    quant = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                              bnb_4bit_use_double_quant=True,
+                              bnb_4bit_compute_dtype=torch.float16)
+    model = AutoModelForCausalLM.from_pretrained(
+        str(model_root), local_files_only=True, trust_remote_code=False,
+        quantization_config=quant, dtype=torch.float16, device_map={"": 0})
+    model = prepare_model_for_kbit_training(model)
+    need(all(any(name.endswith("." + target) for name, _ in model.named_modules())
+             for target in recipe["lora"]["target_modules"]),
+         "base model LoRA target missing")
+    lora = recipe["lora"]
+    peft_config = LoraConfig(r=lora["rank"], lora_alpha=lora["alpha"],
+                             lora_dropout=lora["dropout"], bias=lora["bias"],
+                             target_modules=lora["target_modules"],
+                             task_type="CAUSAL_LM")
+    training = recipe["training"]
+    args = SFTConfig(
+        output_dir=str(output / "checkpoints"),
+        max_steps=training["maximum_optimizer_steps"], num_train_epochs=1,
+        per_device_train_batch_size=training["per_device_batch_size"],
+        gradient_accumulation_steps=training["gradient_accumulation_steps"],
+        learning_rate=training["learning_rate"], max_length=1024,
+        completion_only_loss=True, packing=False, fp16=True, bf16=False,
+        save_safetensors=True, save_strategy="steps", save_steps=7,
+        report_to="none", push_to_hub=False, seed=42,
+    )
+    # The independent watchdog must enforce the allocation deadline even if
+    # the guest process freezes. This callback stops between optimizer steps.
+    from transformers import TrainerCallback
+    deadline = datetime.strptime(admission["allocation_deadline_utc"],
+                                  "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    start = time.monotonic()
+
+    class DeadlineCallback(TrainerCallback):
+        def on_step_end(self, args, state, control, **kwargs):
+            if (time.monotonic() - start >= training["maximum_elapsed_seconds"] or
+                    datetime.now(timezone.utc) >= deadline):
+                control.should_training_stop = True
+            return control
+
+    output.mkdir(mode=0o700)
+    trainer = SFTTrainer(model=model, args=args, peft_config=peft_config,
+                         processing_class=tokenizer,
+                         train_dataset=Dataset.from_list(train),
+                         eval_dataset=Dataset.from_list(validation),
+                         callbacks=[DeadlineCallback()])
+    result = trainer.train()
+    need(result.global_step == 7 and time.monotonic() - start <
+         training["maximum_elapsed_seconds"] and datetime.now(timezone.utc) < deadline,
+         "training did not complete inside the approved limit")
+    trainer.model.save_pretrained(output / "adapter", safe_serialization=True)
+    return {"status": "candidate_not_released", "source_commit": source_commit,
+            "optimizer_steps": result.global_step, "output": str(output)}
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--snapshot", type=Path)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--quote", type=Path)
+    parser.add_argument("--subscription-id")
+    args = parser.parse_args(argv)
+    if args.execute:
+        if not all((args.snapshot, args.output, args.quote, args.subscription_id)):
+            parser.error("the paid path requires all four explicit bindings")
+        print(json.dumps(execute(snapshot=args.snapshot, output=args.output,
+                                 quote=args.quote, subscription_id=args.subscription_id),
+                         sort_keys=True))
+    else:
+        print(json.dumps(source_plan(), sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
