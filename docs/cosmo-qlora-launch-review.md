@@ -296,8 +296,9 @@ Do not proceed to training from a failed or incomplete step.
 - Current quota is sufficient for four T4 family cores and for four regional
   cores, but `Microsoft.Network` and `Microsoft.Logic` are NotRegistered.
   Registration would change subscription state and is outside this review-only
-  release. The SKU and exact East US image were listed without restrictions;
-  live allocation capacity remains unverified.
+  release. The exact East US SKU returned `restrictions: []`; the pinned
+  East US image returned `imageState: Active`. Live allocation capacity,
+  image deployability and runtime compatibility remain unverified.
 - The billing account and MCA profile were identified, but subscription rates,
   all ancillary and control-plane meters, and the tax treatment remain unknown.
   The revised two-hour `$3.4520` calculation using that earlier public rate exceeds
