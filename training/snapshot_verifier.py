@@ -18,11 +18,33 @@ MANIFESTS = {
 }
 
 
-def verify_snapshot(snapshot: Path, manifest: dict) -> dict:
+def _identity(metadata):
+    return (metadata.st_dev, metadata.st_ino, metadata.st_mode,
+            metadata.st_nlink, metadata.st_size, metadata.st_mtime_ns,
+            metadata.st_ctime_ns)
+
+
+def _protected(directory: Path, entries: list[Path]) -> bool:
+    # Only a read-only mount or a different owner with read-only permissions
+    # can protect the tree from the unprivileged training process. A process
+    # running as root cannot claim ownership-based protection.
+    paths = [directory, *directory.rglob("*"), *entries]
+    try:
+        mounted_read_only = bool(os.statvfs(directory).f_flag & os.ST_RDONLY)
+        return mounted_read_only or (os.geteuid() != 0 and all(
+            path.lstat().st_uid != os.geteuid() and
+            not path.lstat().st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+            for path in paths))
+    except OSError:
+        return False
+
+
+def verify_snapshot(snapshot: Path, manifest: dict, *, require_protected: bool = False) -> dict:
     expected = {entry["path"]: entry for entry in manifest["files"]}
     if not stat.S_ISDIR(snapshot.lstat().st_mode):
         raise ValueError("snapshot_root_not_directory")
     actual = set()
+    entries = []
     for path in snapshot.rglob("*"):
         mode = path.lstat().st_mode
         if stat.S_ISDIR(mode):
@@ -30,6 +52,7 @@ def verify_snapshot(snapshot: Path, manifest: dict) -> dict:
         if not stat.S_ISREG(mode) or path.lstat().st_nlink != 1:
             raise ValueError("snapshot_nonregular_or_linked_entry")
         actual.add(path.relative_to(snapshot).as_posix())
+        entries.append(path)
     if actual != set(expected):
         raise ValueError("snapshot_inventory_mismatch")
     for relative, entry in expected.items():
@@ -44,12 +67,19 @@ def verify_snapshot(snapshot: Path, manifest: dict) -> dict:
                 raise ValueError(f"snapshot_size_mismatch:{relative}")
             for block in iter(lambda: stream.read(1024 * 1024), b""):
                 hasher.update(block)
-            if os.fstat(stream.fileno()).st_size != metadata.st_size:
-                raise ValueError(f"snapshot_size_changed:{relative}")
+            if (_identity(os.fstat(stream.fileno())) != _identity(metadata) or
+                    _identity(path.lstat()) != _identity(metadata)):
+                raise ValueError(f"snapshot_identity_changed:{relative}")
         digest = hasher.hexdigest()
         if digest != entry["sha256"]:
             raise ValueError(f"snapshot_hash_mismatch:{relative}")
-    return {"verified": True, "offline_load_required": True, "files": len(expected)}
+    if {p.relative_to(snapshot).as_posix() for p in snapshot.rglob("*") if not p.is_dir()} != actual:
+        raise ValueError("snapshot_inventory_changed")
+    protected = _protected(snapshot, entries)
+    if require_protected and not protected:
+        raise ValueError("snapshot_must_be_protected_from_training_identity")
+    return {"verified": True, "protected_for_loading": protected,
+            "offline_load_required": True, "files": len(expected)}
 
 
 def _manifest(family: str) -> dict:

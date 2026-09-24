@@ -20,6 +20,59 @@ from training import three_family_contract as contract
 
 
 class ThreeFamilyContractTests(unittest.TestCase):
+    def test_public_evaluation_binds_runner_source_and_active_commit(self):
+        digest = guard.sha256_file(guard.ROOT / "evaluation/three_family_guard.py")
+        pins = {family: {"runner_sha256": digest} for family in guard.FAMILIES}
+        with self.assertRaisesRegex(ValueError, "trusted_runner_source_not_pinned"):
+            guard._require_trusted_runner_source(pins)
+        with patch.object(guard, "PINNED_RUNNER_SOURCE_SHA256", digest):
+            guard._require_trusted_runner_source(pins)
+            different = deepcopy(pins)
+            different["kova-cosmo"]["runner_sha256"] = "f" * 64
+            with self.assertRaisesRegex(ValueError, "untrusted_family_runner_binding"):
+                guard._require_trusted_runner_source(different)
+            with patch.object(guard, "sha256_file", return_value="a" * 64), \
+                 self.assertRaisesRegex(ValueError, "trusted_runner_source_drift"):
+                guard._require_trusted_runner_source(pins)
+        with patch.object(guard, "_trusted_reviewed_case_bindings", return_value={}), \
+             patch.object(guard, "_require_trusted_family_adapter_bindings"), \
+             patch.object(guard, "_require_trusted_runner_source"), \
+             patch.object(guard, "_active_source_commit", return_value="e" * 40), \
+             self.assertRaisesRegex(ValueError, "evaluation_source_commit_not_active"):
+            guard.validate_evidence_matrix([], source_commit="d" * 40,
+                                           family_bindings=pins, case_bindings={}, review_verdicts={})
+
+    def test_snapshot_rejects_writable_paid_handoff_and_same_size_replacement(self):
+        from training import snapshot_verifier
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "weights.safetensors").write_bytes(b"abcd")
+            manifest = {"files": [{"path": "weights.safetensors", "bytes": 4,
+                                   "sha256": hashlib.sha256(b"abcd").hexdigest()}]}
+            report = snapshot_verifier.verify_snapshot(root, manifest)
+            self.assertFalse(report["protected_for_loading"])
+            with self.assertRaisesRegex(ValueError, "snapshot_must_be_protected"):
+                snapshot_verifier.verify_snapshot(root, manifest, require_protected=True)
+            original = snapshot_verifier.os.fstat
+            calls = 0
+
+            def replaced_after_hash(fd):
+                nonlocal calls
+                calls += 1
+                value = original(fd)
+                if calls != 2:
+                    return value
+                fields = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_size",
+                          "st_mtime_ns", "st_ctime_ns")
+                changed = {name: getattr(value, name) for name in fields}
+                changed["st_mtime_ns"] += 1
+                return SimpleNamespace(**changed)
+
+            with patch.object(snapshot_verifier.os, "fstat", side_effect=replaced_after_hash), \
+                 self.assertRaisesRegex(ValueError, "snapshot_identity_changed"):
+                snapshot_verifier.verify_snapshot(root, manifest)
+
     def test_operator_has_exact_dry_run_sequence(self):
         plan = command_plan()
         self.assertEqual([step["id"] for step in plan], list(range(1, 20)))
@@ -37,6 +90,8 @@ class ThreeFamilyContractTests(unittest.TestCase):
         self.assertIn("pilotSuffix=${PILOT_SUFFIX}", plan[4]["argv"])
         self.assertIn("provisionPilot=true", plan[5]["argv"])
         self.assertIn("--all-families", plan[7]["argv"])
+        self.assertIn("--require-live-imds", plan[6]["argv"])
+        self.assertIn("--require-live-imds", plan[8]["argv"])
         cleanup = json.dumps(plan[16:18])
         self.assertIn("${PILOT_RESOURCE_GROUP}", cleanup)
         self.assertIn("${WATCHDOG_RESOURCE_GROUP}", cleanup)
@@ -857,6 +912,8 @@ class ThreeFamilyContractTests(unittest.TestCase):
                 "compute_capability": "7.5",
                 "cuda_version": "12.8",
                 "azure_vm_image_urn": "Canonical:ubuntu-24_04-lts:server:24.04.202609040",
+                "azure_vm_resource_id": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/pilot/providers/Microsoft.Compute/virtualMachines/kova-t4-test",
+                "azure_vm_id": "12345678-1234-1234-1234-123456789abc",
                 "bitsandbytes_four_bit_available": True,
                 "available_vram_bytes": 16000000000,
                 "free_disk_bytes": 40000000000,
@@ -866,7 +923,33 @@ class ThreeFamilyContractTests(unittest.TestCase):
                     "kova-nova": {"peak_vram_bytes": 15000000000, "maximum_sequence_length": 768, "probe_passed": True},
                 },
             }))
-            self.assertEqual(contract.validate_probe_evidence(path)["status"], "t4_probe_evidence_valid")
+            self.assertEqual(contract.validate_probe_evidence(path)["status"], "untrusted_probe_shape_valid")
+            with self.assertRaisesRegex(contract.ContractError, "IMDS image proof"):
+                contract.validate_probe_evidence(path, require_live_imds=True)
+            metadata = {
+                "resourceId": json.loads(path.read_text())["azure_vm_resource_id"],
+                "vmId": json.loads(path.read_text())["azure_vm_id"],
+                "location": "eastus", "vmSize": "Standard_NC4as_T4_v3",
+                "storageProfile": {"imageReference": {
+                    "publisher": "Canonical", "offer": "ubuntu-24_04-lts",
+                    "sku": "server", "version": "24.04.202609040",
+                    "exactVersion": "24.04.202609040",
+                }},
+            }
+            from training import cosmo_lifecycle_authority as authority
+            with patch.object(authority, "_imds_transport", return_value=metadata):
+                self.assertTrue(contract.validate_probe_evidence(
+                    path, require_live_imds=True)["live_azure_image_verified"])
+            changed_image = deepcopy(metadata)
+            changed_image["storageProfile"]["imageReference"]["exactVersion"] = "24.04.OTHER"
+            with patch.object(authority, "_imds_transport", return_value=changed_image), \
+                 self.assertRaisesRegex(contract.ContractError, "live Azure VM image"):
+                contract.validate_probe_evidence(path, require_live_imds=True)
+            missing_exact_version = deepcopy(metadata)
+            del missing_exact_version["storageProfile"]["imageReference"]["exactVersion"]
+            with patch.object(authority, "_imds_transport", return_value=missing_exact_version), \
+                 self.assertRaisesRegex(contract.ContractError, "live Azure VM image"):
+                contract.validate_probe_evidence(path, require_live_imds=True)
             value = json.loads(path.read_text())
             value["azure_vm_image_urn"] = "Canonical:ubuntu-24_04-lts:server:latest"
             path.write_text(json.dumps(value))
@@ -879,36 +962,66 @@ class ThreeFamilyContractTests(unittest.TestCase):
                 contract.validate_probe_evidence(path)
 
     def test_ledger_assigns_sequence_and_rejects_stale_duplicate_out_of_order(self):
+        from datetime import datetime, timedelta, timezone
+        now = datetime(2026, 9, 24, 12, 1, tzinfo=timezone.utc)
+        def health(family):
+            return {"kind": "watchdog_health", "family": family, "healthy": True,
+                    "rule_id": "tested-rule", "observed_at_utc": "2026-09-24T12:00:00Z",
+                    "expires_at_utc": "2026-09-24T12:05:00Z"}
+        def cost(family, remaining="3.3000"):
+            return {"kind": "cost_admission", "family": family,
+                    "account_price_verified": True, "quote_sha256": "a" * 64,
+                    "remaining_budget_usd": remaining,
+                    "observed_at_utc": "2026-09-24T12:00:00Z",
+                    "expires_at_utc": "2026-09-24T12:05:00Z"}
         state = {"sequence": 0, "terminal": False, "family_order": [], "events": []}
-        state = contract.append_ledger_event(state, {"kind": "watchdog_health"}, expected_sequence=0)
+        state = contract.append_ledger_event(state, health("kova-cosmo"),
+                                             expected_sequence=0, now=now)
         self.assertEqual(state["events"][-1]["sequence"], 1)
         with self.assertRaises(contract.ContractError):
             contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-orion"},
                                          expected_sequence=1)
-        with self.assertRaisesRegex(contract.ContractError, "cost admission required"):
+        with self.assertRaisesRegex(contract.ContractError, "fresh family watchdog and cost"):
             contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-cosmo"},
-                                         expected_sequence=1)
-        state = contract.append_ledger_event(state, {"kind": "cost_admission"}, expected_sequence=1)
+                                         expected_sequence=1, now=now)
+        with self.assertRaisesRegex(contract.ContractError, "remaining family budget insufficient"):
+            contract.append_ledger_event(state, cost("kova-cosmo", "3.2000"),
+                                         expected_sequence=1, now=now)
+        state = contract.append_ledger_event(state, cost("kova-cosmo"),
+                                             expected_sequence=1, now=now)
         before_grant = deepcopy(state)
         state = contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-cosmo"},
-                                             expected_sequence=2)
+                                             expected_sequence=2, now=now)
         self.assertEqual(before_grant["family_order"], [])
         self.assertEqual(state["family_order"], ["kova-cosmo"])
         with self.assertRaises(contract.ContractError):
             contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-cosmo"},
                                          expected_sequence=3)
-        with self.assertRaisesRegex(contract.ContractError, "previous family preservation required"):
+        with self.assertRaisesRegex(contract.ContractError, "fresh family watchdog and cost"):
             contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-orion"},
-                                         expected_sequence=3)
+                                         expected_sequence=3, now=now)
         state = contract.append_ledger_event(state, {"kind": "family_preserved", "family": "kova-cosmo"},
                                              expected_sequence=3)
+        with self.assertRaisesRegex(contract.ContractError, "fresh family watchdog and cost"):
+            contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-orion"},
+                                         expected_sequence=4, now=now)
+        state = contract.append_ledger_event(state, health("kova-orion"),
+                                             expected_sequence=4, now=now)
+        with self.assertRaisesRegex(contract.ContractError, "remaining family budget insufficient"):
+            contract.append_ledger_event(state, cost("kova-orion", "3.3000"),
+                                         expected_sequence=5, now=now)
+        state = contract.append_ledger_event(state, cost("kova-orion", "3.7000"),
+                                             expected_sequence=5, now=now)
+        with self.assertRaisesRegex(contract.ContractError, "stale admission"):
+            contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-orion"},
+                                         expected_sequence=6, now=now + timedelta(minutes=5))
         state = contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-orion"},
-                                             expected_sequence=4)
+                                             expected_sequence=6, now=now)
         self.assertEqual(state["family_order"], ["kova-cosmo", "kova-orion"])
         with self.assertRaises(contract.ContractError):
-            contract.append_ledger_event(state, {"kind": "cost_admission"}, expected_sequence=1)
+            contract.append_ledger_event(state, cost("kova-nova"), expected_sequence=1, now=now)
         with self.assertRaises(contract.ContractError):
-            contract.append_ledger_event(state, {"kind": "cost_admission", "sequence": 3},
+            contract.append_ledger_event(state, {**cost("kova-nova"), "sequence": 3},
                                          expected_sequence=2)
 
     def test_terminal_ledger_rejects_post_cleanup_events(self):

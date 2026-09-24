@@ -8,6 +8,7 @@ signed evidence and the exact operator plan after an explicit owner release.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import hashlib
 import json
@@ -466,21 +467,43 @@ def validate_live_price_evidence(path: Path, *, admission_scope: str = "three-fa
     }
 
 
-def validate_probe_evidence(path: Path) -> dict:
-    """Validate supplied T4/CUDA/bitsandbytes probe evidence; never run a probe."""
+def validate_probe_evidence(path: Path, *, require_live_imds: bool = False) -> dict:
+    """Validate probe values, then bind the image to the executing Azure VM."""
     value = load_json(path, maximum_bytes=64 * 1024)
     compat = load_json(ROOT / "config/kova-t4-compatibility.v1.json")
     stack = load_json(ROOT / "config/kova-three-family-training-stack.v1.json")
     need(set(value) == {
         "schema_version", "device_name", "compute_capability", "cuda_version",
         "bitsandbytes_four_bit_available", "available_vram_bytes", "free_disk_bytes",
-        "family_probes", "azure_vm_image_urn",
+        "family_probes", "azure_vm_image_urn", "azure_vm_resource_id", "azure_vm_id",
     }, "invalid T4 probe evidence shape")
     need(value["schema_version"] == 1, "invalid T4 probe evidence schema")
     pilot = load_json(ROOT / "config/kova-three-family-pilot.v1.json")
     expected_image = "Canonical:ubuntu-24_04-lts:server:" + pilot["single_shared_vm"]["ubuntu_image_version"]
     need(value["azure_vm_image_urn"] == expected_image,
          "runtime image does not match pinned Azure image")
+    need(type(value["azure_vm_resource_id"]) is str and
+         value["azure_vm_resource_id"].startswith("/subscriptions/") and
+         type(value["azure_vm_id"]) is str and len(value["azure_vm_id"]) == 36,
+         "invalid Azure VM identity")
+    if require_live_imds:
+        from training.cosmo_lifecycle_authority import (
+            AuthorityError, AZURE_COMPUTE_IMDS_URL, _imds_transport,
+        )
+        try:
+            compute = _imds_transport(AZURE_COMPUTE_IMDS_URL)
+            image = compute["storageProfile"]["imageReference"]
+            need(compute["resourceId"].casefold() == value["azure_vm_resource_id"].casefold()
+                 and compute["vmId"].casefold() == value["azure_vm_id"].casefold()
+                 and compute["location"].casefold() == "eastus"
+                 and compute["vmSize"] == "Standard_NC4as_T4_v3",
+                 "probe ran on another Azure VM")
+            need(image["publisher"] == "Canonical" and
+                 image["offer"] == "ubuntu-24_04-lts" and image["sku"] == "server" and
+                 image.get("exactVersion") == "24.04.202609040",
+                 "live Azure VM image differs from the source pin")
+        except (AuthorityError, KeyError, AttributeError, TypeError):
+            raise ContractError("trusted Azure IMDS image proof unavailable") from None
     need(value["device_name"] == compat["device"]["exact_name"], "unexpected GPU")
     need(value["compute_capability"] == compat["device"]["cuda_compute_capability"],
          "unexpected compute capability")
@@ -507,9 +530,10 @@ def validate_probe_evidence(path: Path) -> dict:
         need(measured["maximum_sequence_length"] == expected["maximum_sequence_length"],
              "sequence-length probe mismatch")
     return {
-        "status": "t4_probe_evidence_valid",
+        "status": "t4_probe_evidence_valid" if require_live_imds else "untrusted_probe_shape_valid",
         "device_name": value["device_name"],
         "azure_vm_image_urn": value["azure_vm_image_urn"],
+        "live_azure_image_verified": require_live_imds,
         "families": list(FAMILIES),
     }
 
@@ -554,12 +578,30 @@ def validate_cost_lifecycle_operator():
         _all_false(value, label)
 
 
-def append_ledger_event(state: dict, event: dict, *, expected_sequence: int) -> dict:
+def _fresh_admission(event: dict, *, now: datetime) -> None:
+    need(type(event.get("observed_at_utc")) is str and
+         type(event.get("expires_at_utc")) is str, "missing admission timestamps")
+    try:
+        observed = datetime.strptime(event["observed_at_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc)
+        expires = datetime.strptime(event["expires_at_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc)
+    except ValueError:
+        raise ContractError("invalid admission timestamps") from None
+    need(observed <= now < expires <= observed + timedelta(minutes=5),
+         "stale admission")
+
+
+def append_ledger_event(state: dict, event: dict, *, expected_sequence: int,
+                        now: datetime | None = None) -> dict:
     """Pure reference transition used by the independent leased remote ledger."""
     need(type(state) is dict and type(event) is dict, "invalid ledger state")
     need(state.get("terminal") is False, "ledger is terminal")
     need(type(expected_sequence) is int and expected_sequence == state.get("sequence"), "stale ledger sequence")
     need(event.get("sequence") is None, "caller cannot assign ledger sequence")
+    now = now or datetime.now(timezone.utc)
+    need(now.tzinfo is not None, "ledger requires a timezone-aware clock")
+    now = now.astimezone(timezone.utc)
     state = json.loads(json.dumps(state))
     family = event.get("family")
     kind = event.get("kind")
@@ -572,6 +614,37 @@ def append_ledger_event(state: dict, event: dict, *, expected_sequence: int) -> 
             need(family not in order, "duplicate family grant")
             need(family == FAMILIES[len(order)], "out-of-order family grant")
             order.append(family)
+    if kind == "watchdog_health":
+        need(len(state.get("family_order", [])) < len(FAMILIES) and
+             family == FAMILIES[len(state.get("family_order", []))],
+             "watchdog admission must bind the next family")
+        _fresh_admission(event, now=now)
+        need(event.get("healthy") is True and
+             type(event.get("rule_id")) is str and event["rule_id"],
+             "independent watchdog proof required")
+    if kind == "cost_admission":
+        events = state.get("events", [])
+        need(len(state.get("family_order", [])) < len(FAMILIES) and
+             family == FAMILIES[len(state.get("family_order", []))] and
+             events and events[-1].get("kind") == "watchdog_health" and
+             events[-1].get("family") == family,
+             "fresh family watchdog admission required")
+        _fresh_admission(event, now=now)
+        need(event.get("account_price_verified") is True and
+             type(event.get("quote_sha256")) is str and
+             HEX64.fullmatch(event["quote_sha256"]),
+             "independent account quote required")
+        try:
+            remaining = Decimal(event["remaining_budget_usd"])
+        except (KeyError, TypeError, InvalidOperation):
+            raise ContractError("remaining family budget required") from None
+        cost = _validated_cost_guard()
+        ancillary = sum(Decimal(v) for v in cost["category_upper_bounds"].values())
+        compute = (Decimal(cost["conditional_cosmo_only_pilot"]["maximum_compute_reservation_usd"])
+                   if family == "kova-cosmo" else Decimal(cost["family_allowances"][family]))
+        required = compute + ancillary + Decimal(cost["emergency_cleanup_margin"])
+        need(remaining.is_finite() and required <= remaining <= Decimal("6.0000"),
+             "remaining family budget insufficient")
     need(kind != "training_grant" or family in FAMILIES, "training grant requires a family")
     if kind == "family_preserved":
         need(family in FAMILIES and family in state.get("family_order", []),
@@ -580,10 +653,12 @@ def append_ledger_event(state: dict, event: dict, *, expected_sequence: int) -> 
                      for item in state.get("events", [])), "duplicate family preservation")
     if kind == "training_grant":
         events = state.get("events", [])
-        need(any(item.get("kind") == "watchdog_health" for item in events),
-             "watchdog health required before family grant")
-        need(any(item.get("kind") == "cost_admission" for item in events),
-             "cost admission required before family grant")
+        need(len(events) >= 2 and events[-2].get("kind") == "watchdog_health" and
+             events[-1].get("kind") == "cost_admission" and
+             events[-2].get("family") == family and events[-1].get("family") == family,
+             "fresh family watchdog and cost admissions required before grant")
+        _fresh_admission(events[-2], now=now)
+        _fresh_admission(events[-1], now=now)
         previous = FAMILIES.index(family) - 1
         if previous >= 0:
             need(any(item.get("kind") == "family_preserved" and
@@ -626,13 +701,17 @@ def main(argv=None) -> int:
     evidence.add_argument("--retail-price-evidence", type=Path)
     parser.add_argument("--admission-scope", choices=("three-family", "cosmo-only"),
                         default="three-family")
+    parser.add_argument("--require-live-imds", action="store_true")
     args = parser.parse_args(argv)
     if args.probe_evidence is not None:
-        report = validate_probe_evidence(args.probe_evidence)
+        report = validate_probe_evidence(args.probe_evidence,
+                                         require_live_imds=args.require_live_imds)
     elif args.retail_price_evidence is not None:
+        need(not args.require_live_imds, "IMDS proof requires probe evidence")
         report = validate_live_price_evidence(args.retail_price_evidence,
                                               admission_scope=args.admission_scope)
     else:
+        need(not args.require_live_imds, "IMDS proof requires probe evidence")
         report = validate()
     print(json.dumps(report, sort_keys=True))
     return 0

@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from training import cosmo_lifecycle_authority as authority
 from training import cosmo_qlora_launch as launch
+from training import cosmo_qlora_grant as grant
 from training import three_family_contract as contract
 
 
@@ -140,6 +141,92 @@ class LaunchTests(unittest.TestCase):
         with redirect_stdout(StringIO()) as output:
             self.assertEqual(launch.main([]), 0)
         self.assertFalse(json.loads(output.getvalue())["paid_actions_enabled"])
+
+    def test_runtime_preflight_and_one_run_grant_bind_instance_and_quote(self):
+        quote = self.signed()
+        admission = self.check()
+        vm = {"resource_id": "/subscriptions/" + self.subscription +
+              "/resourceGroups/pilot/providers/Microsoft.Compute/virtualMachines/cosmo",
+              "vm_id": "12345678-1234-1234-1234-123456789abd",
+              "system_assigned_identity_principal_id":
+              "12345678-1234-1234-1234-123456789abe"}
+        runtime = {"schema_version": 1, "kind": "kova_cosmo_qlora_runtime_preflight",
+                   "issuer": authority.ISSUER, "quote_sha256": admission["quote_sha256"],
+                   "source_commit": self.commit, "subscription_id": self.subscription,
+                   "lifecycle_id": "one-pilot", "preflight_ledger_sequence": 3,
+                   "azure_instance": vm, "allocation_deadline_utc":
+                   admission["allocation_deadline_utc"],
+                   "observed_at_utc": "2026-09-24T12:00:00Z",
+                   "watchdog_healthy": True, "cleanup_scope_verified": True}
+        outside = TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        runtime_path = Path(outside.name) / "runtime.json"
+
+        def save_runtime(value):
+            runtime_path.write_text(json.dumps({"payload": value,
+                "signature": self.key.sign(authority.canonical(value)).hex()}))
+
+        save_runtime(runtime)
+        received = grant.read_runtime_preflight(runtime_path,
+            quote_sha256=admission["quote_sha256"], source_commit=self.commit,
+            subscription_id=self.subscription,
+            deadline_utc=admission["allocation_deadline_utc"],
+            now=self.now, root=self.root)
+        self.assertEqual(received["azure_instance"], vm)
+        save_runtime({**runtime, "quote_sha256": "a" * 64})
+        with self.assertRaises(grant.GrantRejected):
+            grant.read_runtime_preflight(runtime_path,
+                quote_sha256=admission["quote_sha256"], source_commit=self.commit,
+                subscription_id=self.subscription,
+                deadline_utc=admission["allocation_deadline_utc"],
+                now=self.now, root=self.root)
+
+        compute = {"resourceId": vm["resource_id"], "vmId": vm["vm_id"],
+                   "location": "eastus", "vmSize": launch.SKU,
+                   "storageProfile": {"imageReference": {
+                       "publisher": "Canonical", "offer": "ubuntu-24_04-lts",
+                       "sku": "server", "exactVersion": "24.04.202609040"}}}
+        token_sha = "b" * 64
+
+        def committed(_endpoint, _token, request, *, runs=1):
+            payload = {"schema_version": 1,
+                       "kind": "kova_cosmo_qlora_training_grant",
+                       "issuer": authority.ISSUER,
+                       **{key: request[key] for key in (
+                           "source_commit", "subscription_id", "quote_sha256",
+                           "lifecycle_id", "preflight_ledger_sequence",
+                           "azure_instance", "request_nonce", "allocation_deadline_utc",
+                           "all_in_ceiling_usd")},
+                       "ledger_sequence": 4, "ledger_commit_id": "atomic-commit",
+                       "ledger_append_only": True,
+                       "ledger_status": "grant_committed_before_response",
+                       "grant_id": "one-and-only", "azure_identity_token_sha256": token_sha,
+                       "issued_at_utc": "2026-09-24T12:01:00Z",
+                       "expires_at_utc": "2026-09-24T13:59:00Z",
+                       "training_runs_consumed": runs, "all_in_reserved_usd": "3.3000",
+                       "watchdog_healthy": True, "cleanup_scope_verified": True,
+                       "deployment_authorized": False}
+            return {"payload": payload,
+                    "signature": self.key.sign(authority.canonical(payload)).hex()}
+
+        def call(transport):
+            with patch.object(authority, "_executing_azure_identity", return_value=(
+                    "synthetic-token", token_sha, "2026-09-24T14:30:00Z")), \
+                 patch.object(authority, "_load_bearer_token", return_value="synthetic"), \
+                 patch.object(grant.launch, "assess_signed_quote", return_value=admission):
+                return grant.acquire_training_grant(
+                    quote=quote, source_commit=self.commit,
+                    subscription_id=self.subscription, lifecycle_id="one-pilot",
+                    preflight_ledger_sequence=3, azure_instance=vm, now=self.now,
+                    root=self.root, transport=transport,
+                    instance_transport=lambda _url: compute)
+
+        self.assertEqual(call(committed)["training_runs_consumed"], 1)
+        with self.assertRaises(grant.GrantRejected):
+            call(lambda e, t, r: committed(e, t, r, runs=2))
+        compute["storageProfile"]["imageReference"]["exactVersion"] = "latest"
+        with self.assertRaises(grant.GrantRejected):
+            call(committed)
 
 
 if __name__ == "__main__":

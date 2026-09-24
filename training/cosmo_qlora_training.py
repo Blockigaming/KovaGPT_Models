@@ -9,6 +9,7 @@ authority must be reviewed and tested before any paid run.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ import sys
 import time
 
 from training import cosmo_qlora_launch as launch
+from training import cosmo_qlora_grant as grant
 from training import three_family_contract as contract
 from training.snapshot_verifier import verify_snapshot
 
@@ -60,6 +62,49 @@ def validate_token_masks(tokenizer, rows: list[dict], max_length: int) -> None:
         completion_tokens(tokenizer, row, max_length)
 
 
+def verify_installed_stack() -> None:
+    """Check the actual Python environment before opening model files."""
+    stack = contract.load_json(ROOT / "config/kova-three-family-training-stack.v1.json")
+    need(f"{sys.version_info.major}.{sys.version_info.minor}" == stack["python"],
+         "Python version differs from the pinned stack")
+    for name, expected in {**stack["packages"], "datasets": "5.0.1",
+                           "cryptography": "50.0.1"}.items():
+        try:
+            actual = version(name)
+        except PackageNotFoundError:
+            raise TrainingRejected("missing QLoRA dependency: " + name) from None
+        need(actual == expected, "QLoRA dependency drift: " + name)
+
+
+def verify_four_bit_runtime(torch, bnb) -> None:
+    """Exercise a tiny NF4 CUDA forward pass without opening model weights."""
+    try:
+        need(torch.cuda.is_available() and torch.cuda.get_device_capability(0) == (7, 5),
+             "T4 CUDA capability mismatch")
+        layer = bnb.nn.Linear4bit(4, 4, bias=False, compute_dtype=torch.float16,
+                                  compress_statistics=True, quant_type="nf4").to("cuda:0")
+        output = layer(torch.ones((1, 4), device="cuda:0", dtype=torch.float16))
+        need(output.shape == (1, 4) and bool(torch.isfinite(output).all().item()),
+             "four-bit CUDA smoke test failed")
+    except (RuntimeError, TypeError, ValueError, AttributeError) as exc:
+        raise TrainingRejected("four-bit CUDA smoke test failed") from exc
+
+
+def external_paths(snapshot: Path, output: Path) -> Path:
+    need(snapshot.is_absolute() and output.is_absolute() and
+         not output.exists() and not output.is_symlink(),
+         "snapshot or new external output directory invalid")
+    repository = ROOT.resolve(strict=True)
+    model_root = snapshot.resolve(strict=True)
+    parent = output.parent.resolve(strict=True)
+    need(repository not in model_root.parents and repository != model_root and
+         repository not in parent.parents and repository != parent and
+         model_root != parent and model_root not in parent.parents and
+         parent not in model_root.parents and parent != model_root,
+         "training files must be outside source and verified snapshot trees")
+    return model_root
+
+
 def source_plan() -> dict:
     proposal = launch.proposal()
     train, validation = prepared_rows()
@@ -82,7 +127,8 @@ def source_plan() -> dict:
     }
 
 
-def execute(*, snapshot: Path, output: Path, quote: Path, subscription_id: str) -> dict:
+def execute(*, snapshot: Path, output: Path, quote: Path, subscription_id: str,
+            runtime_evidence: Path | None = None) -> dict:
     """Future paid path. Admission is deliberately unreachable on this head."""
     source_plan()
     pilot = contract.load_json(ROOT / "config/kova-three-family-pilot.v1.json")
@@ -106,22 +152,16 @@ def execute(*, snapshot: Path, output: Path, quote: Path, subscription_id: str) 
     # and control-plane watchdog are live and verified in the chosen account.
     need(admission["paid_actions_enabled"] is True,
          "independent paid controller is not released")
-    need(snapshot.is_absolute() and output.is_absolute() and
-         not output.exists() and not output.is_symlink(),
-         "snapshot or new external output directory invalid")
-    repository = ROOT.resolve(strict=True)
-    model_root = snapshot.resolve(strict=True)
-    parent = output.parent.resolve(strict=True)
-    need(repository not in model_root.parents and repository != model_root and
-         repository not in parent.parents and repository != parent,
-         "training files must be outside the source tree")
+    model_root = external_paths(snapshot, output)
+    verify_installed_stack()
     lineage = contract.load_json(ROOT / "config/kova-private-lineage.v1.json")
     manifest = contract._pinned_manifest("kova-cosmo", lineage["families"]["kova-cosmo"])
-    verify_snapshot(model_root, manifest)
+    verify_snapshot(model_root, manifest, require_protected=True)
     os.environ.update({"HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1",
                        "TRANSFORMERS_OFFLINE": "1", "HF_HUB_DISABLE_TELEMETRY": "1",
                        "WANDB_DISABLED": "true"})
     import torch
+    import bitsandbytes as bnb
     from datasets import Dataset
     from peft import LoraConfig, prepare_model_for_kbit_training
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -129,6 +169,20 @@ def execute(*, snapshot: Path, output: Path, quote: Path, subscription_id: str) 
     from training.cosmo_hardware import verify_nvidia_t4
 
     verify_nvidia_t4(torch)
+    verify_four_bit_runtime(torch, bnb)
+    need(runtime_evidence is not None, "signed VM runtime preflight absent")
+    preflight = grant.read_runtime_preflight(
+        runtime_evidence, quote_sha256=admission["quote_sha256"],
+        source_commit=source_commit, subscription_id=subscription_id,
+        deadline_utc=admission["allocation_deadline_utc"])
+    committed = grant.acquire_training_grant(
+        quote=quote, source_commit=source_commit, subscription_id=subscription_id,
+        lifecycle_id=preflight["lifecycle_id"],
+        preflight_ledger_sequence=preflight["preflight_ledger_sequence"],
+        azure_instance=preflight["azure_instance"])
+    need(committed["training_runs_consumed"] == 1 and
+         committed["allocation_deadline_utc"] == admission["allocation_deadline_utc"],
+         "single-use grant did not commit")
     tokenizer = AutoTokenizer.from_pretrained(str(model_root), local_files_only=True,
                                                trust_remote_code=False)
     train, validation = prepared_rows()
@@ -195,13 +249,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--snapshot", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--quote", type=Path)
+    parser.add_argument("--runtime-evidence", type=Path)
     parser.add_argument("--subscription-id")
     args = parser.parse_args(argv)
     if args.execute:
-        if not all((args.snapshot, args.output, args.quote, args.subscription_id)):
-            parser.error("the paid path requires all four explicit bindings")
+        if not all((args.snapshot, args.output, args.quote, args.runtime_evidence,
+                    args.subscription_id)):
+            parser.error("the paid path requires all five explicit bindings")
         print(json.dumps(execute(snapshot=args.snapshot, output=args.output,
-                                 quote=args.quote, subscription_id=args.subscription_id),
+                                 quote=args.quote, subscription_id=args.subscription_id,
+                                 runtime_evidence=args.runtime_evidence),
                          sort_keys=True))
     else:
         print(json.dumps(source_plan(), sort_keys=True))

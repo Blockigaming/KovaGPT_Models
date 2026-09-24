@@ -83,6 +83,7 @@ def command_plan() -> list[dict]:
             "argv": [
                 "python3", "-m", "training.three_family_contract",
                 "--probe-evidence", "${PROBE_EVIDENCE}",
+                "--require-live-imds",
             ],
             "mode": "validate_only",
         },
@@ -101,6 +102,7 @@ def command_plan() -> list[dict]:
             "argv": [
                 "python3", "-m", "training.three_family_contract",
                 "--probe-evidence", "${PROBE_EVIDENCE}",
+                "--require-live-imds",
             ],
             "mode": "validate_only",
         },

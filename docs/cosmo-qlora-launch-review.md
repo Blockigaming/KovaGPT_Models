@@ -22,6 +22,26 @@ command invokes Azure or loads model weights. Both reject paid execution with
 the checked-in authorization flags. The older 36-record FP16 LoRA path is a
 different experiment and must not be used for this pilot.
 
+The paid trainer's proposed command is shown for exact CLI review; it is
+**disabled on this head** and its arguments cannot be filled truthfully yet:
+
+```sh
+python3 -m training.cosmo_qlora_training --execute \
+  --snapshot /absolute/protected/qwen3-0.6b \
+  --output /absolute/separate/new/cosmo-adapter \
+  --quote /absolute/signed/account-quote.json \
+  --runtime-evidence /absolute/signed/vm-preflight.json \
+  --subscription-id '<verified-subscription-uuid>'
+```
+
+The authority must sign the runtime preflight for the exact quote and source,
+then atomically commit a single-use training grant bound to the VM resource ID,
+immutable VM ID, managed identity token, lifecycle, ledger sequence, and
+two-hour deadline. The trainer checks installed package versions and a tiny
+NF4 CUDA operation before it opens model weights, and accepts a protected
+snapshot with output in a separate tree. The independent server protocol,
+signer, cleanup watchdog and verified account prices are not provisioned.
+
 ## Cost arithmetic and what it proves
 
 | Reservation | USD |
@@ -52,6 +72,9 @@ never paste tokens, SAS links, or billing exports into a public PR.
 
 ```sh
 az account show --query '{id:id,name:name,state:state}' -o json
+az provider show --namespace Microsoft.Compute --query registrationState -o tsv
+az provider show --namespace Microsoft.Network --query registrationState -o tsv
+az provider show --namespace Microsoft.Storage --query registrationState -o tsv
 az vm list-usage --location eastus -o json
 az vm list-skus --location eastus --size Standard_NC4as_T4_v3 --all -o json
 az vm image show --location eastus \
@@ -93,8 +116,13 @@ there is no correct account-specific API command to fill in here yet.
    public IP in the exclusive group, set an independent deallocation/deletion
    deadline no later than two hours, and record its resource ID. Verify the
    real GPU is NVIDIA T4 with capability 7.5, the pinned image and runtime are
-   compatible, and the independent watchdog remains healthy. Download and
-   hash-check only the pinned nine-file snapshot. Run the 42-record QLoRA job
+   compatible, and the independent watchdog remains healthy. The operator's
+   image check must read the executing VM's Azure IMDS and match its resource
+   ID, immutable VM ID, SKU, region, and exact image reference; a JSON claim
+   alone is insufficient. Download and hash-check only the pinned nine-file
+   snapshot on a protected read-only mount or under a separate unprivileged
+   training identity. Check installed packages and a tiny NF4 CUDA operation,
+   then obtain the one-use grant and run the 42-record QLoRA job
    once. No retry, automatic second family, or production deployment.
 5. Preserve immutable adapter and failure evidence outside the pilot group,
    then deallocate and delete the pilot group. Query the control plane for zero
@@ -114,7 +142,8 @@ Do not proceed to training from a failed or incomplete step.
 - This session is not authenticated to the Azure subscription. Account-specific
   pricing and current quota/SKU/image results have not been refreshed here.
 - The independent authority endpoint/signing key, atomic remote grants,
-  watchdog health and self-cleanup proof, and signed subscription quote do not
+  watchdog health and self-cleanup proof, signed VM preflight, and signed
+  subscription quote do not
   exist. The older `$2` authority contract is not a `$3.30` controller.
 - The `training.cosmo_qlora_training` paid entrypoint deliberately fails before
   any model load or Azure action. A separate reviewed source release and

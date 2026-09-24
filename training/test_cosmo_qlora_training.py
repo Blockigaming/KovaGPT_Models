@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from io import StringIO
 from contextlib import redirect_stdout
+from importlib.metadata import PackageNotFoundError
 import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +15,33 @@ from training import cosmo_qlora_training as job
 
 
 class QloraTrainingTests(unittest.TestCase):
+    def test_output_cannot_overlap_verified_model_snapshot(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            model = root / "model"
+            model.mkdir()
+            (root / "outputs").mkdir()
+            self.assertEqual(job.external_paths(model, root / "outputs" / "adapter"), model)
+            for output in (model / "adapter", root / "adapter"):
+                with self.subTest(output=output), \
+                     self.assertRaisesRegex(job.TrainingRejected, "snapshot trees"):
+                    job.external_paths(model, output)
+
+    def test_missing_or_drifted_installed_qlora_dependency_fails_before_weights(self):
+        from training import three_family_contract as contract
+        stack = contract.load_json(job.ROOT / "config/kova-three-family-training-stack.v1.json")
+        with patch.object(job.sys, "version_info", type("Info", (), {"major": 3, "minor": 12})()), \
+             patch.object(job, "version", side_effect=lambda name:
+                          "0.0.0" if name == "bitsandbytes" else
+                          {**stack["packages"], "datasets": "5.0.1",
+                           "cryptography": "50.0.1"}[name]), \
+             self.assertRaisesRegex(job.TrainingRejected, "bitsandbytes"):
+            job.verify_installed_stack()
+        with patch.object(job.sys, "version_info", type("Info", (), {"major": 3, "minor": 12})()), \
+             patch.object(job, "version", side_effect=PackageNotFoundError), \
+             self.assertRaisesRegex(job.TrainingRejected, "missing QLoRA dependency"):
+            job.verify_installed_stack()
+
     def test_preparation_uses_only_pinned_27_plus_15_record_split(self):
         plan = job.source_plan()
         train, validation = job.prepared_rows()

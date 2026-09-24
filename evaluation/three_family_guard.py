@@ -6,6 +6,7 @@ import argparse
 import base64
 import hashlib
 import json
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,6 +24,7 @@ PROFILE_ORDER = ("light", "medium", "high", "extra-high", "max", "ultra")
 SCHEMA = "kova-three-family-evaluation-evidence.v1"
 _CONFIG = json.loads((ROOT / "config/kova-three-family-evaluation.v1.json").read_text(encoding="utf-8"))
 PINNED_RUNNER_PUBLIC_KEY_B64 = _CONFIG["answer_binding"]["runner_public_key_ed25519_b64"]
+PINNED_RUNNER_SOURCE_SHA256 = _CONFIG["answer_binding"]["runner_source_sha256"]
 PINNED_REVIEWER_PUBLIC_KEY_B64 = _CONFIG["reviewer_public_key_ed25519_b64"]
 # No independently reviewed 120-case corpus or structured isolation observations
 # exist yet. A future source review must pin exact manifest bytes before the
@@ -233,6 +235,9 @@ def validate_evidence_matrix(envelopes: list[dict], *, source_commit: str,
     if type(case_bindings) is not dict or case_bindings != trusted_cases:
         raise ValueError("untrusted_or_incomplete_evaluation_inputs")
     _require_trusted_family_adapter_bindings(family_bindings)
+    _require_trusted_runner_source(family_bindings)
+    if source_commit != _active_source_commit():
+        raise ValueError("evaluation_source_commit_not_active")
     return _validate_evidence_matrix_authenticated(
         envelopes, source_commit=source_commit, family_bindings=family_bindings,
         case_bindings=trusted_cases, review_verdicts=review_verdicts,
@@ -284,6 +289,35 @@ def _require_trusted_family_adapter_bindings(family_bindings: dict) -> None:
             raise ValueError("duplicate_trusted_family_adapter_artifact")
         pinned_weights.add(weights)
         pinned_bundles.add(bundle)
+
+
+def _require_trusted_runner_source(family_bindings: dict) -> None:
+    """The caller cannot set the digest of an arbitrary new evaluation runner."""
+    pin = PINNED_RUNNER_SOURCE_SHA256
+    if not _hex(pin, 64):
+        raise ValueError("trusted_runner_source_not_pinned")
+    try:
+        if sha256_file(ROOT / "evaluation/three_family_guard.py") != pin:
+            raise ValueError("trusted_runner_source_drift")
+    except OSError as exc:
+        raise ValueError("trusted_runner_source_unavailable") from exc
+    if any(family_bindings[family].get("runner_sha256") != pin for family in FAMILIES):
+        raise ValueError("untrusted_family_runner_binding")
+
+
+def _active_source_commit() -> str:
+    """Bind public release evidence to the exact clean running source tree."""
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, check=True,
+                              capture_output=True, text=True, timeout=5)
+        status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"],
+                                cwd=ROOT, check=True, capture_output=True, text=True, timeout=5)
+        commit = head.stdout.strip()
+        if not _hex(commit, 40) or head.stderr or status.stdout or status.stderr:
+            raise ValueError("evaluation_source_checkout_not_clean")
+        return commit
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("evaluation_source_checkout_unavailable") from exc
 
 
 def _validate_evidence_matrix_authenticated(envelopes: list[dict], *, source_commit: str,

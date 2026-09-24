@@ -44,7 +44,8 @@
       "conversation_id",
       "session_id"
     ],
-    "runner_public_key_ed25519_b64": null
+    "runner_public_key_ed25519_b64": null,
+    "runner_source_sha256": null
   },
   "human_review_required": true,
   "reviewer_public_key_ed25519_b64": null,
