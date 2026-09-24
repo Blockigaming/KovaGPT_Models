@@ -33,6 +33,15 @@ def need(value: bool, message: str) -> None:
         raise TrainingRejected(message)
 
 
+def require_before_cleanup(admission: dict, *, now: datetime | None = None) -> datetime:
+    """Keep grants and model work out of the watchdog's deletion window."""
+    trigger = launch.authority.timestamp(admission["watchdog_cleanup_trigger_utc"])
+    current = now or datetime.now(timezone.utc)
+    need(current.tzinfo is not None and current.astimezone(timezone.utc) < trigger,
+         "watchdog cleanup has started")
+    return trigger
+
+
 def prepared_rows() -> tuple[list[dict], list[dict]]:
     """Require exact approved bytes, then build prompt/completion conversations."""
     contract.validate_dataset()
@@ -152,6 +161,7 @@ def execute(*, snapshot: Path, output: Path, quote: Path, subscription_id: str,
     # and control-plane watchdog are live and verified in the chosen account.
     need(admission["paid_actions_enabled"] is True,
          "independent paid controller is not released")
+    require_before_cleanup(admission)
     model_root = external_paths(snapshot, output)
     verify_installed_stack()
     lineage = contract.load_json(ROOT / "config/kova-private-lineage.v1.json")
@@ -171,10 +181,12 @@ def execute(*, snapshot: Path, output: Path, quote: Path, subscription_id: str,
     verify_nvidia_t4(torch)
     verify_four_bit_runtime(torch, bnb)
     need(runtime_evidence is not None, "signed VM runtime preflight absent")
+    require_before_cleanup(admission)
     preflight = grant.read_runtime_preflight(
         runtime_evidence, quote_sha256=admission["quote_sha256"],
         source_commit=source_commit, subscription_id=subscription_id,
         deadline_utc=admission["allocation_deadline_utc"])
+    require_before_cleanup(admission)
     committed = grant.acquire_training_grant(
         quote=quote, source_commit=source_commit, subscription_id=subscription_id,
         lifecycle_id=preflight["lifecycle_id"],
@@ -183,6 +195,7 @@ def execute(*, snapshot: Path, output: Path, quote: Path, subscription_id: str,
     need(committed["training_runs_consumed"] == 1 and
          committed["allocation_deadline_utc"] == admission["allocation_deadline_utc"],
          "single-use grant did not commit")
+    require_before_cleanup(admission)
     tokenizer = AutoTokenizer.from_pretrained(str(model_root), local_files_only=True,
                                                trust_remote_code=False)
     train, validation = prepared_rows()
@@ -213,17 +226,16 @@ def execute(*, snapshot: Path, output: Path, quote: Path, subscription_id: str,
         save_safetensors=True, save_strategy="steps", save_steps=7,
         report_to="none", push_to_hub=False, seed=42,
     )
-    # The independent watchdog must enforce the allocation deadline even if
-    # the guest process freezes. This callback stops between optimizer steps.
+    # The independent watchdog starts deletion before the priced deadline even
+    # if the guest freezes. This callback stops between optimizer steps.
     from transformers import TrainerCallback
-    deadline = datetime.strptime(admission["allocation_deadline_utc"],
-                                  "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    cleanup_trigger = require_before_cleanup(admission)
     start = time.monotonic()
 
     class DeadlineCallback(TrainerCallback):
         def on_step_end(self, args, state, control, **kwargs):
             if (time.monotonic() - start >= training["maximum_elapsed_seconds"] or
-                    datetime.now(timezone.utc) >= deadline):
+                    datetime.now(timezone.utc) >= cleanup_trigger):
                 control.should_training_stop = True
             return control
 
@@ -233,10 +245,13 @@ def execute(*, snapshot: Path, output: Path, quote: Path, subscription_id: str,
                          train_dataset=Dataset.from_list(train),
                          eval_dataset=Dataset.from_list(validation),
                          callbacks=[DeadlineCallback()])
+    require_before_cleanup(admission)
     result = trainer.train()
     need(result.global_step == 7 and time.monotonic() - start <
-         training["maximum_elapsed_seconds"] and datetime.now(timezone.utc) < deadline,
+         training["maximum_elapsed_seconds"] and
+         datetime.now(timezone.utc) < cleanup_trigger,
          "training did not complete inside the approved limit")
+    require_before_cleanup(admission)
     trainer.model.save_pretrained(output / "adapter", safe_serialization=True)
     return {"status": "candidate_not_released", "source_commit": source_commit,
             "optimizer_steps": result.global_step, "output": str(output)}

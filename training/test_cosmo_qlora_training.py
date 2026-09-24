@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from io import StringIO
 from contextlib import redirect_stdout
 from importlib.metadata import PackageNotFoundError
@@ -15,6 +16,15 @@ from training import cosmo_qlora_training as job
 
 
 class QloraTrainingTests(unittest.TestCase):
+    def test_training_stops_at_watchdog_cleanup_trigger(self):
+        admission = {"watchdog_cleanup_trigger_utc": "2026-09-24T13:15:00Z"}
+        self.assertEqual(job.require_before_cleanup(
+            admission, now=datetime(2026, 9, 24, 13, 14, 59, tzinfo=timezone.utc)),
+            datetime(2026, 9, 24, 13, 15, tzinfo=timezone.utc))
+        with self.assertRaisesRegex(job.TrainingRejected, "cleanup has started"):
+            job.require_before_cleanup(
+                admission, now=datetime(2026, 9, 24, 13, 15, tzinfo=timezone.utc))
+
     def test_output_cannot_overlap_verified_model_snapshot(self):
         with TemporaryDirectory() as folder:
             root = Path(folder)

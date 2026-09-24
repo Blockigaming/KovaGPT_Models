@@ -44,6 +44,8 @@ signed cost deadline of at most two hours. The trainer checks installed package 
 NF4 CUDA operation before it opens model weights, and accepts a protected
 snapshot with output in a separate tree. The independent server protocol,
 signer, cleanup watchdog and verified account prices are not provisioned.
+It refuses a grant and stops model work once the signed watchdog cleanup
+trigger arrives, leaving the remaining priced window for resource deletion.
 
 The intended paid command order after an owner release is shown below. These
 commands are **review text only**: the account-specific parameters, trusted
