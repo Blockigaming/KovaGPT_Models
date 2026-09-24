@@ -53,7 +53,7 @@ class LaunchTests(unittest.TestCase):
             "train_records": 27, "validation_records": 15, "gpu_name": "NVIDIA T4",
             "quota": {"family_limit_vcpus": 4, "family_used_vcpus": 0,
                       "regional_limit_vcpus": 14, "regional_used_vcpus": 0},
-            "sku_restrictions": [], "account_compute_hourly_usd": "0.5260",
+            "sku_restrictions": [], "account_compute_hourly_usd": "0.4000",
             "account_meter_source": "subscription_specific_billing_price_sheet",
             "category_upper_bounds_usd": dict(contract.COST_CATEGORY_BOUNDS),
             "all_category_rates_checked": True, "watchdog_health_tested": True,
@@ -80,7 +80,7 @@ class LaunchTests(unittest.TestCase):
         self.assertFalse(planned["paid_actions_enabled"])
         self.assertEqual(planned["all_in_ceiling_usd"], "3.3000")
         assessed = self.check()
-        self.assertEqual(assessed["worst_case_all_in_usd"], "3.2020")
+        self.assertEqual(assessed["worst_case_all_in_usd"], "3.2000")
         self.assertFalse(assessed["paid_actions_enabled"])
 
     def test_unsigned_tampered_and_unpinned_authorities_fail(self):
@@ -99,7 +99,7 @@ class LaunchTests(unittest.TestCase):
     def test_retailability_budget_quotas_identity_and_watchdog_fail_closed(self):
         edits = (
             ("account_meter_source", "azure_retail_price_api"),
-            ("account_compute_hourly_usd", "0.5751"),
+            ("account_compute_hourly_usd", "0.4501"),
             ("source_commit", "e" * 40),
             ("dataset_sha256", "a" * 64),
             ("model_revision", "a" * 40),

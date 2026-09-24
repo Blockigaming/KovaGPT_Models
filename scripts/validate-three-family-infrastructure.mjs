@@ -17,7 +17,12 @@ export function validateSource() {
   assert.match(vm, /type: 'NvidiaGpuDriverLinux'/);
   assert.match(vm, /typeHandlerVersion: '1\.10'/);
   assert.match(vm, /enableAutomaticUpgrade: false/);
-  assert.doesNotMatch(vm, /publicIPAddresses|publicIPAddress/);
+  assert.doesNotMatch(vm, /publicIPAddress\s*:/);
+  assert.match(vm, /resource egressNat 'Microsoft\.Network\/natGateways@2024-05-01'/);
+  assert.match(vm, /natGateway: \{ id: egressNat!\.id \}/);
+  assert.match(vm, /defaultOutboundAccess: false/);
+  assert.match(vm, /name: 'deny-all-inbound'/);
+  assert.match(vm, /name: 'deny-other-egress'/);
   assert.match(watchdog, /param provisionWatchdog bool = false/);
   assert.match(watchdog, /frequency: 'Minute'/);
   assert.match(watchdog, /interval: 1/);

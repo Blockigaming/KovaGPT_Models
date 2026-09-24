@@ -43,6 +43,8 @@ COST_CATEGORY_BOUNDS = {
     "managed_disks": "0.3000", "snapshots": "0.0000",
     "storage_capacity": "0.1000", "storage_transactions": "0.1000",
     "network_transfer": "0.1000", "public_ip_and_network": "0.1000",
+    "nat_gateway_hours": "0.1000", "nat_gateway_data_processed": "0.1000",
+    "logic_app_executions": "0.0500",
     "shutdown_delay": "0.1000", "failed_allocation_attempts": "0.1000",
 }
 FAMILY_ALLOWANCES = {
@@ -338,7 +340,7 @@ def _validated_cost_guard() -> dict:
     need(cost["combined_hard_ceiling"] == "6.0000")
     need(cost["conditional_cosmo_only_pilot"] == {
         "hard_ceiling_usd": "3.3000", "maximum_allocation_seconds": 7200,
-        "maximum_compute_reservation_usd": "1.1500",
+        "maximum_compute_reservation_usd": "0.9000",
         "other_families_authorized": False,
     }, "Cosmo-only owner ceiling drift")
     need(cost["emergency_cleanup_margin"] == "1.2500")
@@ -469,7 +471,7 @@ def validate_live_price_evidence(path: Path, *, admission_scope: str = "three-fa
         "conditional_cosmo_only_hard_ceiling_usd": "3.3000",
         "conditional_cosmo_only_eligible": cosmo_total <= Decimal("3.3000"),
         "conditional_cosmo_only_maximum_allocation_seconds": 7200,
-        "conditional_cosmo_only_compute_reservation_usd": "1.1500",
+        "conditional_cosmo_only_compute_reservation_usd": "0.9000",
     }
 
 
@@ -654,9 +656,91 @@ def _verify_preservation_receipt(event: dict, *, family: str, grant_sequence: in
         raise ContractError("untrusted artifact preservation receipt") from None
 
 
+def _verify_cleanup_receipt(event: dict, *, expected_sequence: int,
+                            cosmo_only: bool, public_key: bytes | None,
+                            now: datetime) -> None:
+    """Require independent, signed deletion inventory and final cost reconciliation.
+
+    The verifier key must be provisioned outside this ledger and the two
+    deleted groups. Delayed Azure charges prevent a terminal event until the
+    verifier can attest that the final cost evidence is complete.
+    """
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    need(type(public_key) is bytes and len(public_key) == 32,
+         "trusted cleanup verifier key required")
+    need(set(event) == {"kind", "cleanup_receipt"}, "cleanup event shape mismatch")
+    receipt = event["cleanup_receipt"]
+    need(type(receipt) is dict and set(receipt) == {"payload", "signature_ed25519_hex"},
+         "signed cleanup receipt required")
+    payload = receipt["payload"]
+    need(type(payload) is dict and set(payload) == {
+        "schema_version", "ledger_sequence", "pilot_resource_group_id",
+        "watchdog_resource_group_id", "pilot_remaining_resources",
+        "watchdog_remaining_resources", "subscription_scoped_residual_resources",
+        "pilot_deleted_at_utc", "watchdog_deleted_at_utc", "verified_at_utc",
+        "cost_posting_complete", "final_cost_usd", "cost_evidence_sha256",
+        "evidence_uri", "immutable_evidence_version", "outside_both_groups",
+        "verification_succeeded",
+    }, "cleanup receipt shape mismatch")
+    need(type(payload["schema_version"]) is int and payload["schema_version"] == 1 and
+         type(payload["ledger_sequence"]) is int and
+         payload["ledger_sequence"] == expected_sequence and
+         payload["pilot_remaining_resources"] == [] and
+         payload["watchdog_remaining_resources"] == [] and
+         payload["subscription_scoped_residual_resources"] == [] and
+         payload["cost_posting_complete"] is True and
+         payload["outside_both_groups"] is True and
+         payload["verification_succeeded"] is True,
+         "zero residual resources and reconciled final cost required")
+    resource_group_id = re.compile(
+        r"/subscriptions/[0-9a-f-]{36}/resourceGroups/[a-zA-Z0-9_.()\-]{1,90}\Z",
+        re.IGNORECASE)
+    pilot = payload["pilot_resource_group_id"]
+    watchdog = payload["watchdog_resource_group_id"]
+    need(type(pilot) is str and type(watchdog) is str and
+         resource_group_id.fullmatch(pilot) is not None and
+         resource_group_id.fullmatch(watchdog) is not None and
+         pilot.casefold() != watchdog.casefold() and
+         pilot.split("/")[2].casefold() == watchdog.split("/")[2].casefold(),
+         "cleanup must bind two distinct groups in one subscription")
+    try:
+        pilot_deleted, watchdog_deleted, verified = (
+            datetime.strptime(payload[field], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            for field in ("pilot_deleted_at_utc", "watchdog_deleted_at_utc", "verified_at_utc")
+        )
+        final_cost = Decimal(payload["final_cost_usd"])
+    except (KeyError, TypeError, ValueError, InvalidOperation):
+        raise ContractError("invalid cleanup timestamps or final cost") from None
+    ceiling = Decimal("3.3000" if cosmo_only else "6.0000")
+    need(pilot_deleted <= verified and watchdog_deleted <= verified and
+         now - timedelta(minutes=5) <= verified <= now and
+         final_cost.is_finite() and 0 <= final_cost <= ceiling,
+         "cleanup evidence is stale or final cost exceeds owner ceiling")
+    need(type(payload["cost_evidence_sha256"]) is str and
+         HEX64.fullmatch(payload["cost_evidence_sha256"]) is not None and
+         type(payload["evidence_uri"]) is str and
+         payload["evidence_uri"].startswith("https://") and
+         "?" not in payload["evidence_uri"] and
+         type(payload["immutable_evidence_version"]) is str and
+         bool(payload["immutable_evidence_version"]),
+         "immutable external cleanup and cost evidence required")
+    signature = receipt["signature_ed25519_hex"]
+    need(type(signature) is str and re.fullmatch(r"[0-9a-f]{128}", signature) is not None,
+         "invalid cleanup verifier signature")
+    try:
+        message = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                             ensure_ascii=True, allow_nan=False).encode("ascii")
+        Ed25519PublicKey.from_public_bytes(public_key).verify(bytes.fromhex(signature), message)
+    except (InvalidSignature, ValueError, TypeError, RecursionError):
+        raise ContractError("untrusted cleanup receipt") from None
+
+
 def append_ledger_event(state: dict, event: dict, *, expected_sequence: int,
                         now: datetime | None = None,
-                        preservation_public_key: bytes | None = None) -> dict:
+                        preservation_public_key: bytes | None = None,
+                        cleanup_public_key: bytes | None = None) -> dict:
     """Pure reference transition used by the independent leased remote ledger."""
     need(type(state) is dict and type(event) is dict, "invalid ledger state")
     need(state.get("terminal") is False, "ledger is terminal")
@@ -734,6 +818,14 @@ def append_ledger_event(state: dict, event: dict, *, expected_sequence: int,
             need(any(item.get("kind") == "family_preserved" and
                      item.get("family") == FAMILIES[previous] for item in events),
                  "previous family preservation required before grant")
+    if kind == "cleanup_terminal":
+        need(not state.get("family_order") or all(
+            any(item.get("kind") == "family_preserved" and item.get("family") == family
+                for item in state.get("events", [])) for family in state["family_order"]),
+            "terminal cleanup cannot discard an unpreserved granted family")
+        _verify_cleanup_receipt(event, expected_sequence=expected_sequence,
+                                cosmo_only=len(state.get("family_order", [])) <= 1,
+                                public_key=cleanup_public_key, now=now)
     assigned = expected_sequence + 1
     committed = json.loads(json.dumps(event))
     committed["sequence"] = assigned

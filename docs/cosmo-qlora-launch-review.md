@@ -51,6 +51,7 @@ the deployment lines into an interactive shell on this source head.
 ```sh
 az account show --query '{id:id,state:state}' -o json
 az provider show --namespace Microsoft.Network --query registrationState -o tsv
+az provider show --namespace Microsoft.Logic --query registrationState -o tsv
 az vm list-usage --location eastus -o json
 az vm list-skus --location eastus --size Standard_NC4as_T4_v3 --all -o json
 az vm image show --location eastus --urn Canonical:ubuntu-24_04-lts:server:24.04.202609040 -o json
@@ -67,6 +68,8 @@ az deployment group what-if --resource-group "$WATCHDOG_RESOURCE_GROUP" \
   pilotResourceGroupName="$PILOT_RESOURCE_GROUP" pilotSuffix="$PILOT_SUFFIX" \
   controllerPrincipalObjectId="$CONTROLLER_PRINCIPAL_OBJECT_ID" deadlineUtc="$PILOT_DEADLINE_UTC"
 # Future independent controller must first prove its ledger, grant, deletion and cost controls.
+# The source VM template includes a separate Standard outbound NAT/IP, a private
+# subnet and an outbound 80/443 NSG; the VM NIC has no public IP or inbound path.
 az deployment group create --resource-group "$WATCHDOG_RESOURCE_GROUP" \
   --template-file infra/three-family-watchdog.bicep --parameters \
   provisionWatchdog=true suffix="$WATCHDOG_SUFFIX" subscriptionId="$SUBSCRIPTION_ID" \
@@ -93,32 +96,40 @@ az group exists --name "$PILOT_RESOURCE_GROUP"
 az group delete --name "$WATCHDOG_RESOURCE_GROUP" --yes --no-wait
 az group exists --name "$WATCHDOG_RESOURCE_GROUP"
 # Require false, then reconcile every delayed charge against the owner ceiling.
+# Terminal ledger entry requires an independent signed proof of both deletions,
+# zero residual resources and finalized all-in cost; a bare event is rejected.
 ```
 
 ## Cost arithmetic and what it proves
 
 | Reservation | USD |
 | --- | ---: |
-| Maximum two-hour VM compute reservation | 1.1500 |
+| Maximum two-hour VM compute reservation | 0.9000 |
 | Managed disk | 0.3000 |
 | Storage capacity and transactions | 0.2000 |
-| Network, public IP/network, shutdown delay, failed allocation | 0.4000 |
+| Network transfer, outbound NAT IP/network, shutdown delay, failed allocation | 0.4000 |
+| Outbound NAT gateway hours and data processing | 0.2000 |
+| Logic App trigger and action executions | 0.0500 |
 | Snapshots | 0.0000 |
 | Emergency cleanup margin | 1.2500 |
 | **Conditional ceiling** | **3.3000** |
 
 At the earlier **public retail** `$0.5260` per hour VM rate, two hours of
-compute is `$1.0520`, and the listed reservations total `$3.2020`. This is an
-estimate, with `$0.0980` remaining. Algebraically, if all other reservations
-were valid, `2 × account VM hourly rate + $0.9000 + $1.2500 ≤ $3.3000`
-requires an account VM rate no higher than `$0.5750` per hour. The listed
+compute is `$1.0520`, and the revised reservations total **`$3.4520`**,
+**`$0.1520` over** the ceiling. The older `$3.2020` estimate omitted explicit
+NAT gateway and Logic App charges and cannot authorize the pilot. Algebraically,
+if all other reservations were sufficient,
+`2 × account VM hourly rate + $1.1500 + $1.2500 ≤ $3.3000`
+requires an account VM rate no higher than **`$0.4500` per hour**. The listed
 ancillary figures are **source assumptions**, not verified subscription
-quotes. They must be checked against every service used, including the
-watchdog, its storage and transactions, GPU driver setup, disks, data transfer,
-resource deletion latency, and applicable tax if the owner ceiling covers the
-invoice total. A two-hour timer or Azure budget alert cannot guarantee the
-eventual invoice is at most `$3.30`. There is **no verified all-in cost bound**
-on this head.
+quotes; the independent admission must reject any account meter or maximum
+quantity exceeding its category reservation, including the NAT gateway hourly
+and bidirectional data processing charges, Standard outbound public IP, the
+minute-by-minute Logic App triggers and actions, watchdog storage, GPU driver
+setup, disks, model transfer, resource deletion latency and applicable tax if
+the owner ceiling covers the invoice total. A two-hour timer or Azure budget
+alert cannot guarantee the eventual invoice is at most `$3.30`. There is **no
+verified all-in cost bound** on this head.
 
 ## Read-only evidence to refresh in the intended subscription
 
@@ -130,6 +141,7 @@ never paste tokens, SAS links, or billing exports into a public PR.
 az account show --query '{id:id,name:name,state:state}' -o json
 az provider show --namespace Microsoft.Compute --query registrationState -o tsv
 az provider show --namespace Microsoft.Network --query registrationState -o tsv
+az provider show --namespace Microsoft.Logic --query registrationState -o tsv
 az provider show --namespace Microsoft.Storage --query registrationState -o tsv
 az vm list-usage --location eastus -o json
 az vm list-skus --location eastus --size Standard_NC4as_T4_v3 --all -o json
@@ -178,7 +190,9 @@ Keep billing identifiers and price exports out of this public source branch.
    public IP in the exclusive group, set an independent deallocation/deletion
    deadline no later than two hours, and record its resource ID. Verify the
    real GPU is NVIDIA T4 with capability 7.5, the pinned image and runtime are
-   compatible, and the independent watchdog remains healthy. The operator's
+   compatible, and the independent watchdog remains healthy. The private VM
+   must have the reviewed NAT gateway/Standard IP and 80/443-only outbound
+   rule, no VM public IP, and no inbound rule. The operator's
    image check must read the executing VM's Azure IMDS and match its resource
    ID, immutable VM ID, SKU, region, and exact image reference; a JSON claim
    alone is insufficient. Download and hash-check only the pinned nine-file
@@ -189,12 +203,15 @@ Keep billing identifiers and price exports out of this public source branch.
 5. Preserve immutable adapter and failure evidence outside the pilot group,
    then deallocate and delete the pilot group. Query the control plane for zero
    remaining billable resources, shut down/delete watchdog resources after
-   preserving its terminal ledger, and reconcile actual charges when Azure
-   posts them. Guest-process exit alone does not stop disk or network charges.
+   preserving the ledger externally, and reconcile actual charges when Azure
+   posts them. An independent verifier signs zero-residual inventory for both
+   groups, subscription-scoped residuals and the final posted cost before the
+   ledger accepts `cleanup_terminal`. Guest-process exit alone does not stop
+   disk or network charges.
 
 **Stop immediately** on a missing signature, expired or mismatched quote,
 changed source/model/data, insufficient quota, SKU/image mismatch, unverified
-account meter, all-in calculation above `$3.30`, failed watchdog health or
+account meter or NAT/Logic execution quantity, all-in calculation above `$3.30`, failed watchdog health or
 permissions, unexpected public networking, non-T4 hardware, incompatible
 runtime, snapshot hash failure, elapsed deadline, or any cleanup failure.
 Do not proceed to training from a failed or incomplete step.
@@ -208,7 +225,10 @@ Do not proceed to training from a failed or incomplete step.
   exact East US image, and live capacity remain unverified.
 - The billing account and MCA profile were identified, but subscription rates,
   all ancillary and control-plane meters, and the tax treatment remain unknown.
-  The `$3.2020` public-rate calculation is not an account quote or a hard cap.
+  The revised `$3.4520` calculation using that earlier public rate exceeds
+  the ceiling by `$0.1520`; an account compute rate at most `$0.4500` per hour
+  plus independently verified ancillary bounds is required. The public-rate
+  calculation is not an account quote or a hard cap.
 - The independent authority endpoint/signing key, atomic remote grants,
   watchdog health and self-cleanup proof, signed VM preflight, and signed
   subscription quote do not

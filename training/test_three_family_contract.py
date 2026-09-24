@@ -706,12 +706,16 @@ class ThreeFamilyContractTests(unittest.TestCase):
             contract.admit_bootstrap(Decimal("NaN"))
 
     def test_conditional_cosmo_only_limit_is_enforced_separately(self):
-        self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.526")),
-                         Decimal("3.2020"))
-        self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.575")),
+        self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.400")),
+                         Decimal("3.2000"))
+        self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.450")),
                          Decimal("3.3000"))
         with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-            contract.admit_conditional_cosmo_pilot(Decimal("0.5751"))
+            contract.admit_conditional_cosmo_pilot(Decimal("0.4501"))
+        self.assertEqual(contract.worst_case_total(hourly_compute_rate=Decimal("0.526"),
+                         lifecycle_seconds=7200), Decimal("3.4520"))
+        with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
+            contract.admit_conditional_cosmo_pilot(Decimal("0.526"))
         self.assertLessEqual(contract.admit_bootstrap(Decimal("0.60")), Decimal("6.0000"))
         with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
             contract.admit_conditional_cosmo_pilot(Decimal("0.60"))
@@ -727,7 +731,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
                 return altered if path.name == "kova-three-family-cost-guard.v1.json" else original(path, **kwargs)
             with self.subTest(update=update), patch.object(contract, "load_json", side_effect=fake_load):
                 with self.assertRaisesRegex(contract.ContractError, "Cosmo-only owner ceiling"):
-                    contract.admit_conditional_cosmo_pilot(Decimal("0.526"))
+                    contract.admit_conditional_cosmo_pilot(Decimal("0.400"))
 
     def test_cost_guard_rejects_understated_or_nonfinite_ancillary_bounds(self):
         original = contract.load_json
@@ -735,6 +739,10 @@ class ThreeFamilyContractTests(unittest.TestCase):
         for change in (lambda cfg: cfg["category_upper_bounds"].update(managed_disks="-1"),
                        lambda cfg: cfg["category_upper_bounds"].update(managed_disks="NaN"),
                        lambda cfg: cfg["category_upper_bounds"].pop("managed_disks"),
+                       lambda cfg: cfg["category_upper_bounds"].pop("nat_gateway_hours"),
+                       lambda cfg: cfg["category_upper_bounds"].update(nat_gateway_data_processed="0.0000"),
+                       lambda cfg: cfg["category_upper_bounds"].pop("logic_app_executions"),
+                       lambda cfg: cfg["category_upper_bounds"].update(logic_app_executions="0.0000"),
                        lambda cfg: cfg["meter_categories"].pop(),
                        lambda cfg: cfg["family_allowances"].update(**{"kova-orion": "-1.0000"}),
                        lambda cfg: cfg["family_allowances"].update(**{"kova-nova": "0.0100"}),
@@ -763,8 +771,14 @@ class ThreeFamilyContractTests(unittest.TestCase):
             }]}))
             admitted = contract.validate_live_price_evidence(path)
             self.assertEqual(admitted["status"], "live_price_admitted")
-            self.assertEqual(admitted["conditional_cosmo_only_worst_case_usd"], "3.2020")
-            self.assertTrue(admitted["conditional_cosmo_only_eligible"])
+            self.assertEqual(admitted["conditional_cosmo_only_worst_case_usd"], "3.4520")
+            self.assertFalse(admitted["conditional_cosmo_only_eligible"])
+            with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
+                contract.validate_live_price_evidence(path, admission_scope="cosmo-only")
+            value = json.loads(path.read_text())
+            value["Items"][0]["retailPrice"] = 0.40
+            value["Items"][0]["unitPrice"] = 0.40
+            path.write_text(json.dumps(value))
             self.assertEqual(contract.validate_live_price_evidence(
                 path, admission_scope="cosmo-only")["hard_ceiling_usd"], "3.3000")
             value = json.loads(path.read_text())
@@ -1074,7 +1088,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
         with self.assertRaisesRegex(contract.ContractError, "remaining family budget insufficient"):
             contract.append_ledger_event(state, cost("kova-orion", "3.3000"),
                                          expected_sequence=5, now=now)
-        state = contract.append_ledger_event(state, cost("kova-orion", "3.7000"),
+        state = contract.append_ledger_event(state, cost("kova-orion", "3.9000"),
                                              expected_sequence=5, now=now)
         with self.assertRaisesRegex(contract.ContractError, "stale admission"):
             contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-orion"},
@@ -1089,8 +1103,55 @@ class ThreeFamilyContractTests(unittest.TestCase):
                                          expected_sequence=2)
 
     def test_terminal_ledger_rejects_post_cleanup_events(self):
+        from datetime import datetime, timezone
+        now = datetime(2026, 9, 24, 12, 1, tzinfo=timezone.utc)
         state = {"sequence": 0, "terminal": False, "family_order": [], "events": []}
-        state = contract.append_ledger_event(state, {"kind": "cleanup_terminal"}, expected_sequence=0)
+        with self.assertRaisesRegex(contract.ContractError, "trusted cleanup verifier key"):
+            contract.append_ledger_event(state, {"kind": "cleanup_terminal"},
+                                         expected_sequence=0, now=now)
+        signer = Ed25519PrivateKey.generate()
+        public = signer.public_key().public_bytes_raw()
+        payload = {
+            "schema_version": 1, "ledger_sequence": 0,
+            "pilot_resource_group_id": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/kova-pilot",
+            "watchdog_resource_group_id": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/kova-watchdog",
+            "pilot_remaining_resources": [], "watchdog_remaining_resources": [],
+            "subscription_scoped_residual_resources": [],
+            "pilot_deleted_at_utc": "2026-09-24T12:00:00Z",
+            "watchdog_deleted_at_utc": "2026-09-24T12:00:00Z",
+            "verified_at_utc": "2026-09-24T12:01:00Z",
+            "cost_posting_complete": True, "final_cost_usd": "0.0000",
+            "cost_evidence_sha256": "a" * 64,
+            "evidence_uri": "https://preserved.example.test/cleanup-proof",
+            "immutable_evidence_version": "verified-v1", "outside_both_groups": True,
+            "verification_succeeded": True,
+        }
+        def signed_receipt(value):
+            signature = signer.sign(json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                               ensure_ascii=True, allow_nan=False).encode("ascii"))
+            return {"kind": "cleanup_terminal", "cleanup_receipt": {
+                "payload": value, "signature_ed25519_hex": signature.hex()}}
+        for change in (lambda value: value.update(final_cost_usd="3.3001"),
+                       lambda value: value.update(cost_posting_complete=False),
+                       lambda value: value.update(pilot_remaining_resources=["disk"]),
+                       lambda value: value.update(watchdog_remaining_resources=["logic-app"]),
+                       lambda value: value.update(subscription_scoped_residual_resources=["public-ip"]),
+                       lambda value: value.update(ledger_sequence=1),
+                       lambda value: value.update(watchdog_resource_group_id=value["pilot_resource_group_id"])):
+            wrong = deepcopy(payload)
+            change(wrong)
+            with self.subTest(change=change), self.assertRaises(contract.ContractError):
+                contract.append_ledger_event(state, signed_receipt(wrong),
+                                             expected_sequence=0, now=now,
+                                             cleanup_public_key=public)
+        forged = signed_receipt(payload)
+        forged["cleanup_receipt"]["payload"]["final_cost_usd"] = "0.1000"
+        with self.assertRaisesRegex(contract.ContractError, "untrusted cleanup receipt"):
+            contract.append_ledger_event(state, forged, expected_sequence=0,
+                                         now=now, cleanup_public_key=public)
+        state = contract.append_ledger_event(state, signed_receipt(payload),
+                                             expected_sequence=0, now=now,
+                                             cleanup_public_key=public)
         self.assertTrue(state["terminal"])
         with self.assertRaises(contract.ContractError):
             contract.append_ledger_event(state, {"kind": "watchdog_health"}, expected_sequence=1)
@@ -1108,7 +1169,12 @@ class ThreeFamilyContractTests(unittest.TestCase):
     def test_infrastructure_has_no_public_ip_and_source_gates_false(self):
         vm = (contract.ROOT / "infra/three-family-pilot-vm.bicep").read_text()
         watchdog = (contract.ROOT / "infra/three-family-watchdog.bicep").read_text()
-        self.assertNotIn("publicIPAddresses", vm)
+        self.assertNotIn("publicIPAddress:", vm)
+        self.assertIn("resource egressNat 'Microsoft.Network/natGateways@", vm)
+        self.assertIn("defaultOutboundAccess: false", vm)
+        self.assertIn("natGateway: { id: egressNat!.id }", vm)
+        self.assertIn("name: 'deny-all-inbound'", vm)
+        self.assertIn("name: 'deny-other-egress'", vm)
         self.assertIn("Standard_NC4as_T4_v3", vm)
         self.assertIn("disablePasswordAuthentication: true", vm)
         self.assertIn("Microsoft.HpcCompute", vm)
