@@ -49,7 +49,8 @@ snapshot with output in a separate tree. The independent server protocol,
 signer, cleanup watchdog and verified account prices are not provisioned.
 It refuses a grant and stops model work once the signed watchdog cleanup
 trigger arrives, leaving the remaining priced window for resource deletion.
-At grant time it requires at least 45 minutes until cleanup begins, reserving
+It reserves up to 60 seconds for grant acquisition and rechecks at least
+45 minutes until cleanup begins after the signed response arrives, reserving
 time for model loading, the at-most-30-minute training job and preservation;
 an actual completion inside that interval remains unverified.
 

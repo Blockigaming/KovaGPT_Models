@@ -353,6 +353,13 @@ class LaunchTests(unittest.TestCase):
         with self.assertRaises(grant.GrantRejected):
             call(transport, now=datetime(2026, 9, 24, 12, 31, tzinfo=timezone.utc))
         transport.assert_not_called()
+        updated["observed_at_utc"] = "2026-09-24T12:29:00Z"
+        updated["azure_network"]["observed_at_utc"] = "2026-09-24T12:29:00Z"
+        save_runtime(updated)
+        with self.assertRaises(grant.GrantRejected):
+            call(transport, now=datetime(2026, 9, 24, 12, 29, 30,
+                                         tzinfo=timezone.utc))
+        transport.assert_not_called()
 
 
 if __name__ == "__main__":

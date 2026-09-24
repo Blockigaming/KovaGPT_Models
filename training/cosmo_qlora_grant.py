@@ -160,7 +160,8 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
              "VM is in a different subscription")
         deadline = authority.timestamp(admission["allocation_deadline_utc"])
         cleanup_trigger = authority.timestamp(admission["watchdog_cleanup_trigger_utc"])
-        need(current + MIN_GRANT_LEAD <= cleanup_trigger <= deadline <=
+        need(current + MIN_GRANT_LEAD + MAX_GRANT_RESPONSE_DELAY <=
+             cleanup_trigger <= deadline <=
              current + timedelta(seconds=launch.MAX_ALLOCATION_SECONDS),
              "insufficient time for one training grant before watchdog cleanup")
         compute = (instance_transport or authority._imds_transport)(
@@ -208,6 +209,8 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
              current + MAX_GRANT_RESPONSE_DELAY,
              "grant response clock or elapsed time invalid")
         received = received.astimezone(timezone.utc)
+        need(received + MIN_GRANT_LEAD <= cleanup_trigger,
+             "insufficient training time after committed grant")
         need(set(payload) == {
             "schema_version", "kind", "issuer", "source_commit", "subscription_id",
             "quote_sha256", "lifecycle_id", "preflight_ledger_sequence",
