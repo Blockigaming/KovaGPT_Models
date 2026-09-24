@@ -338,6 +338,10 @@ def _validated_cost_guard() -> dict:
         "other_families_authorized": False,
     }, "Cosmo-only owner ceiling drift")
     need(cost["emergency_cleanup_margin"] == "1.2500")
+    for requirement in ("independent_signed_admission_required",
+                        "post_run_cost_evidence_required",
+                        "zero_residual_billable_resources_required"):
+        need(cost.get(requirement) is True, f"mandatory cost control disabled: {requirement}")
     need(cost["provider_compute_meter_increment_seconds"] == 60)
     need(cost["meter_categories"] == ["compute_allocation_time", *COST_CATEGORY_BOUNDS])
     need(type(cost["category_upper_bounds"]) is dict
@@ -395,8 +399,9 @@ def admit_conditional_cosmo_pilot(hourly_compute_rate: Decimal) -> Decimal:
     return total
 
 
-def validate_live_price_evidence(path: Path) -> dict:
+def validate_live_price_evidence(path: Path, *, admission_scope: str = "three-family") -> dict:
     """Consume an already-captured Azure Retail Prices response and fail closed."""
+    need(admission_scope in ("three-family", "cosmo-only"), "invalid price admission scope")
     value = load_json(path, maximum_bytes=64 * 1024)
     need(type(value) is dict and value.get("NextPageLink") in (None, ""),
          "incomplete live-price response")
@@ -440,15 +445,22 @@ def validate_live_price_evidence(path: Path) -> dict:
     except (InvalidOperation, ValueError):
         raise ContractError("invalid live price") from None
     need(rate.is_finite() and rate > 0 and unit_rate == rate, "invalid live price")
-    total = admit_bootstrap(rate)
-    cosmo_total = admit_conditional_cosmo_pilot(rate)
+    cosmo_total = worst_case_total(hourly_compute_rate=rate, lifecycle_seconds=7200)
+    if admission_scope == "cosmo-only":
+        total = admit_conditional_cosmo_pilot(rate)
+        ceiling = "3.3000"
+    else:
+        total = admit_bootstrap(rate)
+        ceiling = "6.0000"
     return {
         "status": "live_price_admitted",
+        "admission_scope": admission_scope,
         "hourly_compute_rate_usd": str(rate),
         "worst_case_total_usd": str(total),
-        "hard_ceiling_usd": "6.0000",
+        "hard_ceiling_usd": ceiling,
         "conditional_cosmo_only_worst_case_usd": str(cosmo_total),
         "conditional_cosmo_only_hard_ceiling_usd": "3.3000",
+        "conditional_cosmo_only_eligible": cosmo_total <= Decimal("3.3000"),
         "conditional_cosmo_only_maximum_allocation_seconds": 7200,
         "conditional_cosmo_only_compute_reservation_usd": "1.1500",
     }
@@ -519,11 +531,15 @@ def validate_cost_lifecycle_operator():
     need(pilot["single_shared_vm"]["sku"] == "Standard_NC4as_T4_v3")
     need(pilot["single_shared_vm"]["public_ip_allowed"] is False)
     need(pilot["combined_hard_ceiling_usd"] == "6.0000")
+    need(pilot["single_shared_vm"]["ubuntu_image_version"] == "24.04.202609040",
+         "exact East US Ubuntu image version mismatch")
     vm_template = (ROOT / "infra/three-family-pilot-vm.bicep").read_text(encoding="utf-8")
     need("param ubuntuImageVersion string" in vm_template
          and "version: ubuntuImageVersion" in vm_template
          and "version: 'latest'" not in vm_template,
          "VM image must require an immutable operator-supplied version")
+    need("@allowed(['24.04.202609040'])" in vm_template,
+         "VM image version must match reviewed East US listing")
     from training.three_family_operator import command_plan
     for step in command_plan():
         if "infra/three-family-pilot-vm.bicep" in step.get("argv", []):
@@ -603,11 +619,14 @@ def main(argv=None) -> int:
     evidence = parser.add_mutually_exclusive_group()
     evidence.add_argument("--probe-evidence", type=Path)
     evidence.add_argument("--retail-price-evidence", type=Path)
+    parser.add_argument("--admission-scope", choices=("three-family", "cosmo-only"),
+                        default="three-family")
     args = parser.parse_args(argv)
     if args.probe_evidence is not None:
         report = validate_probe_evidence(args.probe_evidence)
     elif args.retail_price_evidence is not None:
-        report = validate_live_price_evidence(args.retail_price_evidence)
+        report = validate_live_price_evidence(args.retail_price_evidence,
+                                              admission_scope=args.admission_scope)
     else:
         report = validate()
     print(json.dumps(report, sort_keys=True))

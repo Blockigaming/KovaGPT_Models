@@ -9,6 +9,7 @@ param suffix string
 param adminUsername string
 @description('Exact immutable Marketplace image version from a reviewed East US image listing. No default or latest alias.')
 @minLength(8)
+@allowed(['24.04.202609040'])
 param ubuntuImageVersion string
 @secure()
 param sshPublicKey string

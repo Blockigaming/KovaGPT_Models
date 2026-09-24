@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const load = async (name) => JSON.parse(await readFile(new URL(`../config/${name}`, import.meta.url)));
 const [
@@ -143,29 +145,42 @@ if (
 if (
   hardware.schema_version !== 2 || hardware.status !== "candidate_aware_benchmark_required" ||
   hardware.engine !== "kova-core" ||
-  hardware.candidate_source !== "config/core-serving.v1.json:candidates" ||
+  hardware.candidate_source !== "core/current_candidates.py:CORE_SERVING.candidates" ||
   hardware.selected_candidate_id !== null || hardware.selected_provider_hardware_id !== null ||
   hardware.provider_inventory_snapshot !== null || hardware.provider_price_snapshot !== null ||
   hardware.inventory_must_be_refreshed_at_benchmark_time !== true ||
   hardware.paid_benchmark_authorized !== false || hardware.deployment_authorized !== false ||
   hardware.production_routing_authorized !== false
 ) throw new Error("candidate_aware_hardware_benchmark_must_stay_unselected_and_blocked");
-if (hardware.candidate_matrices.length !== coreServing.candidates.length) {
+const activeHardware = JSON.parse(execFileSync("python3", ["-E", "-S", "-B", "-c", `
+import json
+from core.current_candidates import CORE_SERVING
+from training.three_family_contract import ROOT, load_json, validate_lineage_and_manifests
+print(json.dumps({'candidates': CORE_SERVING['candidates'],
+  'snapshot_bytes': validate_lineage_and_manifests(),
+  'compatibility': load_json(ROOT / 'config/kova-t4-compatibility.v1.json')}))
+`], { cwd: fileURLToPath(new URL("..", import.meta.url)), encoding: "utf8" }));
+const gpu = activeHardware.compatibility.device;
+if (JSON.stringify(hardware.planned_probe_hardware) !== JSON.stringify({
+  region: "eastus", vm_size: "Standard_NC4as_T4_v3", device: gpu.exact_name,
+  vram_bytes: gpu.vram_bytes,
+})) throw new Error("hardware_probe_must_match_active_t4_contract");
+if (hardware.candidate_matrices.length !== activeHardware.candidates.length ||
+    new Set(hardware.candidate_matrices.map((matrix) => matrix.candidate_id)).size !== activeHardware.candidates.length) {
   throw new Error("every_core_candidate_requires_a_hardware_matrix");
 }
-for (const servingCandidate of coreServing.candidates) {
+for (const servingCandidate of activeHardware.candidates) {
   const matrix = hardware.candidate_matrices.find((item) => item.candidate_id === servingCandidate.id);
+  const minimumVram = Math.ceil(activeHardware.compatibility.families[servingCandidate.id].estimated_peak_vram_bytes / (1024 ** 3));
+  const gpuVram = gpu.vram_bytes / (1024 ** 3);
   if (
     !matrix || matrix.model !== servingCandidate.model || matrix.model_revision !== servingCandidate.revision ||
-    matrix.published_weight_bytes !== servingCandidate.stored_bytes ||
-    matrix.minimum_benchmark_vram_gb !== servingCandidate.minimum_benchmark_vram_gb ||
+    matrix.pinned_snapshot_bytes !== activeHardware.snapshot_bytes[servingCandidate.id] ||
+    matrix.minimum_benchmark_vram_gb !== minimumVram ||
     matrix.selected_provider_hardware_id !== null || matrix.compatibility_verified !== false ||
     matrix.benchmark_complete !== false || !Array.isArray(matrix.eligible_vram_tiers_gb) ||
-    matrix.eligible_vram_tiers_gb.length === 0 ||
-    matrix.eligible_vram_tiers_gb[0] !== matrix.minimum_benchmark_vram_gb ||
-    matrix.eligible_vram_tiers_gb.some((tier) =>
-      !Number.isInteger(tier) || tier < matrix.minimum_benchmark_vram_gb
-    )
+    matrix.eligible_vram_tiers_gb.length !== 1 ||
+    matrix.eligible_vram_tiers_gb[0] !== gpuVram || gpuVram < minimumVram
   ) throw new Error(`invalid_hardware_matrix:${servingCandidate.id}`);
 }
 

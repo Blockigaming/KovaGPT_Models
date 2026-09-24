@@ -656,7 +656,10 @@ class ThreeFamilyContractTests(unittest.TestCase):
         for change in (lambda cfg: cfg["category_upper_bounds"].update(managed_disks="-1"),
                        lambda cfg: cfg["category_upper_bounds"].update(managed_disks="NaN"),
                        lambda cfg: cfg["category_upper_bounds"].pop("managed_disks"),
-                       lambda cfg: cfg["meter_categories"].pop()):
+                       lambda cfg: cfg["meter_categories"].pop(),
+                       lambda cfg: cfg.update(independent_signed_admission_required=False),
+                       lambda cfg: cfg.update(post_run_cost_evidence_required=False),
+                       lambda cfg: cfg.update(zero_residual_billable_resources_required=False)):
             altered = deepcopy(cost)
             change(altered)
             def fake_load(path, **kwargs):
@@ -679,12 +682,20 @@ class ThreeFamilyContractTests(unittest.TestCase):
             admitted = contract.validate_live_price_evidence(path)
             self.assertEqual(admitted["status"], "live_price_admitted")
             self.assertEqual(admitted["conditional_cosmo_only_worst_case_usd"], "3.2020")
+            self.assertTrue(admitted["conditional_cosmo_only_eligible"])
+            self.assertEqual(contract.validate_live_price_evidence(
+                path, admission_scope="cosmo-only")["hard_ceiling_usd"], "3.3000")
             value = json.loads(path.read_text())
             value["Items"][0]["retailPrice"] = 0.60
             value["Items"][0]["unitPrice"] = 0.60
             path.write_text(json.dumps(value))
+            full_plan = contract.validate_live_price_evidence(path)
+            self.assertEqual(full_plan["admission_scope"], "three-family")
+            self.assertFalse(full_plan["conditional_cosmo_only_eligible"])
             with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-                contract.validate_live_price_evidence(path)
+                contract.validate_live_price_evidence(path, admission_scope="cosmo-only")
+            with self.assertRaisesRegex(contract.ContractError, "scope"):
+                contract.validate_live_price_evidence(path, admission_scope="unspecified")
             value = json.loads(path.read_text())
             value["Items"][0]["retailPrice"] = 1.0
             value["Items"][0]["unitPrice"] = 1.0
@@ -920,6 +931,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
         self.assertIn("Microsoft.HpcCompute", vm)
         self.assertIn("NvidiaGpuDriverLinux", vm)
         self.assertIn("version: ubuntuImageVersion", vm)
+        self.assertIn("@allowed(['24.04.202609040'])", vm)
         self.assertNotIn("version: 'latest'", vm)
         self.assertIn("ubuntuImageVersion=${PINNED_UBUNTU_IMAGE_VERSION}", command_plan()[3]["argv"])
         self.assertIn("enableAutomaticUpgrade: false", vm)

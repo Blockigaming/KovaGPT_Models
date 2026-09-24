@@ -8,6 +8,13 @@ import { test } from "node:test";
 import { realizedMargin, requiredPrice } from "../scripts/price-floor.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
+const copyActiveHardwareSources = (output) => {
+  for (const directory of ["core", "release", "training"]) mkdirSync(join(output, directory));
+  for (const source of ["core/current_candidates.py", "release/model_revisions.py",
+    "training/three_family_contract.py"]) {
+    copyFileSync(join(root, source), join(output, source));
+  }
+};
 for (const script of ["validate-data.mjs", "validate-stack.mjs"]) {
   test(`${script} passes`, () => {
     const result = spawnSync(process.execPath, [join(root, "scripts", script)], { encoding: "utf8" });
@@ -21,6 +28,7 @@ test("stack validation rejects a changed approved identity prompt", (t) => {
   mkdirSync(join(output, "scripts"));
   mkdirSync(join(output, "prompts"));
   cpSync(join(root, "config"), join(output, "config"), { recursive: true });
+  copyActiveHardwareSources(output);
   copyFileSync(join(root, "scripts/validate-stack.mjs"), join(output, "scripts/validate-stack.mjs"));
   writeFileSync(
     join(output, "prompts/kova-identity.v3.txt"),
@@ -39,6 +47,7 @@ test("Ultra entitlement contract tracks Chat Pro and Work Plus without admitting
   mkdirSync(join(output, "scripts"));
   mkdirSync(join(output, "prompts"));
   cpSync(join(root, "config"), join(output, "config"), { recursive: true });
+  copyActiveHardwareSources(output);
   copyFileSync(join(root, "scripts/validate-stack.mjs"), join(output, "scripts/validate-stack.mjs"));
   copyFileSync(join(root, "prompts/kova-identity.v3.txt"), join(output, "prompts/kova-identity.v3.txt"));
   const runValidation = () => spawnSync(process.execPath, [join(output, "scripts/validate-stack.mjs")], {
@@ -71,6 +80,7 @@ test("stack validation rejects obsolete completion target claims", (t) => {
   mkdirSync(join(output, "scripts"));
   mkdirSync(join(output, "prompts"));
   cpSync(join(root, "config"), join(output, "config"), { recursive: true });
+  copyActiveHardwareSources(output);
   copyFileSync(join(root, "scripts/validate-stack.mjs"), join(output, "scripts/validate-stack.mjs"));
   copyFileSync(join(root, "prompts/kova-identity.v3.txt"), join(output, "prompts/kova-identity.v3.txt"));
   const runValidation = () => spawnSync(process.execPath, [join(output, "scripts/validate-stack.mjs")], {
@@ -287,7 +297,7 @@ test("Core container pins upstream source while every build and deployment actio
   assert.ok(Object.values(config.safety).every((value) => value === false));
 });
 
-test("hardware planning covers both Core candidates without stale provider inventory claims", () => {
+test("hardware planning covers active three-family T4 candidates without stale inventory", () => {
   const config = JSON.parse(readFileSync(join(root, "config/hardware-benchmark.v1.json"), "utf8"));
   assert.equal(config.schema_version, 2);
   assert.equal(config.selected_candidate_id, null);
@@ -295,12 +305,17 @@ test("hardware planning covers both Core candidates without stale provider inven
   assert.equal(config.provider_inventory_snapshot, null);
   assert.equal(config.provider_price_snapshot, null);
   assert.equal(config.inventory_must_be_refreshed_at_benchmark_time, true);
+  assert.equal(config.candidate_source, "core/current_candidates.py:CORE_SERVING.candidates");
   assert.deepEqual(config.candidate_matrices.map((matrix) => [
     matrix.candidate_id, matrix.minimum_benchmark_vram_gb,
   ]), [
-    ["qwen3.8-27b-bf16", 80],
-    ["qwen3.8-27b-fp8", 48],
+    ["kova-cosmo", 6],
+    ["kova-orion", 9],
+    ["kova-nova", 14],
   ]);
+  assert.ok(config.candidate_matrices.every((matrix) =>
+    matrix.eligible_vram_tiers_gb.length === 1 && matrix.eligible_vram_tiers_gb[0] === 16
+  ));
   assert.ok(config.candidate_matrices.every((matrix) =>
     matrix.selected_provider_hardware_id === null &&
     matrix.compatibility_verified === false &&
@@ -309,4 +324,22 @@ test("hardware planning covers both Core candidates without stale provider inven
   assert.equal(config.paid_benchmark_authorized, false);
   assert.equal(config.deployment_authorized, false);
   assert.equal(config.production_routing_authorized, false);
+});
+
+test("hardware validation rejects a matrix from the superseded catalog", (t) => {
+  const output = mkdtempSync(join(tmpdir(), "kova-hardware-validation-"));
+  t.after(() => rmSync(output, { recursive: true, force: true }));
+  mkdirSync(join(output, "scripts"));
+  mkdirSync(join(output, "prompts"));
+  cpSync(join(root, "config"), join(output, "config"), { recursive: true });
+  copyActiveHardwareSources(output);
+  copyFileSync(join(root, "scripts/validate-stack.mjs"), join(output, "scripts/validate-stack.mjs"));
+  copyFileSync(join(root, "prompts/kova-identity.v3.txt"), join(output, "prompts/kova-identity.v3.txt"));
+  const hardwarePath = join(output, "config/hardware-benchmark.v1.json");
+  const hardware = JSON.parse(readFileSync(hardwarePath, "utf8"));
+  hardware.candidate_matrices[0].candidate_id = "qwen3.8-27b-bf16";
+  writeFileSync(hardwarePath, JSON.stringify(hardware));
+  const result = spawnSync(process.execPath, [join(output, "scripts/validate-stack.mjs")], {encoding:"utf8"});
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /invalid_hardware_matrix:kova-cosmo/u);
 });

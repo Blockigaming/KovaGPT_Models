@@ -38,6 +38,7 @@ def command_plan() -> list[dict]:
             "verify_argv": [
                 "python3", "-m", "training.three_family_contract",
                 "--retail-price-evidence", "${LIVE_PRICE_EVIDENCE}",
+                "--admission-scope", "three-family",
             ],
             "verification_must_succeed_before_step": 2,
             "mode": "read_only_then_validate",

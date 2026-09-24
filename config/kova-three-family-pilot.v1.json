@@ -2,7 +2,7 @@
   "schema_version":1,
   "status":"source_only_execution_blocked",
   "families":["kova-cosmo","kova-orion","kova-nova"],
-  "single_shared_vm":{"provider":"Azure","region":"eastus","sku":"Standard_NC4as_T4_v3","expected_gpu":"NVIDIA T4","public_ip_allowed":false},
+  "single_shared_vm":{"provider":"Azure","region":"eastus","sku":"Standard_NC4as_T4_v3","expected_gpu":"NVIDIA T4","ubuntu_image_version":"24.04.202609040","public_ip_allowed":false},
   "sequential_order":["kova-cosmo","kova-orion","kova-nova"],
   "combined_hard_ceiling_usd":"6.0000",
   "preserve_successful_adapters_if_later_family_fails":true,
