@@ -210,6 +210,8 @@ class LaunchTests(unittest.TestCase):
                    "lifecycle_id": "one-pilot", "preflight_ledger_sequence": 3,
                    "azure_instance": vm, "allocation_deadline_utc":
                    admission["allocation_deadline_utc"],
+                   "watchdog_cleanup_trigger_utc":
+                   admission["watchdog_cleanup_trigger_utc"],
                    "observed_at_utc": "2026-09-24T12:00:00Z",
                    "watchdog_healthy": True, "cleanup_scope_verified": True,
                    "azure_network": live_network}
@@ -226,6 +228,7 @@ class LaunchTests(unittest.TestCase):
             quote_sha256=admission["quote_sha256"], source_commit=self.commit,
             subscription_id=self.subscription,
             deadline_utc=admission["allocation_deadline_utc"],
+            cleanup_trigger_utc=admission["watchdog_cleanup_trigger_utc"],
             now=self.now, root=self.root)
         self.assertEqual(received["azure_instance"], vm)
         save_runtime({**runtime, "quote_sha256": "a" * 64})
@@ -234,6 +237,16 @@ class LaunchTests(unittest.TestCase):
                 quote_sha256=admission["quote_sha256"], source_commit=self.commit,
                 subscription_id=self.subscription,
                 deadline_utc=admission["allocation_deadline_utc"],
+                cleanup_trigger_utc=admission["watchdog_cleanup_trigger_utc"],
+                now=self.now, root=self.root)
+        save_runtime({**runtime, "watchdog_cleanup_trigger_utc":
+                      "2026-09-24T13:14:59Z"})
+        with self.assertRaises(grant.GrantRejected):
+            grant.read_runtime_preflight(runtime_path,
+                quote_sha256=admission["quote_sha256"], source_commit=self.commit,
+                subscription_id=self.subscription,
+                deadline_utc=admission["allocation_deadline_utc"],
+                cleanup_trigger_utc=admission["watchdog_cleanup_trigger_utc"],
                 now=self.now, root=self.root)
         for key, value in (("nic_public_ip_id", "https://public.example.test/"),
                            ("nat_gateway_id", "untrusted-nat"),
@@ -248,6 +261,7 @@ class LaunchTests(unittest.TestCase):
                     quote_sha256=admission["quote_sha256"], source_commit=self.commit,
                     subscription_id=self.subscription,
                     deadline_utc=admission["allocation_deadline_utc"],
+                    cleanup_trigger_utc=admission["watchdog_cleanup_trigger_utc"],
                     now=self.now, root=self.root)
         save_runtime(runtime)
 
@@ -267,13 +281,14 @@ class LaunchTests(unittest.TestCase):
                            "lifecycle_id", "preflight_ledger_sequence",
                            "network_evidence_sha256",
                            "azure_instance", "request_nonce", "allocation_deadline_utc",
+                           "watchdog_cleanup_trigger_utc",
                            "all_in_ceiling_usd")},
                        "ledger_sequence": 4, "ledger_commit_id": "atomic-commit",
                        "ledger_append_only": True,
                        "ledger_status": "grant_committed_before_response",
                        "grant_id": "one-and-only", "azure_identity_token_sha256": token_sha,
                        "issued_at_utc": "2026-09-24T12:01:00Z",
-                       "expires_at_utc": "2026-09-24T13:59:00Z",
+                       "expires_at_utc": "2026-09-24T13:15:00Z",
                        "training_runs_consumed": runs, "all_in_reserved_usd": "3.3000",
                        "watchdog_healthy": True, "cleanup_scope_verified": True,
                        "deployment_authorized": False}
@@ -295,6 +310,16 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(call(committed)["training_runs_consumed"], 1)
         with self.assertRaises(grant.GrantRejected):
             call(lambda e, t, r: committed(e, t, r, runs=2))
+        for key, bad in (("watchdog_cleanup_trigger_utc", "2026-09-24T13:16:00Z"),
+                         ("expires_at_utc", "2026-09-24T13:16:00Z")):
+            def signed_mismatch(endpoint, token, request):
+                envelope = committed(endpoint, token, request)
+                envelope["payload"][key] = bad
+                envelope["signature"] = self.key.sign(
+                    authority.canonical(envelope["payload"])).hex()
+                return envelope
+            with self.subTest(key=key), self.assertRaises(grant.GrantRejected):
+                call(signed_mismatch)
         compute["storageProfile"]["imageReference"]["exactVersion"] = "latest"
         with self.assertRaises(grant.GrantRejected):
             call(committed)

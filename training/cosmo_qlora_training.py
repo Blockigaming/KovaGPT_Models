@@ -185,7 +185,8 @@ def execute(*, snapshot: Path, output: Path, quote: Path, subscription_id: str,
     preflight = grant.read_runtime_preflight(
         runtime_evidence, quote_sha256=admission["quote_sha256"],
         source_commit=source_commit, subscription_id=subscription_id,
-        deadline_utc=admission["allocation_deadline_utc"])
+        deadline_utc=admission["allocation_deadline_utc"],
+        cleanup_trigger_utc=admission["watchdog_cleanup_trigger_utc"])
     require_before_cleanup(admission)
     committed = grant.acquire_training_grant(
         quote=quote, source_commit=source_commit, subscription_id=subscription_id,
@@ -193,7 +194,9 @@ def execute(*, snapshot: Path, output: Path, quote: Path, subscription_id: str,
         preflight_ledger_sequence=preflight["preflight_ledger_sequence"],
         azure_instance=preflight["azure_instance"], runtime_evidence=runtime_evidence)
     need(committed["training_runs_consumed"] == 1 and
-         committed["allocation_deadline_utc"] == admission["allocation_deadline_utc"],
+         committed["allocation_deadline_utc"] == admission["allocation_deadline_utc"] and
+         committed["watchdog_cleanup_trigger_utc"] ==
+         admission["watchdog_cleanup_trigger_utc"],
          "single-use grant did not commit")
     require_before_cleanup(admission)
     tokenizer = AutoTokenizer.from_pretrained(str(model_root), local_files_only=True,

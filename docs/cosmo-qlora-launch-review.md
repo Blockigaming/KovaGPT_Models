@@ -37,8 +37,11 @@ python3 -m training.cosmo_qlora_training --execute \
 The authority must sign the runtime preflight for the exact quote and source,
 including a fresh Azure control-plane read of the executing VM's sole NIC,
 private subnet, attached Standard NAT and IP, outbound 80/443 rules, and
-inbound denial. The grant request binds that signed network proof by digest,
-then atomically commits a single-use training grant bound to the VM resource ID,
+inbound denial. The independent authority must also read the deployed watchdog
+schedule and sign the same cleanup trigger as the quote and grant. The grant
+request binds that signed network proof by digest,
+then atomically commits a single-use training grant bound to the quote's
+cleanup trigger and cost deadline, the VM resource ID,
 immutable VM ID, managed identity token, lifecycle, ledger sequence, and
 signed cost deadline of at most two hours. The trainer checks installed package versions and a tiny
 NF4 CUDA operation before it opens model weights, and accepts a protected

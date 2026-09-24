@@ -66,6 +66,7 @@ def verified_network(payload: dict, instance: dict, *, current: datetime) -> dic
 
 def read_runtime_preflight(path: Path, *, quote_sha256: str, source_commit: str,
                            subscription_id: str, deadline_utc: str,
+                           cleanup_trigger_utc: str,
                            now: datetime | None = None,
                            root: Path = launch.ROOT) -> dict:
     """Accept lifecycle, ledger and instance values only from the authority."""
@@ -76,7 +77,8 @@ def read_runtime_preflight(path: Path, *, quote_sha256: str, source_commit: str,
         need(set(payload) == {
             "schema_version", "kind", "issuer", "quote_sha256", "source_commit",
             "subscription_id", "lifecycle_id", "preflight_ledger_sequence",
-            "azure_instance", "allocation_deadline_utc", "observed_at_utc",
+            "azure_instance", "allocation_deadline_utc",
+            "watchdog_cleanup_trigger_utc", "observed_at_utc",
             "watchdog_healthy", "cleanup_scope_verified", "azure_network",
         } and payload["schema_version"] == 1,
              "signed runtime evidence shape mismatch")
@@ -84,6 +86,7 @@ def read_runtime_preflight(path: Path, *, quote_sha256: str, source_commit: str,
              payload["source_commit"] == source_commit and
              payload["subscription_id"] == subscription_id and
              payload["allocation_deadline_utc"] == deadline_utc and
+             payload["watchdog_cleanup_trigger_utc"] == cleanup_trigger_utc and
              payload["watchdog_healthy"] is True and
              payload["cleanup_scope_verified"] is True,
              "runtime preflight changed quote or safety controls")
@@ -95,7 +98,10 @@ def read_runtime_preflight(path: Path, *, quote_sha256: str, source_commit: str,
         current = now or datetime.now(timezone.utc)
         need(current.tzinfo is not None and
              observed <= current.astimezone(timezone.utc) <
-             observed + timedelta(minutes=5), "runtime preflight is stale")
+             observed + timedelta(minutes=5) and
+             current.astimezone(timezone.utc) <
+             authority.timestamp(cleanup_trigger_utc),
+             "runtime preflight is stale or cleanup has begun")
         need(type(payload["preflight_ledger_sequence"]) is int and
              0 < payload["preflight_ledger_sequence"] < 2**63 and
              type(payload["lifecycle_id"]) is str and
@@ -131,6 +137,7 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
             runtime_evidence, quote_sha256=admission["quote_sha256"],
             source_commit=source_commit, subscription_id=subscription_id,
             deadline_utc=admission["allocation_deadline_utc"], now=current,
+            cleanup_trigger_utc=admission["watchdog_cleanup_trigger_utc"],
             root=root)
         need(preflight["lifecycle_id"] == lifecycle_id and
              preflight["preflight_ledger_sequence"] == preflight_ledger_sequence and
@@ -145,8 +152,10 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
              "/subscriptions/" + subscription_id + "/"),
              "VM is in a different subscription")
         deadline = authority.timestamp(admission["allocation_deadline_utc"])
-        need(current < deadline <= current + timedelta(seconds=launch.MAX_ALLOCATION_SECONDS),
-             "allocation deadline expired")
+        cleanup_trigger = authority.timestamp(admission["watchdog_cleanup_trigger_utc"])
+        need(current < cleanup_trigger <= deadline <=
+             current + timedelta(seconds=launch.MAX_ALLOCATION_SECONDS),
+             "watchdog cleanup has begun or allocation deadline expired")
         compute = (instance_transport or authority._imds_transport)(
             authority.AZURE_COMPUTE_IMDS_URL)
         image = compute["storageProfile"]["imageReference"]
@@ -176,6 +185,7 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
                 "azure_managed_identity_token_audience"],
             "azure_instance_identity_token_expires_at_utc": token_expiry,
             "allocation_deadline_utc": admission["allocation_deadline_utc"],
+            "watchdog_cleanup_trigger_utc": admission["watchdog_cleanup_trigger_utc"],
             "training_runs_limit": 1, "all_in_ceiling_usd": "3.3000",
             "request_nonce": nonce,
             "requested_at_utc": current.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -193,6 +203,7 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
             "ledger_status", "grant_id", "azure_instance",
             "azure_identity_token_sha256", "request_nonce",
             "issued_at_utc", "expires_at_utc", "allocation_deadline_utc",
+            "watchdog_cleanup_trigger_utc",
             "training_runs_consumed", "all_in_reserved_usd",
             "all_in_ceiling_usd", "watchdog_healthy", "cleanup_scope_verified",
             "deployment_authorized",
@@ -202,7 +213,8 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
             "source_commit", "subscription_id", "quote_sha256", "lifecycle_id",
             "preflight_ledger_sequence", "network_evidence_sha256",
             "azure_instance", "request_nonce",
-            "allocation_deadline_utc", "all_in_ceiling_usd")),
+            "allocation_deadline_utc", "watchdog_cleanup_trigger_utc",
+            "all_in_ceiling_usd")),
              "training grant request binding mismatch")
         need(payload["ledger_append_only"] is True and
              payload["ledger_status"] == "grant_committed_before_response" and
@@ -223,12 +235,13 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
         issued = authority.timestamp(payload["issued_at_utc"])
         expires = authority.timestamp(payload["expires_at_utc"])
         need(current - timedelta(minutes=5) <= issued <= current and
-             current < expires <= deadline and
+             current < expires <= cleanup_trigger and
              authority.timestamp(token_expiry) >= expires,
              "training grant is stale or exceeds the deadline")
         return {"status": "one_training_run_committed", "grant_id": payload["grant_id"],
                 "ledger_sequence": payload["ledger_sequence"], "grant_sha256": digest,
                 "allocation_deadline_utc": payload["allocation_deadline_utc"],
+                "watchdog_cleanup_trigger_utc": payload["watchdog_cleanup_trigger_utc"],
                 "azure_instance": instance, "training_runs_consumed": 1}
     except (authority.AuthorityError, KeyError, TypeError, AttributeError, OSError,
             ValueError) as exc:
