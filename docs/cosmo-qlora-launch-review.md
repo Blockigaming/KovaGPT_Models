@@ -54,6 +54,39 @@ It reserves up to 60 seconds for grant acquisition and rechecks at least
 time for model loading, the at-most-30-minute training job and preservation;
 an actual completion inside that interval remains unverified.
 
+### Independent controller implementation
+
+`training.cosmo_controller_ledger` implements persistence for the existing
+Cosmo lifecycle transitions. It requires a private container with a locked,
+explicitly bounded retention policy and protected append writes, outside both
+cleanup groups. Each operation takes a 60-second Azure Blob lease, replays the
+signed history, checks the expected sequence, appends with the lease, ETag and
+exact byte offset, and reads back the committed bytes before returning. A
+missing, empty, modified, reordered or truncated ledger fails closed; append
+never initializes a missing ledger. A lost response can consume a grant but
+cannot grant a retry. Source/instance changes cannot reset the pinned lifecycle.
+
+`training.cosmo_controller_grants.GrantIssuer` binds the existing guest request
+to the signed account quote and runtime preflight, requires a fresh independent
+identity/network/watchdog observation, then persists the exact signed grant
+response in the ledger before returning it. Raw managed-identity tokens are
+never persisted. Deadline checks run again after external verification and
+after commit. The local protocol test sends a guest request through this issuer
+and verifies the returned signature with the existing guest client.
+
+**This is not the completed paid controller.** The production Entra/ARM
+`verify_live_request` adapter, authenticated HTTPS handler, provisioned immutable
+storage, key/credential isolation, watchdog self-cleanup and measured cost
+bound remain missing. The injected observation in local tests is synthetic.
+The default ledger CLI makes zero provider calls and rejects `--execute`.
+Its `AzureBlobIO` transport is implementation code for a later approved
+deployment; no live storage operations were performed to test it. Storage
+retention and all control-host/verification costs must be priced before release.
+
+Protocol references: Microsoft documents [Append Block conditions and responses](https://learn.microsoft.com/en-us/rest/api/storageservices/append-block),
+[Blob leases](https://learn.microsoft.com/en-us/rest/api/storageservices/lease-blob),
+and [container-level immutability](https://learn.microsoft.com/en-us/azure/storage/blobs/immutable-container-level-worm-policies).
+
 The intended paid command order after an owner release is shown below. These
 commands are **review text only**: the account-specific parameters, trusted
 authority, rate proof, watchdog self-cleanup, SSH key, and approved resource
@@ -195,6 +228,9 @@ only. Microsoft documents separate [billing-profile price sheets](https://learn.
 for MCA/MPA and [billing-account price sheets](https://learn.microsoft.com/en-us/rest/api/cost-management/price-sheet/download-by-billing-account?view=rest-cost-management-2025-03-01)
 for EA. The MCA profile has been identified privately, but the current
 account-specific price sheet and all ancillary meters have **not** been read.
+The billing profile's September 2026 price-sheet export was requested and Azure
+reported success, but the browser transfer did not deliver a readable file.
+That notification is not evidence of any actual meter rate.
 Keep billing identifiers and price exports out of this public source branch.
 
 ## Paid sequence awaiting final approval
@@ -269,10 +305,12 @@ Do not proceed to training from a failed or incomplete step.
   `$0.4500` per hour for a full two hours or a shorter signed allocation fitting
   the verified all-in calculation is required. The public-rate
   calculation is not an account quote or a hard cap.
-- The independent authority endpoint/signing key, atomic remote grants,
+- The independent authority endpoint/signing key, deployed atomic remote grants,
   watchdog health and self-cleanup proof, signed VM preflight, and signed
   subscription quote do not
   exist. The older `$2` authority contract is not a `$3.30` controller.
+  The new ledger persistence and grant issuer are source implementations;
+  production Entra/ARM verification and HTTPS integration are still absent.
 - The `training.cosmo_qlora_training` paid entrypoint deliberately fails before
   any model load or Azure action. A separate reviewed source release and
   end-to-end lifecycle rehearsal must precede an executable purchase request.
