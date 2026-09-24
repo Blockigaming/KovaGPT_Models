@@ -100,7 +100,8 @@ az group delete --name "$WATCHDOG_RESOURCE_GROUP" --yes --no-wait
 az group exists --name "$WATCHDOG_RESOURCE_GROUP"
 # Require false, then reconcile every delayed charge against the owner ceiling.
 # Terminal ledger entry requires an independent signed proof of both deletions,
-# zero residual resources and finalized all-in cost; a bare event is rejected.
+# zero residual resources and finalized all-in cost; if a grant has no preserved
+# adapter, the same verifier must attest immutable no-artifact failure evidence.
 ```
 
 ## Cost arithmetic and what it proves
@@ -211,7 +212,8 @@ Keep billing identifiers and price exports out of this public source branch.
    preserving the ledger externally, and reconcile actual charges when Azure
    posts them. An independent verifier signs zero-residual inventory for both
    groups, subscription-scoped residuals and the final posted cost before the
-   ledger accepts `cleanup_terminal`. Guest-process exit alone does not stop
+   ledger accepts `cleanup_terminal`. Each grant without a preserved adapter
+   requires independently signed no-artifact failure evidence. Guest-process exit alone does not stop
    disk or network charges.
 
 **Stop immediately** on a missing signature, expired or mismatched quote,

@@ -1157,7 +1157,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
             "cost_evidence_sha256": "a" * 64,
             "evidence_uri": "https://preserved.example.test/cleanup-proof",
             "immutable_evidence_version": "verified-v1", "outside_both_groups": True,
-            "verification_succeeded": True,
+            "verification_succeeded": True, "unpreserved_grants": [],
         }
         def signed_receipt(value):
             signature = signer.sign(json.dumps(value, sort_keys=True, separators=(",", ":"),
@@ -1197,7 +1197,25 @@ class ThreeFamilyContractTests(unittest.TestCase):
                    "events": [{"kind": "training_grant", "family": "kova-cosmo", "sequence": 1}],
                    **lifecycle}
         failed_run_receipt = {**payload, "ledger_sequence": 1,
-                              "final_cost_usd": "3.3000"}
+                              "final_cost_usd": "3.3000",
+                              "unpreserved_grants": [{
+                                  "family": "kova-cosmo", "grant_sequence": 1,
+                                  "training_failed": True, "no_artifact_produced": True,
+                                  "failure_evidence_sha256": "b" * 64,
+                                  "failure_evidence_uri": "https://preserved.example.test/cosmo-failure",
+                                  "immutable_failure_evidence_version": "failure-v1",
+                              }]}
+        with self.assertRaisesRegex(contract.ContractError, "unpreserved grant"):
+            contract.append_ledger_event(failure, signed_receipt({
+                **failed_run_receipt, "unpreserved_grants": []}),
+                expected_sequence=1, now=now, cleanup_public_key=public,
+                trusted_lifecycle=lifecycle)
+        with self.assertRaisesRegex(contract.ContractError, "no-artifact"):
+            wrong = deepcopy(failed_run_receipt)
+            wrong["unpreserved_grants"][0]["no_artifact_produced"] = False
+            contract.append_ledger_event(failure, signed_receipt(wrong),
+                expected_sequence=1, now=now, cleanup_public_key=public,
+                trusted_lifecycle=lifecycle)
         closed = contract.append_ledger_event(failure, signed_receipt(failed_run_receipt),
                                               expected_sequence=1, now=now,
                                               cleanup_public_key=public,

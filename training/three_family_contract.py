@@ -682,7 +682,7 @@ def _trusted_lifecycle(state: dict, trusted: dict | None) -> dict:
 
 def _verify_cleanup_receipt(event: dict, *, expected_sequence: int,
                             lifecycle: dict, public_key: bytes | None,
-                            now: datetime) -> None:
+                            now: datetime, unpreserved_grants: list[dict]) -> None:
     """Require independent, signed deletion inventory and final cost reconciliation.
 
     The verifier key must be provisioned outside this ledger and the two
@@ -707,7 +707,7 @@ def _verify_cleanup_receipt(event: dict, *, expected_sequence: int,
         "pilot_deleted_at_utc", "watchdog_deleted_at_utc", "verified_at_utc",
         "cost_posting_complete", "final_cost_usd", "cost_evidence_sha256",
         "evidence_uri", "immutable_evidence_version", "outside_both_groups",
-        "verification_succeeded",
+        "verification_succeeded", "unpreserved_grants",
     }, "cleanup receipt shape mismatch")
     need(type(payload["schema_version"]) is int and payload["schema_version"] == 1 and
          type(payload["ledger_sequence"]) is int and
@@ -754,6 +754,26 @@ def _verify_cleanup_receipt(event: dict, *, expected_sequence: int,
          type(payload["immutable_evidence_version"]) is str and
          bool(payload["immutable_evidence_version"]),
          "immutable external cleanup and cost evidence required")
+    failures = payload["unpreserved_grants"]
+    need(type(failures) is list and len(failures) == len(unpreserved_grants),
+         "unpreserved grant requires signed failure evidence")
+    for proof, grant in zip(failures, unpreserved_grants):
+        need(type(proof) is dict and set(proof) == {
+            "family", "grant_sequence", "training_failed", "no_artifact_produced",
+            "failure_evidence_sha256", "failure_evidence_uri",
+            "immutable_failure_evidence_version",
+        } and proof["family"] == grant["family"] and
+             type(proof["grant_sequence"]) is int and
+             proof["grant_sequence"] == grant["grant_sequence"] and
+             proof["training_failed"] is True and proof["no_artifact_produced"] is True and
+             type(proof["failure_evidence_sha256"]) is str and
+             HEX64.fullmatch(proof["failure_evidence_sha256"]) is not None and
+             type(proof["failure_evidence_uri"]) is str and
+             proof["failure_evidence_uri"].startswith("https://") and
+             "?" not in proof["failure_evidence_uri"] and
+             type(proof["immutable_failure_evidence_version"]) is str and
+             bool(proof["immutable_failure_evidence_version"]),
+             "independent immutable no-artifact failure proof required")
     signature = receipt["signature_ed25519_hex"]
     need(type(signature) is str and re.fullmatch(r"[0-9a-f]{128}", signature) is not None,
          "invalid cleanup verifier signature")
@@ -852,12 +872,20 @@ def append_ledger_event(state: dict, event: dict, *, expected_sequence: int,
                      item.get("family") == FAMILIES[previous] for item in events),
                  "previous family preservation required before grant")
     if kind == "cleanup_terminal":
-        # Failure cleanup still has to close after verified deletion and cost
-        # reconciliation, even if training never produced an adapter to preserve.
+        # A failed grant may terminate without an adapter, but only when the
+        # independent cleanup verifier signs immutable no-artifact evidence.
         lifecycle = _trusted_lifecycle(state, trusted_lifecycle)
+        events = state.get("events", [])
+        unpreserved = [
+            {"family": item["family"], "grant_sequence": item["sequence"]}
+            for item in events if item.get("kind") == "training_grant" and
+            not any(p.get("kind") == "family_preserved" and
+                    p.get("family") == item["family"] for p in events)
+        ]
         _verify_cleanup_receipt(event, expected_sequence=expected_sequence,
                                 lifecycle=lifecycle,
-                                public_key=cleanup_public_key, now=now)
+                                public_key=cleanup_public_key, now=now,
+                                unpreserved_grants=unpreserved)
     assigned = expected_sequence + 1
     committed = json.loads(json.dumps(event))
     committed["sequence"] = assigned
