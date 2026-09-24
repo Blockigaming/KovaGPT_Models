@@ -474,9 +474,13 @@ def validate_probe_evidence(path: Path) -> dict:
     need(set(value) == {
         "schema_version", "device_name", "compute_capability", "cuda_version",
         "bitsandbytes_four_bit_available", "available_vram_bytes", "free_disk_bytes",
-        "family_probes",
+        "family_probes", "azure_vm_image_urn",
     }, "invalid T4 probe evidence shape")
     need(value["schema_version"] == 1, "invalid T4 probe evidence schema")
+    pilot = load_json(ROOT / "config/kova-three-family-pilot.v1.json")
+    expected_image = "Canonical:ubuntu-24_04-lts:server:" + pilot["single_shared_vm"]["ubuntu_image_version"]
+    need(value["azure_vm_image_urn"] == expected_image,
+         "runtime image does not match pinned Azure image")
     need(value["device_name"] == compat["device"]["exact_name"], "unexpected GPU")
     need(value["compute_capability"] == compat["device"]["cuda_compute_capability"],
          "unexpected compute capability")
@@ -505,6 +509,7 @@ def validate_probe_evidence(path: Path) -> dict:
     return {
         "status": "t4_probe_evidence_valid",
         "device_name": value["device_name"],
+        "azure_vm_image_urn": value["azure_vm_image_urn"],
         "families": list(FAMILIES),
     }
 

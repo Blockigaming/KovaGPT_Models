@@ -856,6 +856,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
                 "device_name": "NVIDIA T4",
                 "compute_capability": "7.5",
                 "cuda_version": "12.8",
+                "azure_vm_image_urn": "Canonical:ubuntu-24_04-lts:server:24.04.202609040",
                 "bitsandbytes_four_bit_available": True,
                 "available_vram_bytes": 16000000000,
                 "free_disk_bytes": 40000000000,
@@ -867,6 +868,11 @@ class ThreeFamilyContractTests(unittest.TestCase):
             }))
             self.assertEqual(contract.validate_probe_evidence(path)["status"], "t4_probe_evidence_valid")
             value = json.loads(path.read_text())
+            value["azure_vm_image_urn"] = "Canonical:ubuntu-24_04-lts:server:latest"
+            path.write_text(json.dumps(value))
+            with self.assertRaisesRegex(contract.ContractError, "runtime image"):
+                contract.validate_probe_evidence(path)
+            value["azure_vm_image_urn"] = "Canonical:ubuntu-24_04-lts:server:24.04.202609040"
             value["device_name"] = "not-a-t4"
             path.write_text(json.dumps(value))
             with self.assertRaisesRegex(contract.ContractError, "unexpected GPU"):
