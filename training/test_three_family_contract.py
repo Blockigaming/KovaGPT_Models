@@ -1155,6 +1155,16 @@ class ThreeFamilyContractTests(unittest.TestCase):
         self.assertTrue(state["terminal"])
         with self.assertRaises(contract.ContractError):
             contract.append_ledger_event(state, {"kind": "watchdog_health"}, expected_sequence=1)
+        # A failed run may have a grant but no adapter. Verified deletion and
+        # final cost must still allow its ledger to terminate.
+        failure = {"sequence": 1, "terminal": False, "family_order": ["kova-cosmo"],
+                   "events": [{"kind": "training_grant", "family": "kova-cosmo", "sequence": 1}]}
+        failed_run_receipt = {**payload, "ledger_sequence": 1,
+                              "final_cost_usd": "3.3000"}
+        closed = contract.append_ledger_event(failure, signed_receipt(failed_run_receipt),
+                                              expected_sequence=1, now=now,
+                                              cleanup_public_key=public)
+        self.assertTrue(closed["terminal"])
 
     def test_runner_dry_run_uses_existing_contract_and_blocks_execution(self):
         from training.three_family_runner import main as runner_main

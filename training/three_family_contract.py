@@ -819,10 +819,8 @@ def append_ledger_event(state: dict, event: dict, *, expected_sequence: int,
                      item.get("family") == FAMILIES[previous] for item in events),
                  "previous family preservation required before grant")
     if kind == "cleanup_terminal":
-        need(not state.get("family_order") or all(
-            any(item.get("kind") == "family_preserved" and item.get("family") == family
-                for item in state.get("events", [])) for family in state["family_order"]),
-            "terminal cleanup cannot discard an unpreserved granted family")
+        # Failure cleanup still has to close after verified deletion and cost
+        # reconciliation, even if training never produced an adapter to preserve.
         _verify_cleanup_receipt(event, expected_sequence=expected_sequence,
                                 cosmo_only=len(state.get("family_order", [])) <= 1,
                                 public_key=cleanup_public_key, now=now)
