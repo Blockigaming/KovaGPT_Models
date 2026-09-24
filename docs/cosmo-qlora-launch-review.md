@@ -139,8 +139,9 @@ az vm image show --location eastus \
 
 The owner-side portal read on 2026-09-24 showed East US T4 family quota
 `0/4` and total regional quota `0/14` in use, in the intended active
-subscription. `Microsoft.Compute` and `Microsoft.Storage` were Registered,
-but `Microsoft.Network` was **NotRegistered**. The subscription is billed
+subscription. `Microsoft.Compute`, `Microsoft.Storage`, `Microsoft.Resources`,
+and `Microsoft.Authorization` were Registered; `Microsoft.Network` and
+`Microsoft.Logic` were **NotRegistered**. The subscription is billed
 through an active Microsoft Customer Agreement billing profile. This does
 not refresh the earlier SKU and exact image listing, guarantee live capacity,
 establish account prices, or prove that the image boots the pinned CUDA 12.8 /
@@ -201,8 +202,9 @@ Do not proceed to training from a failed or incomplete step.
 ## Open launch blockers
 
 - Current quota is sufficient for four T4 family cores and for four regional
-  cores, but `Microsoft.Network` is NotRegistered. Registration would change
-  subscription state and is outside this review-only release. SKU restrictions,
+  cores, but `Microsoft.Network` and `Microsoft.Logic` are NotRegistered.
+  Registration would change subscription state and is outside this review-only
+  release. SKU restrictions,
   exact East US image, and live capacity remain unverified.
 - The billing account and MCA profile were identified, but subscription rates,
   all ancillary and control-plane meters, and the tax treatment remain unknown.
