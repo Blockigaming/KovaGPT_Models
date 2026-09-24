@@ -127,7 +127,8 @@ az group exists --name "$WATCHDOG_RESOURCE_GROUP"
 | Emergency cleanup margin | 1.2500 |
 | **Conditional ceiling** | **3.3000** |
 
-At the earlier **public retail** `$0.5260` per hour VM rate, two hours of
+At the earlier **public retail** `$0.5260` per hour VM rate, also consistent
+with the portal's nonbinding `$383.98` per 730-hour estimate, two hours of
 compute is `$1.0520`, and the revised reservations total **`$3.4520`**,
 **`$0.1520` over** the ceiling. A *90-minute* signed window would reserve
 `$0.7890` compute and **`$3.1890` all in** under the same unverified ancillary
@@ -174,10 +175,16 @@ The owner-side portal read on 2026-09-24 showed East US T4 family quota
 subscription. `Microsoft.Compute`, `Microsoft.Storage`, `Microsoft.Resources`,
 and `Microsoft.Authorization` were Registered; `Microsoft.Network` and
 `Microsoft.Logic` were **NotRegistered**. The subscription is billed
-through an active Microsoft Customer Agreement billing profile. This does
-not refresh the earlier SKU and exact image listing, guarantee live capacity,
-establish account prices, or prove that the image boots the pinned CUDA 12.8 /
-bitsandbytes stack. No provider registration has been changed. `what-if` may validate the proposed
+through an active Microsoft Customer Agreement billing profile. In an
+authenticated Cloud Shell in the same subscription, `az account show`
+confirmed the subscription was Enabled; `az vm list-skus --location eastus
+--size Standard_NC4as_T4_v3 --all` returned that exact East US SKU with
+`restrictions: []`; and `az vm image show --location eastus --urn
+Canonical:ubuntu-24_04-lts:server:24.04.202609040` returned that exact
+image version as Active in East US. Those catalog reads do not guarantee live
+capacity, establish account prices, or prove that the image boots the pinned
+CUDA 12.8 / bitsandbytes stack. No provider registration has been changed.
+`what-if` may validate the proposed
 resource graph, but it does not reserve a GPU. Capacity and exact hardware
 identity can be confirmed only after an approved allocation.
 
@@ -253,8 +260,8 @@ Do not proceed to training from a failed or incomplete step.
 - Current quota is sufficient for four T4 family cores and for four regional
   cores, but `Microsoft.Network` and `Microsoft.Logic` are NotRegistered.
   Registration would change subscription state and is outside this review-only
-  release. SKU restrictions,
-  exact East US image, and live capacity remain unverified.
+  release. The SKU and exact East US image were listed without restrictions;
+  live allocation capacity remains unverified.
 - The billing account and MCA profile were identified, but subscription rates,
   all ancillary and control-plane meters, and the tax treatment remain unknown.
   The revised two-hour `$3.4520` calculation using that earlier public rate exceeds
