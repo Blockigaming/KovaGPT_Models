@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const files = ["three-family-pilot-vm.bicep", "three-family-watchdog.bicep"];
+const files = ["three-family-pilot-vm.bicep", "three-family-watchdog.bicep", "cosmo-controller-ledger.bicep"];
 
 export function validateSource() {
   const vm = readFileSync(new URL("../infra/three-family-pilot-vm.bicep", import.meta.url), "utf8");
@@ -60,6 +60,28 @@ export function compileAll(binary = process.env.KOVA_BICEP) {
     assert.doesNotMatch(result.stderr, /BCP081|BCP037|BCP036/);
     const arm = JSON.parse(result.stdout);
     assert.equal(arm.outputs.resourceCreationAuthorized.value, false);
+    if (file === "cosmo-controller-ledger.bicep") {
+      assert.equal(arm.parameters.provisionLedger.defaultValue, false);
+      assert.equal(arm.outputs.policyLockRequired.value, true);
+      assert.equal(arm.outputs.ledgerInitialized.value, false);
+      assert.equal(arm.outputs.retentionDays.value, 30);
+      assert.match(arm.variables.createLedger, /parameters\('provisionLedger'\)/);
+      assert.match(arm.variables.createLedger, /variables\('isolated'\)/);
+      for (const resource of arm.resources) assert.equal(resource.condition, "[variables('createLedger')]");
+      const account = arm.resources.find(r => r.type === "Microsoft.Storage/storageAccounts");
+      assert.equal(account.kind, "BlobStorage");
+      assert.equal(account.sku.name, "Standard_LRS");
+      assert.equal(account.location, "eastus");
+      assert.equal(account.properties.allowSharedKeyAccess, false);
+      assert.equal(account.properties.allowBlobPublicAccess, false);
+      assert.equal(account.properties.supportsHttpsTrafficOnly, true);
+      const policy = arm.resources.find(r => r.type.endsWith("/immutabilityPolicies"));
+      assert.deepEqual(policy.properties, {immutabilityPeriodSinceCreationInDays: 30,
+        allowProtectedAppendWrites: true, allowProtectedAppendWritesAll: false});
+      const roles = arm.resources.filter(r => r.type === "Microsoft.Authorization/roleAssignments");
+      assert.equal(roles.length, 2);
+      for (const role of roles) assert.match(role.scope, /blobServices\/containers/);
+    }
     if (file.includes("watchdog")) assert.equal(arm.outputs.spendingAuthorized.value, false);
     else assert.equal(arm.outputs.deploymentAuthorized.value, false);
   }
