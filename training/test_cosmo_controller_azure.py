@@ -6,7 +6,7 @@ from io import BytesIO
 import json
 import unittest
 from unittest.mock import patch
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric.rsa import generate_private_key
@@ -83,13 +83,33 @@ class AzureVerifierTests(unittest.TestCase):
         pilot = self.lifecycle['pilot_resource_group_id']
         self.locks_url = azure.ARM + pilot.split('/resourceGroups/')[0] + '/providers/Microsoft.Authorization/locks?api-version=2016-09-01'
         self.documents[self.locks_url] = {'value': []}
+        self.guest_roles_url = (azure.ARM + pilot.split('/resourceGroups/')[0] +
+            '/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&' +
+            urlencode({'$filter': 'principalId eq ' + self.instance['system_assigned_identity_principal_id']}))
+        self.documents[self.guest_roles_url] = {'value': []}
+        self.effective_roles_url = (azure.ARM + pilot.split('/resourceGroups/')[0] +
+            '/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&' +
+            urlencode({'$filter': "assignedTo('" + self.instance['system_assigned_identity_principal_id'] + "')"}))
+        self.documents[self.effective_roles_url] = {'value': []}
         self.roles_url = azure.ARM + pilot + '/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01'
-        self.documents[self.roles_url] = {'value': [{'properties': {'principalId': self.watchdog_principal,
+        pilot_role = pilot + '/providers/Microsoft.Authorization/roleAssignments/12345678-1234-1234-1234-123456789ac0'
+        self.documents[self.roles_url] = {'value': [{'id': pilot_role, 'properties': {'principalId': self.watchdog_principal,
             'scope': pilot, 'roleDefinitionId': pilot.split('/resourceGroups/')[0] +
                 '/providers/Microsoft.Authorization/roleDefinitions/' + azure.CONTRIBUTOR}}]}
         self.self_roles_url = azure.ARM + self.lifecycle['watchdog_resource_group_id'] + '/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01'
         self.documents[self.self_roles_url] = deepcopy(self.documents[self.roles_url])
         self.documents[self.self_roles_url]['value'][0]['properties']['scope'] = self.lifecycle['watchdog_resource_group_id']
+        self_role = self.lifecycle['watchdog_resource_group_id'] + '/providers/Microsoft.Authorization/roleAssignments/12345678-1234-1234-1234-123456789ac1'
+        self.documents[self.self_roles_url]['value'][0]['id'] = self_role
+        self.pilot_inventory_url = azure.ARM + pilot + '/resources?api-version=2021-04-01'
+        self.watchdog_inventory_url = azure.ARM + self.lifecycle['watchdog_resource_group_id'] + '/resources?api-version=2021-04-01'
+        self.documents[self.pilot_inventory_url] = {'value': [{'id': rid} for rid in (
+            self.instance['resource_id'], self.disk, n['vm_nic_id'], n['nat_gateway_id'],
+            n['nat_gateway_public_ip_id'], n['network_security_group_id'],
+            n['subnet_id'].rsplit('/subnets/', 1)[0],
+            self.instance['resource_id'] + '/extensions/NvidiaGpuDriverLinux', pilot_role)]}
+        self.documents[self.watchdog_inventory_url] = {'value': [{'id': rid} for rid in (
+            self.watchdog, self.watchdog + '/triggers/every_minute', self_role)]}
         self.reads = []
         self.verifier = azure.AzureRequestVerifier(tenant_id=self.tenant, token_version='1.0',
             lifecycle=self.lifecycle, watchdog_id=self.watchdog, read_json=self.read, clock=lambda: self.now)
@@ -109,7 +129,7 @@ class AzureVerifierTests(unittest.TestCase):
 
     def test_real_guest_issuer_azure_adapter_exchange(self):
         self.f.test_committed_response_matches_existing_guest_verifier()
-        self.assertEqual(len(self.reads), 13)
+        self.assertEqual(len(self.reads), 17)
         self.assertTrue(all(self.f.token not in url for url in self.reads))
 
     def test_foreign_expired_and_unsigned_identity_never_reads_arm(self):
@@ -212,6 +232,57 @@ class AzureVerifierTests(unittest.TestCase):
             self.assertEqual(before, self.f.f.io.body)
         self.documents[self.locks_url] = {'value': [{'id': pilot + '-unrelated/providers/Microsoft.Authorization/locks/keep',
             'properties': {'level': 'ReadOnly'}}]}
+        self.assertTrue(self.observe()['cleanup_scope_verified'])
+
+    def test_pilot_identity_arm_roles_reject_before_grant_commit(self):
+        before = self.f.f.io.body
+        principal = self.instance['system_assigned_identity_principal_id']
+        subscription = self.lifecycle['pilot_resource_group_id'].split('/resourceGroups/')[0]
+        for scope in ('/providers/Microsoft.Management/managementGroups/root',
+                      subscription, self.lifecycle['pilot_resource_group_id'], self.watchdog):
+            self.documents[self.guest_roles_url] = {'value': [{
+                'properties': {'principalId': principal, 'scope': scope,
+                               'roleDefinitionId': subscription +
+                               '/providers/Microsoft.Authorization/roleDefinitions/' + azure.CONTRIBUTOR}}]}
+            with self.subTest(scope=scope), self.assertRaises(LedgerRejected):
+                self.f.issuer.issue(self.f.request)
+            self.assertEqual(self.f.f.io.body, before)
+        for incomplete in ({}, {'value': [], 'nextLink': 'https://management.azure.com/more'}):
+            self.documents[self.guest_roles_url] = incomplete
+            with self.assertRaises(LedgerRejected):
+                self.f.issuer.issue(self.f.request)
+            self.assertEqual(self.f.f.io.body, before)
+        self.documents[self.guest_roles_url] = {'value': []}
+        for inherited in ({'value': [{'properties': {'principalId': 'security-group-id',
+                            'scope': subscription}}]}, {},
+                          {'value': [], 'nextLink': 'https://management.azure.com/more'}):
+            self.documents[self.effective_roles_url] = inherited
+            with self.assertRaises(LedgerRejected):
+                self.f.issuer.issue(self.f.request)
+            self.assertEqual(self.f.f.io.body, before)
+
+    def test_unexpected_or_missing_cleanup_resources_reject_before_grant_commit(self):
+        before = self.f.f.io.body
+        original = deepcopy(self.documents)
+        for url in (self.pilot_inventory_url, self.watchdog_inventory_url):
+            group = (self.lifecycle['pilot_resource_group_id'] if url == self.pilot_inventory_url
+                     else self.lifecycle['watchdog_resource_group_id'])
+            for change in ('extra_vm', 'extra_disk', 'missing', 'next_page', 'duplicate'):
+                self.documents = deepcopy(original)
+                items = self.documents[url]['value']
+                if change.startswith('extra_'):
+                    kind = 'virtualMachines' if change == 'extra_vm' else 'disks'
+                    items.append({'id': group + '/providers/Microsoft.Compute/' + kind + '/unpriced'})
+                elif change == 'missing':
+                    items.pop(0)
+                elif change == 'next_page':
+                    self.documents[url]['nextLink'] = azure.ARM + '/more'
+                else:
+                    items.append(deepcopy(items[0]))
+                with self.subTest(url=url, change=change), self.assertRaises(LedgerRejected):
+                    self.f.issuer.issue(self.f.request)
+                self.assertEqual(self.f.f.io.body, before)
+        self.documents = original
         self.assertTrue(self.observe()['cleanup_scope_verified'])
 
 

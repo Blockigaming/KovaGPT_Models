@@ -4,6 +4,14 @@
 only; Orion, Nova, deployment, and production routing are outside this release.
 This document is an approval worksheet, not an authorization to spend.
 
+**Owner priority update, 2026-09-25:** Complete the single Cosmo training run;
+do not shorten its setup, training, artifact preservation or cleanup merely to
+meet the earlier $3.30 worksheet. The owner gave $2 and $20 as examples of
+acceptable costs, not a signed new ceiling or approval to create resources.
+Before launch, replace the old source-bound ceiling with one concrete,
+independently priced reservation and obtain the separate paid-run approval.
+The existing model revision, 42 records and training steps are unchanged.
+
 ## Exact source selection
 
 | Item | Selected value |
@@ -84,6 +92,10 @@ roles on both dedicated groups from ARM. The subscription-wide lock inventory
 must be complete and contain no inherited, group or child-resource lock
 affecting either cleanup group. Additional data disks, disk expansion/SKU drift,
 detach-on-delete behavior and disabled triggers reject the grant. Guest credentials never authenticate ARM reads.
+The VM guest identity must have no direct ARM assignments, including roles
+above or below the subscription, and no effective group assignments. Exact
+inventories of the dedicated pilot and watchdog groups reject extra resources
+or incomplete listings before the only training grant can commit.
 Unexpected public networking, rule changes, another VM/image, a disabled or
 retimed watchdog, incomplete role evidence and stale reads reject the request.
 

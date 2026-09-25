@@ -216,6 +216,20 @@ class AzureRequestVerifier:
                          parts[0].startswith(group + "/") for group in groups),
                  "management lock prevents bounded cleanup")
 
+    def exact_group_resources(self, group, required, optional=()):
+        inventory = self.read(ARM + group + "/resources?api-version=2021-04-01")
+        need(type(inventory) is dict and type(inventory.get("value")) is list and
+             not inventory.get("nextLink"), "cleanup group inventory incomplete")
+        ids = [item.get("id") for item in inventory["value"] if type(item) is dict]
+        need(len(ids) == len(inventory["value"]) and
+             all(type(rid) is str and rid.casefold().startswith(group.casefold() + "/providers/")
+                 for rid in ids), "invalid cleanup group inventory")
+        seen = [rid.casefold() for rid in ids]
+        needed = {rid.casefold() for rid in required}
+        allowed = needed | {rid.casefold() for rid in optional}
+        need(len(seen) == len(set(seen)) and needed <= set(seen) <= allowed,
+             "unexpected or missing cleanup group resource")
+
     def __call__(self, *, token, audience, instance, network, cleanup_trigger_utc):
         try:
             return self.verify(token=token, audience=audience, instance=instance,
@@ -243,6 +257,23 @@ class AzureRequestVerifier:
              image.get("sku") == "server" and image.get("version") == "24.04.202609040" and
              image.get("exactVersion", "24.04.202609040") == "24.04.202609040",
              "live VM identity, SKU or image mismatch")
+        # The VM's IMDS token is used only to prove its identity to the issuer.
+        # No ARM role is needed by the guest. Check direct assignments at,
+        # above and below the subscription, then effective group assignments.
+        subscription = pilot.split("/resourceGroups/")[0]
+        principal = instance["system_assigned_identity_principal_id"]
+        guest_roles = self.read(ARM + subscription +
+            "/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&" +
+            urlencode({"$filter": "principalId eq " + principal}))
+        need(type(guest_roles) is dict and type(guest_roles.get("value")) is list and
+             not guest_roles.get("nextLink") and guest_roles["value"] == [],
+             "pilot VM identity has ARM privileges or incomplete role evidence")
+        effective_roles = self.read(ARM + subscription +
+            "/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&" +
+            urlencode({"$filter": "assignedTo('" + principal + "')"}))
+        need(type(effective_roles) is dict and type(effective_roles.get("value")) is list and
+             not effective_roles.get("nextLink") and effective_roles["value"] == [],
+             "pilot VM identity inherits ARM privileges or incomplete role evidence")
         storage = props["storageProfile"]
         os_disk = storage["osDisk"]
         managed = os_disk["managedDisk"]
@@ -301,15 +332,34 @@ class AzureRequestVerifier:
         trigger = self.resource(self.watchdog + "/triggers/every_minute", "2019-05-01")["properties"]
         need(trigger.get("state") == "Enabled" and trigger.get("provisioningState") == "Succeeded",
              "watchdog recurrence trigger is not enabled")
+        direct_role_ids = {}
         for scope in (pilot, self.lifecycle["watchdog_resource_group_id"]):
             assignments = self.read(ARM + scope + "/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01")
-            need(not assignments.get("nextLink"), "cleanup role list incomplete")
+            need(type(assignments) is dict and type(assignments.get("value")) is list and
+                 not assignments.get("nextLink"), "cleanup role list incomplete")
             role_id = pilot.split("/resourceGroups/")[0] + "/providers/Microsoft.Authorization/roleDefinitions/" + CONTRIBUTOR
-            need(any(a.get("properties", {}).get("principalId") == wi["principalId"] and
+            matches = [a for a in assignments["value"] if
+                 a.get("properties", {}).get("principalId") == wi["principalId"] and
                      a["properties"].get("scope", "").casefold() == scope.casefold() and
                      a["properties"].get("roleDefinitionId", "").casefold() == role_id.casefold() and
-                     a["properties"].get("condition") in (None, "") for a in assignments["value"]),
-                 "watchdog lacks direct cleanup role")
+                     a["properties"].get("condition") in (None, "")]
+            need(len(matches) == 1 and type(matches[0].get("id")) is str and
+                 matches[0]["id"].casefold().startswith(
+                     scope.casefold() + "/providers/microsoft.authorization/roleassignments/"),
+                 "watchdog lacks a unique direct cleanup role")
+            direct_role_ids[scope] = matches[0]["id"]
+        optional_pilot = [instance["resource_id"] + "/extensions/NvidiaGpuDriverLinux",
+                          network["subnet_id"], direct_role_ids[pilot]]
+        optional_pilot.extend(network["network_security_group_id"] + "/securityRules/" +
+                              rule["name"] for rule in expected_rules())
+        self.exact_group_resources(pilot, (
+            instance["resource_id"], managed["id"], network["vm_nic_id"],
+            network["nat_gateway_id"], network["nat_gateway_public_ip_id"],
+            network["network_security_group_id"],
+            network["subnet_id"].rsplit("/subnets/", 1)[0]), optional_pilot)
+        watchdog_group = self.lifecycle["watchdog_resource_group_id"]
+        self.exact_group_resources(watchdog_group, (self.watchdog,), (
+            self.watchdog + "/triggers/every_minute", direct_role_ids[watchdog_group]))
         self.unlocked_cleanup_scopes()
         after = self.clock()
         need(0 <= (after - before).total_seconds() <= 30 and
