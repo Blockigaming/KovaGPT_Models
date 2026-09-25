@@ -125,7 +125,6 @@ class RolloutTests(unittest.TestCase):
                          "infra/three-family-pilot-vm.bicep",
                          "infra/three-family-watchdog.bicep",
                          "infra/three-family-watchdog-pilot-role.bicep",
-                         "infra/cosmo-controller-ledger.bicep",
                          "config/completion-target.v1.json"):
             def changed(path):
                 data = original(path)

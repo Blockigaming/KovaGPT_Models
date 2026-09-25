@@ -98,17 +98,24 @@ sanitized rejection and never retry a possibly committed grant. Durable grant
 transitions require the complete signed issuer envelope; a bare event cannot
 consume the only run. The release fingerprint includes every controller source.
 
-The private factory configuration now also requires an explicit `token_source`:
+The private factory configuration also requires an explicit `token_source`:
 `{"kind":"container_app_managed_identity","client_id":"<controller-client-uuid>"}`
 for a future independent Azure Container App, or `{"kind":"azure_cli"}` for a
-separately reviewed host with an interactive Azure CLI session. The managed
-identity mode uses the platform's **local** `IDENTITY_ENDPOINT` and rotating
-`IDENTITY_HEADER` to request only ARM or Azure Storage tokens for the pinned
-client ID. It rejects a remote endpoint, redirect, proxy, wrong audience,
-different identity or expiring response. It has no silent fallback to Azure
-CLI or the VM's guest identity. This closes the source credential path; a
-running host, TLS configuration, protected files, exact RBAC and full hosting
-price still require concrete selection and approval.
+separately reviewed host with an interactive Azure CLI session. Managed identity
+mode uses the platform's local `IDENTITY_ENDPOINT` and rotating `IDENTITY_HEADER`
+to request only ARM or Azure Storage tokens for the pinned client ID. It rejects
+a remote endpoint, redirect, proxy, wrong audience, different identity or
+expiring response. It has no silent fallback to CLI or the guest identity.
+An actual host, TLS configuration, protected files, exact RBAC and total
+hosting price are still prerequisites.
+
+The prior draft of a 30-day immutable Azure ledger template was withdrawn after
+review exposed an unavoidable lifecycle conflict: appending the terminal record
+extends retention, while the terminal receipt requires finalized charges and no
+remaining billable pilot resources. This controller cannot truthfully finish
+that lifecycle with a retained ledger. A reviewed external terminalization path
+that verifies an archived signed ledger after deletion, plus bounded retention
+and its cost, is still required before any storage deployment or paid grant.
 
 **Paid launch remains blocked.** Source integration is implemented, but the
 TLS host, live immutable storage, isolated credentials and measured all-in
@@ -126,81 +133,6 @@ retention and all control-host/verification costs must be priced before release.
 Protocol references: Microsoft documents [Append Block conditions and responses](https://learn.microsoft.com/en-us/rest/api/storageservices/append-block),
 [Blob leases](https://learn.microsoft.com/en-us/rest/api/storageservices/lease-blob),
 and [container-level immutability](https://learn.microsoft.com/en-us/azure/storage/blobs/immutable-container-level-worm-policies).
-
-### Prepared external ledger storage
-
-`infra/cosmo-controller-ledger.bicep` now defines the missing storage component:
-East US `BlobStorage`, `Standard_LRS`, Hot tier; one private `cosmo-ledger`
-container; HTTPS/TLS 1.2; Entra authentication with shared keys disabled;
-container-scoped Blob Data Contributor and Reader roles for the independent
-controller. The data endpoint is publicly addressable but requires authentication;
-this is not a private endpoint. No additional NAT or private endpoint is created.
-Creation defaults to false, and all resources are suppressed if the target
-group equals either supplied cleanup group. The caller must check
-`cleanupGroupsIsolated == true`; successful deployment with false is not readiness.
-The existing controller separately validates group isolation at runtime.
-
-The selected policy is **30 days with protected append writes**, without
-versioning, soft deletion or legal hold. These are proposed storage parameters,
-not a change to the model, training data or package pins. The template creates
-an **unlocked** policy: ARM does not lock it during creation. The independent
-operator must inspect the policy, then perform the ETag-conditional lock below.
-The controller's existing `_policy()` check rejects an unlocked or mismatched
-policy before any ledger write. A lock cannot later be shortened or removed;
-this operation belongs in the separate resource-creation approval.
-
-Proposed commands for that future approval, **not executed**:
-
-```sh
-# LEDGER_RESOURCE_GROUP is a third dedicated group, already approved and created.
-# CONTROLLER_PRINCIPAL_ID must be independent of both VM and watchdog identities.
-az deployment group create --resource-group "$LEDGER_RESOURCE_GROUP" \
-  --template-file infra/cosmo-controller-ledger.bicep --parameters \
-  provisionLedger=true pilotResourceGroupId="$PILOT_RESOURCE_GROUP_ID" \
-  watchdogResourceGroupId="$WATCHDOG_RESOURCE_GROUP_ID" \
-  controllerPrincipalId="$CONTROLLER_PRINCIPAL_ID"
-# Inspect deployment outputs and require cleanupGroupsIsolated=true.
-# Set LEDGER_ACCOUNT to that deployment's storageAccountName output.
-az storage container immutability-policy show \
-  --resource-group "$LEDGER_RESOURCE_GROUP" --account-name "$LEDGER_ACCOUNT" \
-  --container-name cosmo-ledger -o json
-# Verify 30 days, protected append writes=true and protected append writes all=false.
-LEDGER_POLICY_ETAG=$(az storage container immutability-policy show \
-  --resource-group "$LEDGER_RESOURCE_GROUP" --account-name "$LEDGER_ACCOUNT" \
-  --container-name cosmo-ledger --query etag -o tsv)
-az storage container immutability-policy lock \
-  --resource-group "$LEDGER_RESOURCE_GROUP" --account-name "$LEDGER_ACCOUNT" \
-  --container-name cosmo-ledger --if-match "$LEDGER_POLICY_ETAG"
-```
-
-Only after a fresh read confirms `Locked` may the separate trusted provisioning
-step initialize the signed append ledger. The HTTP endpoint cannot initialize
-it. The private controller context must use the actual account/group, container
-`cosmo-ledger` and `retention_days: 30`. No principal, key or paid authorization
-is supplied by this template.
-
-At the already retrieved account rate, **one 1-MiB ledger for 31 days costs less
-than $0.000025** in capacity using a conservative 28-day billing month:
-`1,048,576 / 1,000,000,000 × $0.0208 × 31/28 = $0.000024147207`.
-An illustrative allowance of 1,000 writes/list operations and 1,000 reads costs
-another `$0.0050 + $0.0004`. This ledger component fits within the existing
-storage reservations; it does not change the $3.30 ceiling. The operation counts
-are worksheet quantities, not a server-enforced billing cap. Authentication
-failures/retries, artifact storage, export traffic, delayed final evidence and
-any longer retention must also be counted in the complete quote.
-
-**Retention is measured from the last append**, so a terminal evidence append
-can move the deletion date. Thirty-one days is a priced illustration, not a
-verified end-to-end lifetime. Before launch, choose and price the actual final
-append and cleanup schedule, export the signed ledger to the approved durable
-destination, and verify its digest. After the provider's immutable-until time,
-the separately approved cleanup deletes the ledger blob, then the empty
-container and its dedicated group, and verifies deletion. Do not report zero
-residual billable resources or final all-in cost while this storage remains.
-The existing final-cost requirement has not been relaxed to hide retained storage.
-
-Microsoft documents the [policy lock operation](https://learn.microsoft.com/en-us/azure/storage/blobs/immutable-policy-configure-container-scope)
-and [retention after protected append writes](https://learn.microsoft.com/en-us/azure/storage/blobs/immutable-container-level-worm-policies).
 
 The intended paid command order after an owner release is shown below. These
 commands are **review text only**: the account-specific parameters, trusted
@@ -436,8 +368,8 @@ of this public source branch.
    will delete resources within 15 minutes.
 2. Provision the independent authority, append-only grant ledger, and watchdog
    in a separate approved operation. The watchdog Bicep does not provision
-   a ledger: use the prepared external ledger template and separate policy-lock
-   step above. Its full retention and cleanup cost must fit the same all-in bound.
+   a ledger: a separate storage-enforced immutable or append-only service is
+   mandatory, and its full retention cost must fit the same all-in bound.
    Test its ability to deallocate and delete
    the **exclusive** pilot group. Test that the watchdog stops accruing charges
    and bound the external ledger's retention charges, preserving terminal
