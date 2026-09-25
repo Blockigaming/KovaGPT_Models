@@ -77,10 +77,15 @@ class AzureBlobIO:
     token_for receives one of the two fixed Azure resource audiences below.
     No automatic retries: a timed-out append may already have committed.
     """
-    def __init__(self, *, account: str, token_for):
+    def __init__(self, *, account: str, token_for, maximum=MAX_BYTES,
+                 maximum_request=MAX_RECORD_BYTES):
         need(bool(re.fullmatch(r"[a-z0-9]{3,24}", account)), "invalid storage account")
+        need(type(maximum) is int and 0 < maximum <= 64 * 1024 * 1024 and
+             type(maximum_request) is int and 0 < maximum_request <= maximum,
+             "invalid storage transfer bound")
         self.host = account + ".blob.core.windows.net"
         self.token_for = token_for
+        self.maximum, self.maximum_request = maximum, maximum_request
 
     def __call__(self, method, url, headers, body=b""):
         from urllib.parse import urlsplit
@@ -97,7 +102,7 @@ class AzureBlobIO:
         token = self.token_for(resource)
         need(type(token) is str and re.fullmatch(r"[A-Za-z0-9._~+/=-]{32,16384}", token),
              "invalid control-host credential")
-        need(len(body) <= MAX_RECORD_BYTES, "ledger request too large")
+        need(len(body) <= self.maximum_request, "storage request too large")
 
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, hdrs, newurl):
@@ -117,8 +122,8 @@ class AzureBlobIO:
             except urllib.error.HTTPError as exc:
                 stream = exc
             with stream:
-                raw = stream.read(MAX_BYTES + 1)
-                need(len(raw) <= MAX_BYTES, "ledger response too large")
+                raw = stream.read(self.maximum + 1)
+                need(len(raw) <= self.maximum, "storage response too large")
                 return Response(stream.code, {k.lower(): v for k, v in stream.headers.items()}, raw)
         except (OSError, urllib.error.URLError) as exc:
             raise LedgerRejected("ledger transport failed; outcome may be committed") from exc
@@ -420,6 +425,16 @@ class ControllerLedger:
                 need(self.starts <= now < self.deadline, "admission after grant deadline")
             updated = self._transition(state, event, now)
             return self._append_record(current, lease, event, updated, previous, now)
+        finally:
+            self._release(lease)
+
+    def current_state(self):
+        """Read the independently signed ledger under a lease before preservation."""
+        self._policy()
+        lease = self._lease()
+        try:
+            state, _, _ = self.replay(self._read(lease).body)
+            return state
         finally:
             self._release(lease)
 

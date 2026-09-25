@@ -93,6 +93,7 @@ def policy_digest():
              "training/cosmo_qlora_grant.py",
              "training/cosmo_controller_ledger.py", "training/cosmo_controller_grants.py",
              "training/cosmo_controller_azure.py", "training/cosmo_controller_http.py",
+             "training/cosmo_controller_host.py", "training/cosmo_adapter_preservation.py",
              "requirements/receiver-auth-py312-linux.lock",
              "training/cosmo_lifecycle_authority.py", "training/snapshot_verifier.py",
              "training/cosmo_hardware.py", "training/cosmo_runtime_probe.py",
@@ -107,6 +108,7 @@ def policy_digest():
              "infra/three-family-pilot-vm.bicep",
              "infra/three-family-watchdog.bicep",
              "infra/three-family-watchdog-pilot-role.bicep",
+             "infra/cosmo-protected-storage.bicep",
              "config/completion-target.v1.json", "config/evaluation-gates.v1.json",
              "evaluations/offline-suite.v1.json")
     return digest({path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in paths})

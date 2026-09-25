@@ -48,15 +48,20 @@ class HttpControllerTests(unittest.TestCase):
                     "/providers/Microsoft.Logic/workflows/kova-pilot-watchdog-test01",
                 "signing_key_file": private('signer', self.f.f.key.private_bytes_raw()),
                 "preservation_public_key_hex": self.f.f.verifier.public_key().public_bytes_raw().hex(),
+                "preservation_signing_key_file": private('preserver', self.f.f.verifier.private_bytes_raw()),
+                "artifact_container": "cosmo-adapters",
                 "cleanup_public_key_hex": self.f.f.cleanup_verifier.public_key().public_bytes_raw().hex(),
                 "bearer_token_file": private('bearer', self.secret.encode()),
                 "quote_file": private('quote', self.f.quote.read_bytes()),
                 "runtime_evidence_file": private('runtime', self.f.runtime_path.read_bytes()),
-                "token_source": {"kind": "azure_cli"}}
+                "token_source": {"kind": "azure_cli"},
+                "trusted_ingress_mode": "azure_container_apps_https"}
             path = private('config', json.dumps(config).encode())
             with patch('training.cosmo_controller_azure.cli_token', side_effect=AssertionError('unexpected credential read')):
                 app = build_application(path, root=self.f.quote_fixture.root)
             self.assertIsInstance(app, GrantApplication)
+            self.assertEqual(app.preserve_path, '/v1/pilot/preservation')
+            self.assertTrue(app.proxy_https)
             self.assertEqual(app.issuer.ledger.context, self.f.f.context)
             self.assertEqual(app.issuer.verify_live_request.watchdog, config['watchdog_resource_id'])
             config['token_source'] = {"kind": "container_app_managed_identity",
@@ -135,6 +140,19 @@ class HttpControllerTests(unittest.TestCase):
             with self.subTest(changes=changes):
                 self.assertEqual(self.call(**changes)[0][0], '403 Forbidden')
         issuer.issue.assert_not_called()
+
+    def test_https_only_managed_ingress_accepts_forwarded_https_on_private_port(self):
+        self.app.proxy_https = True
+        result, _ = self.call(**{'wsgi.url_scheme': 'http',
+                                 'HTTP_X_FORWARDED_PROTO': 'https'})
+        self.assertEqual(result[0], '200 OK')
+        self.app.issuer = Mock()
+        for value in ('http', 'https,http', ''):
+            with self.subTest(value=value):
+                result, _ = self.call(**{'wsgi.url_scheme': 'http',
+                                         'HTTP_X_FORWARDED_PROTO': value})
+                self.assertEqual(result[0], '403 Forbidden')
+        self.app.issuer.issue.assert_not_called()
 
     def test_uncertain_commit_error_is_sanitized_and_not_retried(self):
         self.f.f.io.lose_append_response = True

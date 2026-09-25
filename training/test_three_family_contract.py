@@ -1054,7 +1054,10 @@ class ThreeFamilyContractTests(unittest.TestCase):
                                              expected_sequence=1, now=now,
                                              trusted_lifecycle=lifecycle)
         before_grant = deepcopy(state)
-        state = contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-cosmo"},
+        bound_grant = {"kind": "training_grant", "family": "kova-cosmo",
+                       "response_envelope": {"payload": {"grant_id": "cosmo-grant-1",
+                           "source_commit": "d" * 40}, "signature": "a" * 128}}
+        state = contract.append_ledger_event(state, bound_grant,
                                              expected_sequence=2, now=now)
         self.assertEqual(before_grant["family_order"], [])
         self.assertEqual(state["family_order"], ["kova-cosmo"])
@@ -1069,6 +1072,11 @@ class ThreeFamilyContractTests(unittest.TestCase):
             encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
         receipt = {
             "schema_version": 1, "family": "kova-cosmo", "grant_sequence": 3,
+            "lifecycle_id": lifecycle["lifecycle_id"], "ledger_id": lifecycle["ledger_id"],
+            "source_commit": "d" * 40, "grant_id": "cosmo-grant-1",
+            "grant_envelope_sha256": __import__('hashlib').sha256(
+                json.dumps(bound_grant["response_envelope"], sort_keys=True,
+                           separators=(",", ":"), ensure_ascii=True).encode()).hexdigest(),
             "artifact_sha256": "b" * 64, "verified_sha256": "b" * 64,
             "destination_uri": "https://preserved.example.test/adapters/cosmo",
             "immutable_version": "verified-object-version-1",
@@ -1084,7 +1092,8 @@ class ThreeFamilyContractTests(unittest.TestCase):
                                              "signature_ed25519_hex": signature.hex()}}
         event = signed_preservation(receipt)
         with self.assertRaisesRegex(contract.ContractError, "trusted preservation verifier key"):
-            contract.append_ledger_event(state, event, expected_sequence=3, now=now)
+            contract.append_ledger_event(state, event, expected_sequence=3, now=now,
+                                         trusted_lifecycle=lifecycle)
         for alteration in (lambda payload: payload.update(verified_sha256="c" * 64),
                            lambda payload: payload.update(protected_destination=False),
                            lambda payload: payload.update(grant_sequence=2)):
@@ -1093,14 +1102,17 @@ class ThreeFamilyContractTests(unittest.TestCase):
             with self.assertRaises(contract.ContractError):
                 contract.append_ledger_event(state, signed_preservation(wrong),
                                              expected_sequence=3, now=now,
-                                             preservation_public_key=verifier_key)
+                                             preservation_public_key=verifier_key,
+                                             trusted_lifecycle=lifecycle)
         forged = deepcopy(event)
         forged["preservation_receipt"]["payload"]["destination_uri"] = "https://other.example.test/"
         with self.assertRaisesRegex(contract.ContractError, "untrusted artifact preservation receipt"):
             contract.append_ledger_event(state, forged, expected_sequence=3, now=now,
-                                         preservation_public_key=verifier_key)
+                                         preservation_public_key=verifier_key,
+                                         trusted_lifecycle=lifecycle)
         state = contract.append_ledger_event(state, event, expected_sequence=3, now=now,
-                                             preservation_public_key=verifier_key)
+                                             preservation_public_key=verifier_key,
+                                             trusted_lifecycle=lifecycle)
         with self.assertRaisesRegex(contract.ContractError, "fresh family watchdog and cost"):
             contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-orion"},
                                          expected_sequence=4, now=now)

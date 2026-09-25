@@ -22,10 +22,14 @@ from training.cosmo_controller_azure import (AzureReadIO, AzureRequestVerifier, 
                                               managed_identity_token)
 from training.cosmo_controller_grants import GrantIssuer
 from training.cosmo_controller_ledger import AzureBlobIO, ControllerLedger, LedgerRejected, need, parse_json
+from training.cosmo_adapter_preservation import (AdapterPreserver, MAX_REQUEST,
+                                                  preservation_endpoint)
 
 
 class GrantApplication:
-    def __init__(self, *, issuer, endpoint, bearer_token):
+    def __init__(self, *, issuer, endpoint, bearer_token, preserver=None,
+                 trusted_ingress_mode=None):
+        preserve = urlsplit(preservation_endpoint(endpoint)) if preserver is not None else None
         endpoint = urlsplit(endpoint)
         need(endpoint.scheme == "https" and endpoint.hostname and endpoint.path and
              not endpoint.query and not endpoint.fragment and not endpoint.username and
@@ -33,15 +37,25 @@ class GrantApplication:
         need(type(bearer_token) is str and authority.TOKEN.fullmatch(bearer_token),
              "controller bearer token required")
         self.issuer, self.host, self.path = issuer, endpoint.netloc, endpoint.path
+        self.preserver, self.preserve_path = preserver, preserve.path if preserve else None
+        need(trusted_ingress_mode in (None, "azure_container_apps_https"),
+             "unsupported controller ingress")
+        self.proxy_https = trusted_ingress_mode == "azure_container_apps_https"
         self.token_hash = hashlib.sha256(bearer_token.encode("ascii")).digest()
 
     def __call__(self, environ, start_response):
         status, value = "403 Forbidden", {"error": "grant_request_rejected"}
         try:
-            # Require the hosting server's TLS state. X-Forwarded-* is ignored.
-            need(environ.get("wsgi.url_scheme") == "https" and
+            # ACA terminates TLS at its Envoy ingress. The proxy variant may
+            # only run on a host with HTTPS-only ingress and no direct port.
+            scheme = environ.get("wsgi.url_scheme")
+            tls = (scheme == "https" or
+                   (self.proxy_https and scheme == "http" and
+                    environ.get("HTTP_X_FORWARDED_PROTO") == "https"))
+            need(tls and
                  environ.get("HTTP_HOST") == self.host and
-                 environ.get("PATH_INFO") == self.path and not environ.get("QUERY_STRING") and
+                 environ.get("PATH_INFO") in (self.path, self.preserve_path) and
+                 not environ.get("QUERY_STRING") and
                  environ.get("REQUEST_METHOD") == "POST", "invalid endpoint")
             auth = environ.get("HTTP_AUTHORIZATION", "")
             need(type(auth) is str and auth.startswith("Bearer ") and len(auth) <= 16391 and
@@ -51,12 +65,14 @@ class GrantApplication:
                  not environ.get("HTTP_TRANSFER_ENCODING") and not environ.get("HTTP_CONTENT_ENCODING"),
                  "unsupported body encoding")
             length = environ.get("CONTENT_LENGTH", "")
-            need(type(length) is str and re.fullmatch(r"[1-9][0-9]{0,4}", length) and
-                 int(length) <= 65536, "bounded body required")
+            bound = MAX_REQUEST if environ.get("PATH_INFO") == self.preserve_path else 65536
+            need(type(length) is str and re.fullmatch(r"[1-9][0-9]{0,7}", length) and
+                 int(length) <= bound, "bounded body required")
             raw = environ["wsgi.input"].read(int(length))
             need(len(raw) == int(length), "incomplete body")
             request = parse_json(raw)
-            value = self.issuer.issue(request)
+            value = (self.preserver.submit(request) if
+                     environ.get("PATH_INFO") == self.preserve_path else self.issuer.issue(request))
             status = "200 OK"
         except Exception:
             # Never return token, Azure error, signed quote or ledger internals.
@@ -139,7 +155,8 @@ def build_application(config_path, *, root=launch.ROOT):
     need(type(config) is dict and set(config) == {"ledger_context", "tenant_id", "token_version",
         "watchdog_resource_id", "signing_key_file", "preservation_public_key_hex",
         "cleanup_public_key_hex", "bearer_token_file", "quote_file", "runtime_evidence_file",
-        "token_source"},
+        "token_source", "artifact_container", "preservation_signing_key_file",
+        "trusted_ingress_mode"},
         "controller configuration shape mismatch")
     token_source = config["token_source"]
     need(type(token_source) is dict, "explicit controller credential source required")
@@ -170,10 +187,17 @@ def build_application(config_path, *, root=launch.ROOT):
     ledger = ControllerLedger(context=context, signing_key=key, transport=io,
         preservation_public_key=bytes.fromhex(config["preservation_public_key_hex"]),
         cleanup_public_key=bytes.fromhex(config["cleanup_public_key_hex"]))
+    preservation_key = Ed25519PrivateKey.from_private_bytes(private_file(
+        config["preservation_signing_key_file"], root, 32))
+    preserver = AdapterPreserver(ledger=ledger,
+        artifact_container=config["artifact_container"], signing_key=preservation_key,
+        token_for=token_for)
     reader = AzureReadIO(account=context["storage_account"], tenant_id=config["tenant_id"],
                          token_for=token_for)
     verifier = AzureRequestVerifier(tenant_id=config["tenant_id"], token_version=config["token_version"],
         lifecycle=context["lifecycle"], watchdog_id=config["watchdog_resource_id"], read_json=reader)
     issuer = GrantIssuer(ledger=ledger, quote=Path(config["quote_file"]),
         runtime_evidence=Path(config["runtime_evidence_file"]), verify_live_request=verifier, root=root)
-    return GrantApplication(issuer=issuer, endpoint=trust["endpoint"], bearer_token=token)
+    return GrantApplication(issuer=issuer, endpoint=trust["endpoint"],
+                            bearer_token=token, preserver=preserver,
+                            trusted_ingress_mode=config["trusted_ingress_mode"])

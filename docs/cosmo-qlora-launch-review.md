@@ -4,6 +4,39 @@
 only; Orion, Nova, deployment, and production routing are outside this release.
 This document is an approval worksheet, not an authorization to spend.
 
+The Cosmo trainer now requires the independent controller to read back a
+private, immutable Azure Blob copy of its adapter and commit a signed
+`family_preserved` ledger event before returning candidate success. The
+transfer includes only the adapter configuration and weights (up to 64 MiB),
+and the controller binds the current grant, lifecycle, source commit, locked
+retention policy and Blob ETag. A failed or uncertain upload, read-back or
+ledger append cannot report success. Focused synthetic HTTP, Blob and ledger
+tests cover both outcomes. No Blob storage or controller hosting exists yet;
+the ingress must accept a request up to 90 MiB before paid training. This
+source change does not preserve anything until the service is deployed.
+`training.cosmo_controller_host` supplies a single-process WSGI entrypoint;
+it requires HTTPS-only Azure Container Apps ingress and the exact pinned host.
+The Azure frontend terminates TLS, so the private backend only accepts its
+`X-Forwarded-Proto: https` when configured for that ingress. The actual app,
+image digest, private secret mount, role assignments, ingress isolation and
+hosting charge are still missing and must be reviewed together before use.
+
+`infra/cosmo-protected-storage.bicep` selects a separate Standard LRS account
+with Shared Key and anonymous Blob access disabled, plus separate ledger and
+adapter containers. Both proposed policies retain data for 30 days. Azure
+creates these policies unlocked; each needs an ETag-bound lock operation and a
+read-back confirming `Locked` before any ledger initialization or training.
+Locked retention may keep the storage account billable for at least 30 days,
+so its entire lifetime belongs in the paid-run quote. The template defaults
+to `provisionEvidence=false` and has never been deployed. Exact account name,
+controller Blob RBAC, retention price and eventual archive/deletion are still
+launch decisions. The VM guest receives no Blob or ARM role.
+
+Microsoft documents that the Azure RBAC `assignedTo('{objectId}')` filter
+accepts a service principal ID. The role-filter review concern is therefore
+unproven from source alone; verify the live behavior and the controller's read
+access during resource admission.
+
 **Owner priority update, 2026-09-25:** Complete the single Cosmo training run;
 do not shorten its setup, training, artifact preservation or cleanup merely to
 meet the earlier $3.30 worksheet. The owner gave $2 and $20 as examples of

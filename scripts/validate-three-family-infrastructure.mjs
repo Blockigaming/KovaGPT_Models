@@ -4,12 +4,14 @@ import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const files = ["three-family-pilot-vm.bicep", "three-family-watchdog.bicep"];
+const files = ["three-family-pilot-vm.bicep", "three-family-watchdog.bicep",
+  "cosmo-protected-storage.bicep"];
 
 export function validateSource() {
   const vm = readFileSync(new URL("../infra/three-family-pilot-vm.bicep", import.meta.url), "utf8");
   const watchdog = readFileSync(new URL("../infra/three-family-watchdog.bicep", import.meta.url), "utf8");
   const watchdogRole = readFileSync(new URL("../infra/three-family-watchdog-pilot-role.bicep", import.meta.url), "utf8");
+  const evidence = readFileSync(new URL("../infra/cosmo-protected-storage.bicep", import.meta.url), "utf8");
   assert.match(vm, /param provisionPilot bool = false/);
   assert.match(vm, /Standard_NC4as_T4_v3/);
   assert.match(vm, /disablePasswordAuthentication: true/);
@@ -41,6 +43,11 @@ export function validateSource() {
   assert.match(watchdog, /watchdogPilotContributor/);
   assert.match(watchdogRole, /watchdogPrincipalId/);
   assert.match(watchdogRole, /b24988ac-6180-42a0-ab88-20f7382dd24c/);
+  assert.match(evidence, /param provisionEvidence bool = false/);
+  assert.match(evidence, /allowSharedKeyAccess: false/);
+  assert.match(evidence, /allowBlobPublicAccess: false/);
+  assert.match(evidence, /name: 'cosmo-ledger'/);
+  assert.match(evidence, /name: 'cosmo-adapters'/);
   return {status: "three_family_bicep_source_contracts_valid"};
 }
 
@@ -61,7 +68,16 @@ export function compileAll(binary = process.env.KOVA_BICEP) {
     const arm = JSON.parse(result.stdout);
     assert.equal(arm.outputs.resourceCreationAuthorized.value, false);
     if (file.includes("watchdog")) assert.equal(arm.outputs.spendingAuthorized.value, false);
-    else assert.equal(arm.outputs.deploymentAuthorized.value, false);
+    else if (file.includes("pilot-vm")) assert.equal(arm.outputs.deploymentAuthorized.value, false);
+    else {
+      assert.equal(arm.parameters.provisionEvidence.defaultValue, false);
+      assert.equal(arm.resources.length, 6);
+      assert.ok(arm.resources.every(resource =>
+        resource.condition === "[parameters('provisionEvidence')]"));
+      assert.deepEqual(arm.resources.filter(resource =>
+        resource.type.endsWith("/immutabilityPolicies")).map(resource =>
+        resource.properties.immutabilityPeriodSinceCreationInDays), [30, 30]);
+    }
   }
   return {compiler_validation_deferred_to_exact_head_ci: false};
 }

@@ -606,8 +606,9 @@ def _fresh_admission(event: dict, *, now: datetime) -> None:
          "stale admission")
 
 
-def _verify_preservation_receipt(event: dict, *, family: str, grant_sequence: int,
-                                 public_key: bytes | None, now: datetime) -> None:
+def _verify_preservation_receipt(event: dict, *, family: str, grant: dict,
+                                 lifecycle: dict, public_key: bytes | None,
+                                 now: datetime) -> None:
     """Check a separately trusted verifier's receipt for a read-back artifact.
 
     The future remote authority must pin this verifier key independently of
@@ -629,14 +630,27 @@ def _verify_preservation_receipt(event: dict, *, family: str, grant_sequence: in
         "schema_version", "family", "grant_sequence", "artifact_sha256",
         "verified_sha256", "destination_uri", "immutable_version",
         "protected_destination", "outside_pilot_group", "verification_succeeded",
-        "verified_at_utc",
+        "verified_at_utc", "lifecycle_id", "ledger_id", "source_commit",
+        "grant_id", "grant_envelope_sha256",
     }, "protected destination receipt shape mismatch")
+    envelope = grant.get("response_envelope")
+    need(type(envelope) is dict and type(envelope.get("payload")) is dict,
+         "signed grant required for preservation")
+    issued = envelope["payload"]
     digest = event["artifact_sha256"]
     need(type(digest) is str and HEX64.fullmatch(digest) is not None and
          payload["schema_version"] == 1 and payload["family"] == family and
-         type(payload["grant_sequence"]) is int and payload["grant_sequence"] == grant_sequence and
+         type(payload["grant_sequence"]) is int and payload["grant_sequence"] == grant["sequence"] and
          payload["artifact_sha256"] == digest and payload["verified_sha256"] == digest,
          "artifact verification does not bind the grant")
+    need(payload["lifecycle_id"] == lifecycle["lifecycle_id"] and
+         payload["ledger_id"] == lifecycle["ledger_id"] and
+         payload["source_commit"] == issued.get("source_commit") and
+         payload["grant_id"] == issued.get("grant_id") and
+         payload["grant_envelope_sha256"] == hashlib.sha256(
+             json.dumps(envelope, sort_keys=True, separators=(",", ":"),
+                        ensure_ascii=True, allow_nan=False).encode("ascii")).hexdigest(),
+         "preservation receipt belongs to another grant or lifecycle")
     uri = payload["destination_uri"]
     need(type(uri) is str and uri.startswith("https://") and "?" not in uri and
          type(payload["immutable_version"]) is str and payload["immutable_version"] and
@@ -861,8 +875,8 @@ def append_ledger_event(state: dict, event: dict, *, expected_sequence: int,
                   if item.get("kind") == "training_grant" and item.get("family") == family]
         need(len(grants) == 1 and type(grants[0].get("sequence")) is int,
              "preservation must bind one training grant")
-        _verify_preservation_receipt(event, family=family,
-                                     grant_sequence=grants[0]["sequence"],
+        _verify_preservation_receipt(event, family=family, grant=grants[0],
+                                     lifecycle=_trusted_lifecycle(state, trusted_lifecycle),
                                      public_key=preservation_public_key, now=now)
     if kind == "training_grant":
         events = state.get("events", [])

@@ -18,6 +18,7 @@ import time
 
 from training import cosmo_qlora_launch as launch
 from training import cosmo_qlora_grant as grant
+from training import cosmo_adapter_preservation as preservation
 from training import three_family_contract as contract
 from training.snapshot_verifier import verify_snapshot
 
@@ -256,8 +257,13 @@ def execute(*, snapshot: Path, output: Path, quote: Path, subscription_id: str,
          "training did not complete inside the approved limit")
     require_before_cleanup(admission)
     trainer.model.save_pretrained(output / "adapter", safe_serialization=True)
-    return {"status": "candidate_not_released", "source_commit": source_commit,
-            "optimizer_steps": result.global_step, "output": str(output)}
+    require_before_cleanup(admission)
+    preserved = preservation.preserve_adapter(adapter=output / "adapter",
+        grant_payload=committed, root=ROOT)
+    return {"status": "candidate_preserved_not_released", "source_commit": source_commit,
+            "optimizer_steps": result.global_step, "artifact_sha256": preserved["artifact_sha256"],
+            "destination_uri": preserved["destination_uri"],
+            "ledger_sequence": preserved["ledger_sequence"]}
 
 
 def main(argv: list[str] | None = None) -> int:
