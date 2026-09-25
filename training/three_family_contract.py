@@ -40,10 +40,10 @@ RECIPE_SHA256 = {
     "kova-nova": "46d44da0bcbcfc4fe15454059bbaba2c7e104e8d079348998e5075ee1fee3088",
 }
 COST_CATEGORY_BOUNDS = {
-    "managed_disks": "0.3000", "snapshots": "0.0000",
+    "managed_disks": "0.1000", "snapshots": "0.0000",
     "storage_capacity": "0.1000", "storage_transactions": "0.1000",
-    "network_transfer": "0.1000", "public_ip_and_network": "0.1000",
-    "nat_gateway_hours": "0.1000", "nat_gateway_data_processed": "0.1000",
+    "network_transfer": "0.1000", "public_ip_and_network": "0.0250",
+    "nat_gateway_hours": "0.1500", "nat_gateway_data_processed": "0.3250",
     "logic_app_executions": "0.0500",
     "shutdown_delay": "0.1000", "failed_allocation_attempts": "0.1000",
 }

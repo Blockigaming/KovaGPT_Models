@@ -154,6 +154,26 @@ class AzureRequestVerifier:
         except (jwt.PyJWTError, KeyError, TypeError, AttributeError, ValueError):
             raise LedgerRejected("Entra identity rejected") from None
 
+    def unlocked_cleanup_scopes(self):
+        groups = [self.lifecycle[k].casefold() for k in
+                  ("pilot_resource_group_id", "watchdog_resource_group_id")]
+        subscription = groups[0].split("/resourcegroups/")[0]
+        # The unfiltered subscription list includes child resource locks as well
+        # as locks inherited from the subscription. Incomplete evidence rejects.
+        locks = self.read(ARM + subscription +
+            "/providers/Microsoft.Authorization/locks?api-version=2016-09-01")
+        need(type(locks) is dict and type(locks.get("value")) is list and
+             not locks.get("nextLink"), "cleanup lock inventory incomplete")
+        for lock in locks["value"]:
+            rid = lock["id"].casefold()
+            parts = rid.rsplit("/providers/microsoft.authorization/locks/", 1)
+            need(len(parts) == 2 and parts[1] and "/" not in parts[1] and
+                 (parts[0] == subscription or parts[0].startswith(subscription + "/")),
+                 "invalid management lock scope")
+            need(not any(parts[0] == group or group.startswith(parts[0] + "/") or
+                         parts[0].startswith(group + "/") for group in groups),
+                 "management lock prevents bounded cleanup")
+
     def __call__(self, *, token, audience, instance, network, cleanup_trigger_utc):
         try:
             return self.verify(token=token, audience=audience, instance=instance,
@@ -181,6 +201,23 @@ class AzureRequestVerifier:
              image.get("sku") == "server" and image.get("version") == "24.04.202609040" and
              image.get("exactVersion", "24.04.202609040") == "24.04.202609040",
              "live VM identity, SKU or image mismatch")
+        storage = props["storageProfile"]
+        os_disk = storage["osDisk"]
+        managed = os_disk["managedDisk"]
+        need(os_disk["createOption"] == "FromImage" and os_disk["deleteOption"] == "Delete" and
+             type(os_disk["diskSizeGB"]) is int and os_disk["diskSizeGB"] == 64 and
+             managed["storageAccountType"] == "StandardSSD_LRS" and
+             not os_disk.get("diffDiskSettings") and not storage.get("dataDisks") and
+             managed["id"].casefold().startswith(pilot.casefold() + "/providers/microsoft.compute/disks/"),
+             "VM disk configuration exceeds reviewed cost or cleanup scope")
+        disk = self.resource(managed["id"], "2024-03-02")
+        dp = disk["properties"]
+        need(disk["sku"]["name"] == "StandardSSD_LRS" and
+             type(dp["diskSizeGB"]) is int and dp["diskSizeGB"] == 64 and
+             dp["creationData"]["createOption"] == "FromImage" and
+             dp["provisioningState"] == "Succeeded" and dp["diskState"] == "Attached" and
+             disk["managedBy"].casefold() == instance["resource_id"].casefold(),
+             "live managed disk differs from reviewed configuration")
         need([x["id"] for x in props["networkProfile"]["networkInterfaces"]] == network["vm_nic_ids"],
              "VM network attachments changed")
         nic = self.resource(network["vm_nic_id"], "2024-05-01")["properties"]
@@ -219,6 +256,9 @@ class AzureRequestVerifier:
              wp["parameters"] == {"deadlineUtc": {"value": cleanup_trigger_utc}} and
              wp["definition"] == watchdog_definition(instance["resource_id"], pilot, self.lifecycle["watchdog_resource_group_id"]),
              "watchdog disabled, changed or bound to a different deadline")
+        trigger = self.resource(self.watchdog + "/triggers/every_minute", "2019-05-01")["properties"]
+        need(trigger.get("state") == "Enabled" and trigger.get("provisioningState") == "Succeeded",
+             "watchdog recurrence trigger is not enabled")
         for scope in (pilot, self.lifecycle["watchdog_resource_group_id"]):
             assignments = self.read(ARM + scope + "/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01")
             need(not assignments.get("nextLink"), "cleanup role list incomplete")
@@ -228,6 +268,7 @@ class AzureRequestVerifier:
                      a["properties"].get("roleDefinitionId", "").casefold() == role_id.casefold() and
                      a["properties"].get("condition") in (None, "") for a in assignments["value"]),
                  "watchdog lacks direct cleanup role")
+        self.unlocked_cleanup_scopes()
         after = self.clock()
         need(0 <= (after - before).total_seconds() <= 30 and
              after < authority.timestamp(cleanup_trigger_utc) < authority.timestamp(expiry),

@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 from training import cosmo_lifecycle_authority as authority
 from training.cosmo_controller_http import GrantApplication, build_application
+from training import cosmo_controller_http as http
 from training import test_cosmo_controller_grants as grant_tests
 
 
@@ -17,6 +18,9 @@ class HttpControllerTests(unittest.TestCase):
         self.f.setUp()
         self.addCleanup(self.f.doCleanups)
         self.secret = 'a' * 64
+        lock = self.f.quote_fixture.root / 'requirements/receiver-auth-py312-linux.lock'
+        lock.parent.mkdir()
+        lock.write_bytes((http.launch.ROOT / 'requirements/receiver-auth-py312-linux.lock').read_bytes())
         self.app = GrantApplication(issuer=self.f.issuer,
             endpoint='https://authority.example.test/cosmo/grant', bearer_token=self.secret)
 
@@ -68,6 +72,20 @@ class HttpControllerTests(unittest.TestCase):
         self.assertEqual(self.f.ledger.replay(self.f.f.io.body)[0]['sequence'], 3)
         self.assertEqual(self.call()[0][0], '403 Forbidden')
         self.assertNotIn(self.f.token.encode(), raw)
+
+    def test_startup_rejects_interpreter_missing_or_changed_auth_packages_before_keys(self):
+        root = self.f.quote_fixture.root
+        with patch.object(http, 'private_file', side_effect=AssertionError('control file accessed')):
+            with patch.object(http.sys, 'version_info', (3, 13, 0)), self.assertRaisesRegex(ValueError, 'CPython 3.12'):
+                build_application('/missing', root=root)
+            original = http.metadata.version
+            for package in ('PyJWT', 'cryptography', 'cffi', 'pycparser'):
+                def version(name):
+                    return '0.0.0' if name == package else original(name)
+                with self.subTest(package=package), patch.object(http.metadata, 'version', side_effect=version), self.assertRaisesRegex(ValueError, 'version mismatch'):
+                    build_application('/missing', root=root)
+            with patch.object(http.metadata, 'version', side_effect=http.metadata.PackageNotFoundError), self.assertRaisesRegex(ValueError, 'dependency missing'):
+                build_application('/missing', root=root)
 
     def test_bad_http_inputs_never_touch_issuer(self):
         issuer = Mock()

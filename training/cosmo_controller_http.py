@@ -6,8 +6,10 @@ Request bodies cannot select controller keys, quotes, Azure scopes or files.
 """
 import hashlib
 import hmac
+from importlib import metadata
 from pathlib import Path
 import re
+import sys
 from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -16,7 +18,7 @@ from training import cosmo_lifecycle_authority as authority
 from training import cosmo_qlora_launch as launch
 from training.cosmo_controller_azure import AzureReadIO, AzureRequestVerifier, cli_token
 from training.cosmo_controller_grants import GrantIssuer
-from training.cosmo_controller_ledger import AzureBlobIO, ControllerLedger, need, parse_json
+from training.cosmo_controller_ledger import AzureBlobIO, ControllerLedger, LedgerRejected, need, parse_json
 
 
 class GrantApplication:
@@ -74,6 +76,25 @@ def private_file(path, root, maximum=65536):
     return resolved.read_bytes()
 
 
+def verify_auth_runtime(root):
+    need(sys.implementation.name == "cpython" and sys.version_info[:2] == (3, 12),
+         "controller requires CPython 3.12")
+    expected = {}
+    for line in (root / "requirements/receiver-auth-py312-linux.lock").read_text().splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        match = re.fullmatch(r"([A-Za-z0-9_-]+)==([0-9.]+) --hash=sha256:[0-9a-f]{64}", line)
+        need(match is not None and match[1] not in expected, "invalid authentication lock")
+        expected[match[1]] = match[2]
+    need(set(expected) == {"PyJWT", "cryptography", "cffi", "pycparser"},
+         "authentication lock incomplete")
+    try:
+        need(all(metadata.version(name) == version for name, version in expected.items()),
+             "controller authentication dependency version mismatch")
+    except metadata.PackageNotFoundError:
+        raise LedgerRejected("controller authentication dependency missing") from None
+
+
 def build_application(config_path, *, root=launch.ROOT):
     """Wire the production read adapter, ledger, issuer and HTTP boundary.
 
@@ -81,6 +102,7 @@ def build_application(config_path, *, root=launch.ROOT):
     already have independently verified health/cost admissions before a POST.
     Host TLS/body/read timeouts and protected storage need separate approval.
     """
+    verify_auth_runtime(root)
     config = parse_json(private_file(config_path, root))
     need(type(config) is dict and set(config) == {"ledger_context", "tenant_id", "token_version",
         "watchdog_resource_id", "signing_key_file", "preservation_public_key_hex",

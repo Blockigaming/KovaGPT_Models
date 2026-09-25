@@ -78,14 +78,20 @@ and verifies the returned signature with the existing guest client.
 `training.cosmo_controller_azure.AzureRequestVerifier` now supplies the live
 read adapter. It verifies RS256 Entra tokens with the existing hash-pinned PyJWT
 library and tenant-specific keys, binds tenant/audience/issuer/principal/resource
-ID, then reads the VM, NIC, subnet, NAT, public IP, NSG, watchdog definition and
-direct cleanup roles on both dedicated groups from ARM. Guest credentials never authenticate ARM reads.
+ID, then reads the VM, its 64-GiB Standard SSD OS disk, NIC, subnet, NAT, public
+IP, NSG, watchdog definition, deployed recurrence trigger and direct cleanup
+roles on both dedicated groups from ARM. The subscription-wide lock inventory
+must be complete and contain no inherited, group or child-resource lock
+affecting either cleanup group. Additional data disks, disk expansion/SKU drift,
+detach-on-delete behavior and disabled triggers reject the grant. Guest credentials never authenticate ARM reads.
 Unexpected public networking, rule changes, another VM/image, a disabled or
 retimed watchdog, incomplete role evidence and stale reads reject the request.
 
 `training.cosmo_controller_http.build_application` wires that reader, the ledger,
 and issuer from a protected controller configuration outside the repository.
-The WSGI endpoint requires server-established HTTPS, the pinned host/path, a
+Startup requires CPython 3.12 and all four installed authentication package
+versions to match the reviewed lock before reading controller secrets. The
+WSGI endpoint requires server-established HTTPS, the pinned host/path, a
 constant-time bearer credential check and a bounded JSON POST. It has no storage
 initialization, resource creation or administrative route. Failures return a
 sanitized rejection and never retry a possibly committed grant. Durable grant
@@ -173,10 +179,10 @@ az group exists --name "$WATCHDOG_RESOURCE_GROUP"
 | Reservation | USD |
 | --- | ---: |
 | Maximum two-hour VM compute reservation | 0.9000 |
-| Managed disk | 0.3000 |
+| Managed disk, including capped transactions | 0.1000 |
 | Storage capacity and transactions | 0.2000 |
-| Network transfer, outbound NAT IP/network, shutdown delay, failed allocation | 0.4000 |
-| Outbound NAT gateway hours and data processing | 0.2000 |
+| Network transfer, outbound NAT IP/network, shutdown delay, failed allocation | 0.3250 |
+| Outbound NAT gateway hours and data processing | 0.4750 |
 | Logic App trigger and action executions | 0.0500 |
 | Snapshots | 0.0000 |
 | Emergency cleanup margin | 1.2500 |
@@ -197,55 +203,85 @@ export remain private.
 | Standard NAT Data Processed, Global | $0.045/GB |
 | Standard IPv4 Static Public IP | $0.005/hour |
 | E6 LRS Standard SSD disk, US East | $4.80/month |
+| Standard SSD LRS disk transactions, US East | $0.002/10,000 operations |
 | Logic Apps Consumption built-in actions | $0.000025/action |
 | Logic Apps Consumption data retention | $0.12/GB-month |
 | Blob Storage Hot LRS capacity, US East, first tier | $0.0208/GB-month |
 | Blob Storage Hot reads, US East | $0.004/10,000 operations |
+| Blob Storage Hot LRS writes and list/create-container, US East | $0.05/10,000 operations |
+| Container Apps Standard active CPU, US East | $0.000024/vCPU-second |
+| Container Apps Standard active memory, US East | $0.000003/GiB-second |
+| Container Apps Standard requests, US East | $0.40/million |
 | Microsoft Global network internet data out, tier starting at 100 GB | $0.0875/GB |
 
 The selected VM meter is `b04b4869-b6a3-527b-aec2-650a6fb07224`, product
 `Virtual Machines NCasT4 v3 Series - NC4as T4 v3 - US East`, effective
 2026-09-01 through 2026-09-30. Free allowances are not assumed available.
 Storage rows do not select the as-yet-unprovisioned controller storage SKU;
-write/list/disk transaction rates, controller TLS hosting, retention quantities,
-applicable tax and a measured deletion bound remain unresolved.
+controller TLS hosting configuration, retention quantities, applicable tax
+and a measured deletion bound remain unresolved. Disk transaction meter
+`ec670fe9-1b5d-530e-b7e5-a3801e307d75` and the write/list meters were read
+from the same account export, not inferred from public retail prices.
 
-### The existing worksheet fails; no affordable run is established yet
+### Corrected reservation: known download floor now fits
 
-At the verified account VM rate, 90 minutes of compute is **$0.7890**;
-two hours is **$1.0520**. Keeping the existing ancillary reservations yields
-$3.1890 and $3.4520 respectively, but the 90-minute figure is **not a valid
-all-in bound**: its NAT-data category reserves only $0.1000.
+At the verified VM rate, 90 minutes costs **$0.7890** in compute. The former
+worksheet was invalid because it reserved only $0.1000 for NAT data. The pinned
+model and all **77 distinct hash-matched CPython 3.12/Linux wheels** across
+the training, bitsandbytes and authentication locks total
+**5,610,662,391 bytes**, or **$0.252480** of NAT processing at $0.045 per decimal
+GB, before other packages, OS/driver setup, overhead, retries and uploads.
+Model bytes are from the pinned manifest; wheel sizes came from the official
+[PyPI version JSON API](https://docs.pypi.org/api/json/) with SHA-256 matched to
+the existing locks; the largest compatible pinned wheel was selected if
+more than one matched. Only metadata was fetched; no model weights were downloaded.
 
-The pinned model manifest contains **1,519,207,673 bytes**. The 17 pinned Linux
-CPython 3.12 GPU dependency wheels (torch, bitsandbytes, triton and the 14
-`nvidia-*` packages) add **3,965,784,438 bytes**, for a known download floor of
-**5,484,992,111 bytes** on the proposed uncached Ubuntu/NAT path. Wheel sizes
-came from the official [PyPI version JSON API](https://docs.pypi.org/api/json/),
-with each filename's SHA-256 matched to the existing hash lock. Only metadata
-was fetched; no model weights or training wheels were downloaded.
+The source guard now reallocates existing allowance using the verified disk
+transaction rate and Azure's published disk cap. It does not increase the
+$3.30 owner ceiling, $1.15 ancillary total or $1.25 emergency cleanup margin.
 
-At $0.045/GB this is **$0.246825** for decimal GB, or **$0.229873** if interpreted
-as binary GiB. Both exceed the $0.10 reservation before other Python packages,
-OS/driver setup, request overhead, retries or uploads. Replacing only the
-insufficient NAT-data reservation puts the 90-minute worksheet at
-**$3.335825** (decimal) or **$3.318873** (binary), already above $3.30.
-These are corrected reservation totals, not predictions that the eventual
-invoice must exceed $3.30: other categories contain unused allowance, but
-rebalancing them requires verified quantities and a complete quote.
+| Category | Former reserve | Current reserve | Basis / remaining condition |
+| --- | ---: | ---: | --- |
+| Managed disk | $0.3000 | $0.1000 | One E6 LRS disk, including capacity and capped transactions |
+| Standard IP/network | $0.1000 | $0.0250 | One $0.005/hour IP; three rounded hours cost $0.015 |
+| NAT gateway hours | $0.1000 | $0.1500 | Three rounded $0.045 hours cost $0.135 |
+| NAT data processing | $0.1000 | $0.3250 | At most 7,222,222,222 decimal bytes at $0.045/GB |
 
-For context, known 90-minute VM + NAT-hour + public-IP charges alone total
-$0.8640. Adding just the known decimal transfer floor gives $1.110825,
-**excluding** disk, storage, transactions, driver/setup traffic, controller,
-watchdog, deletion delay, retries and tax. This subtotal cannot authorize a run.
+For disk capacity, three charged hours at $4.80/month using a conservative
+28-day month cost at most $0.021429. Azure publishes an E6 LRS transaction cap
+of 81,200/hour; even using the larger 114,400/hour cap shown in the other
+redundancy table, three hours at $0.002/10,000 add $0.068640. The combined
+conservative allowance is **$0.090069**, below $0.1000. The live verifier now
+checks both the VM disk profile and actual disk resource, and rejects extra
+data disks. These bounds assume the disk and networking are deleted within
+the signed maximum two-hour window; cleanup delay is not proven by arithmetic.
+See [Azure disk pricing and hourly transaction caps](https://azure.microsoft.com/en-us/pricing/details/managed-disks/)
+and [disk billing](https://learn.microsoft.com/en-us/azure/virtual-machines/disks-understand-billing).
+[NAT partial hours are billed as full hours](https://azure.microsoft.com/en-us/pricing/details/azure-nat-gateway/),
+so this worksheet deliberately covers three intersected billing hours.
 
-The existing cost guard remains unchanged and correctly blocks a quote whose
-NAT category exceeds its allowance. Do not silently borrow another category's
-reserve, shrink the minimum 90-minute signed window or increase the owner's
-$3.30 ceiling. A corrected complete account worksheet and any reviewed cost
-category changes must precede a launch request. An Azure timer or budget alert
-cannot guarantee the eventual invoice. There is **no verified all-in cost
-bound** on this head.
+The corrected **conditional** 90-minute reservation is therefore still
+**$0.7890 + $1.1500 + $1.2500 = $3.1890**, with $0.1110 below the owner ceiling.
+The four changed category reserves have the same combined total as before.
+Unlike the former worksheet, the known mandatory download floor now fits its
+own category, leaving **1,611,559,831 bytes** for all remaining NAT traffic.
+The complete setup transfer budget must still fit that remaining allowance;
+this is not evidence that the GPU driver and all setup traffic actually fit.
+A signed quote above any category limit remains rejected. The 90-minute minimum,
+two-hour maximum, dataset, model pins and training configuration are unchanged.
+
+For the independent controller, the actual Container Apps rates imply
+**$0.0540** for one 0.25-vCPU/0.5-GiB replica active for two hours, plus
+$0.0004 for 1,000 requests, ignoring free allowances. This is a hosting-component
+estimate only: no host type has been deployed or admitted. Registry, environment,
+logging, startup/shutdown duration and storage retention must be included in a
+complete controller quote, rather than silently assumed free or omitted from
+the existing category schema. The $0.1110 headroom is not authority to spend it.
+
+A complete signed account quote is still absent. Remaining proof includes the
+full setup byte/time bounds, controller/retention charges, tax treatment and
+live cleanup. Azure timers and budget alerts are not invoice hard stops.
+There is **no verified all-in cost bound or executable paid approval** yet.
 
 ## Read-only evidence to refresh in the intended subscription
 
@@ -278,7 +314,9 @@ confirmed the subscription was Enabled; `az vm list-skus --location eastus
 Canonical:ubuntu-24_04-lts:server:24.04.202609040` returned that exact
 image version as Active in East US. Those catalog reads do not guarantee live
 capacity, establish account prices, or prove that the image boots the pinned
-CUDA 12.8 / bitsandbytes stack. No provider registration has been changed.
+CUDA 12.8 / bitsandbytes stack. No provider registration has been changed. A read-only subscription-wide
+management-lock inventory on 2026-09-25 returned zero locks and no next page;
+this does not replace the fresh per-grant check after future provisioning.
 `what-if` may validate the proposed
 resource graph, but it does not reserve a GPU. Capacity and exact hardware
 identity can be confirmed only after an approved allocation.
@@ -359,10 +397,10 @@ Do not proceed to training from a failed or incomplete step.
   East US image returned `imageState: Active`. Live allocation capacity,
   image deployability and runtime compatibility remain unverified.
 - Account compute and the principal ancillary rates are now known. The current
-  NAT-data reservation is insufficient even for the known model/GPU-wheel
-  download floor, pushing the otherwise unchanged 90-minute worksheet above
-  $3.30. A complete affordable worksheet still needs bounded setup/cleanup
-  quantities, remaining transaction and controller costs, retention and tax.
+  NAT-data reservation has been corrected without raising the $3.30 ceiling;
+  the 90-minute conditional worksheet remains $3.1890 and covers the known
+  model/GPU-wheel floor. It still needs the remaining setup traffic/time bound,
+  complete controller costs, retention, tax and demonstrated cleanup.
 - The independent authority endpoint/signing key, deployed atomic remote grants,
   watchdog health and self-cleanup proof, signed VM preflight, and signed
   subscription quote do not
@@ -390,3 +428,10 @@ synthetic Azure reads, rejected identity/network/watchdog variants, ambiguous
 append outcomes, bare-grant rejection, protected factory configuration and
 release fingerprint drift. These checks do not constitute a live cloud or GPU
 rehearsal. The 42 records, model pins and training configuration are unchanged.
+
+The follow-up review batch adds live disk-cost checks, a deployed-trigger read,
+effective cleanup-lock rejection and controller startup dependency checks. All
+57 affected controller/release tests passed, followed by 51 cost/launch/training
+tests after the cost-guard redistribution. The exact published commit must also
+pass CI before any later release.
+No live resource changes or paid execution were performed.

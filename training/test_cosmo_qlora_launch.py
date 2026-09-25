@@ -106,6 +106,21 @@ class LaunchTests(unittest.TestCase):
         with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
             self.check(payload)
 
+    def test_known_transfer_floor_fits_rebalanced_reserve_without_raising_total(self):
+        payload = deepcopy(self.payload)
+        payload['account_compute_hourly_usd'] = '0.5260'
+        payload['allocation_deadline_utc'] = '2026-09-24T13:30:00Z'
+        payload['category_upper_bounds_usd']['nat_gateway_data_processed'] = '0.2525'
+        result = self.check(payload)
+        self.assertEqual(result['worst_case_all_in_usd'], '3.1890')
+        self.assertFalse(result['paid_actions_enabled'])
+        for key, excess in (('nat_gateway_data_processed', '0.3251'), ('managed_disks', '0.1001'),
+                            ('public_ip_and_network', '0.0251'), ('nat_gateway_hours', '0.1501')):
+            bad = deepcopy(payload)
+            bad['category_upper_bounds_usd'][key] = excess
+            with self.subTest(category=key), self.assertRaisesRegex(launch.LaunchRejected, 'category reservation'):
+                self.check(bad)
+
     def test_cleanup_trigger_must_precede_signed_cost_deadline(self):
         payload = deepcopy(self.payload)
         payload["allocation_deadline_utc"] = "2026-09-24T13:30:00Z"

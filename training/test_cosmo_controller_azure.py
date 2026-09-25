@@ -50,14 +50,20 @@ class AzureVerifierTests(unittest.TestCase):
         def put(rid, api, props, **other):
             self.documents[azure.ARM + rid + '?api-version=' + api] = {'id': rid, 'properties': props, **other}
         n = self.network
+        self.disk = self.lifecycle['pilot_resource_group_id'] + '/providers/Microsoft.Compute/disks/cosmo-os'
         put(self.instance['resource_id'], '2024-07-01', {
             'provisioningState': 'Succeeded', 'vmId': self.instance['vm_id'],
             'hardwareProfile': {'vmSize': 'Standard_NC4as_T4_v3'},
             'storageProfile': {'imageReference': {'publisher': 'Canonical', 'offer': 'ubuntu-24_04-lts',
-                'sku': 'server', 'version': '24.04.202609040'}},
+                'sku': 'server', 'version': '24.04.202609040'},
+                'osDisk': {'createOption': 'FromImage', 'deleteOption': 'Delete', 'diskSizeGB': 64,
+                    'managedDisk': {'id': self.disk, 'storageAccountType': 'StandardSSD_LRS'}}},
             'networkProfile': {'networkInterfaces': [{'id': n['vm_nic_id']}]}}, location='eastus',
             identity={'type': 'SystemAssigned', 'tenantId': self.tenant,
                       'principalId': self.instance['system_assigned_identity_principal_id']})
+        put(self.disk, '2024-03-02', {'diskSizeGB': 64, 'creationData': {'createOption': 'FromImage'},
+            'provisioningState': 'Succeeded', 'diskState': 'Attached'},
+            sku={'name': 'StandardSSD_LRS'}, managedBy=self.instance['resource_id'])
         put(n['vm_nic_id'], '2024-05-01', {'ipConfigurations': [{'properties': {'subnet': {'id': n['subnet_id']}}}]})
         put(n['subnet_id'], '2024-05-01', {'defaultOutboundAccess': False,
             'natGateway': {'id': n['nat_gateway_id']}, 'networkSecurityGroup': {'id': n['network_security_group_id']}})
@@ -69,7 +75,11 @@ class AzureVerifierTests(unittest.TestCase):
             'parameters': {'deadlineUtc': {'value': self.trigger}},
             'definition': azure.watchdog_definition(self.instance['resource_id'], self.lifecycle['pilot_resource_group_id'], self.lifecycle['watchdog_resource_group_id'])},
             identity={'type': 'SystemAssigned', 'tenantId': self.tenant, 'principalId': self.watchdog_principal})
+        put(self.watchdog + '/triggers/every_minute', '2019-05-01',
+            {'state': 'Enabled', 'provisioningState': 'Succeeded'})
         pilot = self.lifecycle['pilot_resource_group_id']
+        self.locks_url = azure.ARM + pilot.split('/resourceGroups/')[0] + '/providers/Microsoft.Authorization/locks?api-version=2016-09-01'
+        self.documents[self.locks_url] = {'value': []}
         self.roles_url = azure.ARM + pilot + '/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01'
         self.documents[self.roles_url] = {'value': [{'properties': {'principalId': self.watchdog_principal,
             'scope': pilot, 'roleDefinitionId': pilot.split('/resourceGroups/')[0] +
@@ -96,7 +106,7 @@ class AzureVerifierTests(unittest.TestCase):
 
     def test_real_guest_issuer_azure_adapter_exchange(self):
         self.f.test_committed_response_matches_existing_guest_verifier()
-        self.assertEqual(len(self.reads), 10)
+        self.assertEqual(len(self.reads), 13)
         self.assertTrue(all(self.f.token not in url for url in self.reads))
 
     def test_foreign_expired_and_unsigned_identity_never_reads_arm(self):
@@ -151,6 +161,55 @@ class AzureVerifierTests(unittest.TestCase):
                                      token_for=lambda _: self.fail('credential accessed'))
         with self.assertRaises(LedgerRejected):
             transport('https://attacker.invalid/keys')
+
+    def test_disk_cost_and_trigger_drift_prevent_grant(self):
+        originals = deepcopy(self.documents)
+        before = self.f.f.io.body
+        vm = azure.ARM + self.instance['resource_id'] + '?api-version=2024-07-01'
+        disk = azure.ARM + self.disk + '?api-version=2024-03-02'
+        trigger = azure.ARM + self.watchdog + '/triggers/every_minute?api-version=2019-05-01'
+        mutations = [
+            (vm, lambda d: d['properties']['storageProfile']['osDisk'].update(diskSizeGB=128)),
+            (vm, lambda d: d['properties']['storageProfile']['osDisk'].update(deleteOption='Detach')),
+            (vm, lambda d: d['properties']['storageProfile']['osDisk'].update(createOption='Attach')),
+            (vm, lambda d: d['properties']['storageProfile']['osDisk']['managedDisk'].update(storageAccountType='Premium_LRS')),
+            (vm, lambda d: d['properties']['storageProfile'].update(dataDisks=[{'lun': 0}])),
+            (disk, lambda d: d['properties'].update(diskSizeGB=128)),
+            (disk, lambda d: d['sku'].update(name='Premium_LRS')),
+            (disk, lambda d: d.update(managedBy=self.watchdog)),
+            (trigger, lambda d: d['properties'].update(state='Disabled')),
+            (trigger, lambda d: d['properties'].update(state='Suspended')),
+            (trigger, lambda d: d['properties'].pop('state')),
+            (trigger, lambda d: d['properties'].update(provisioningState='Updating')),
+        ]
+        for url, mutate in mutations:
+            self.documents = deepcopy(originals)
+            mutate(self.documents[url])
+            with self.subTest(url=url), self.assertRaises(LedgerRejected):
+                self.f.issuer.issue(self.f.request)
+            self.assertEqual(before, self.f.f.io.body)
+
+    def test_inherited_group_and_child_locks_reject_without_consuming_grant(self):
+        before = self.f.f.io.body
+        pilot = self.lifecycle['pilot_resource_group_id']
+        watchdog = self.lifecycle['watchdog_resource_group_id']
+        for scope in (pilot.split('/resourceGroups/')[0], pilot, watchdog,
+                      self.disk, self.instance['resource_id'], self.network['nat_gateway_id'], self.watchdog):
+            for level in ('CanNotDelete', 'ReadOnly'):
+                self.documents[self.locks_url] = {'value': [{'id': scope +
+                    '/providers/Microsoft.Authorization/locks/protected', 'properties': {'level': level}}]}
+                with self.subTest(scope=scope, level=level), self.assertRaises(LedgerRejected):
+                    self.f.issuer.issue(self.f.request)
+                self.assertEqual(before, self.f.f.io.body)
+        for incomplete in ({}, {'value': [] , 'nextLink': 'https://management.azure.com/more'},
+                           {'value': [{'id': 'malformed'}]}):
+            self.documents[self.locks_url] = incomplete
+            with self.assertRaises(LedgerRejected):
+                self.f.issuer.issue(self.f.request)
+            self.assertEqual(before, self.f.f.io.body)
+        self.documents[self.locks_url] = {'value': [{'id': pilot + '-unrelated/providers/Microsoft.Authorization/locks/keep',
+            'properties': {'level': 'ReadOnly'}}]}
+        self.assertTrue(self.observe()['cleanup_scope_verified'])
 
 
 if __name__ == '__main__':
