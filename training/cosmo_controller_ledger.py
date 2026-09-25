@@ -491,11 +491,17 @@ class ControllerLedger:
              type(final["cleanup_event"]) is dict and
              final["cleanup_event"].get("kind") == "cleanup_terminal",
              "ledger deletion or external terminal evidence mismatch")
-        return contract.append_ledger_event(state, final["cleanup_event"],
+        need(last_time + timedelta(days=self.context["retention_days"]) <= deleted,
+             "ledger retention has not expired")
+        terminal_state = contract.append_ledger_event(state, final["cleanup_event"],
             expected_sequence=state["sequence"], now=now,
             trusted_lifecycle=self.context["lifecycle"],
             preservation_public_key=self.preservation_key,
             cleanup_public_key=self.cleanup_key)
+        verified = authority.timestamp(
+            final["cleanup_event"]["cleanup_receipt"]["payload"]["verified_at_utc"])
+        need(deleted < verified, "final cost reconciliation must follow ledger deletion")
+        return terminal_state
 
 
 def main(argv=None):

@@ -255,16 +255,18 @@ class ControllerLedgerTests(unittest.TestCase):
 
     def test_cleanup_after_deadline_and_terminal_refuses_new_events(self):
         self.subject.initialize()
-        self.now += timedelta(days=1)
+        self.now += timedelta(days=1, seconds=3)
         stamp = self.now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        export_stamp = (self.now - timedelta(seconds=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        deleted_stamp = (self.now - timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         archive = self.io.body
-        _, head, _ = self.subject.replay(archive)
+        _, head, last_time = self.subject.replay(archive)
         export_payload = {"kind": "kova_cosmo_ledger_archive_v1",
             "context_sha256": self.subject.context_sha256, "blob_url": self.subject.blob_url,
             "archive_sha256": ledger.hashlib.sha256(archive).hexdigest(),
             "archive_bytes": len(archive), "head_sha256": head, "ledger_sequence": 0,
             "blob_etag": self.io.etag,
-            "observed_at_utc": stamp,
+            "observed_at_utc": export_stamp,
             "immutable_archive_uri": "https://evidence.example.test/archived-ledger",
             "immutable_archive_version": "verified-v1"}
         def signed(value):
@@ -273,8 +275,8 @@ class ControllerLedgerTests(unittest.TestCase):
         export = signed(export_payload)
         payload = {"schema_version": 1, "ledger_sequence": 0, **self.context["lifecycle"],
             "pilot_remaining_resources": [], "watchdog_remaining_resources": [],
-            "subscription_scoped_residual_resources": [], "pilot_deleted_at_utc": stamp,
-            "watchdog_deleted_at_utc": stamp, "verified_at_utc": stamp,
+            "subscription_scoped_residual_resources": [], "pilot_deleted_at_utc": deleted_stamp,
+            "watchdog_deleted_at_utc": deleted_stamp, "verified_at_utc": stamp,
             "cost_posting_complete": True, "final_cost_usd": "0.0000",
             "cost_evidence_sha256": "b" * 64, "evidence_uri": "https://evidence.example.test/terminal",
             "immutable_evidence_version": "version-one", "outside_both_groups": True,
@@ -291,7 +293,7 @@ class ControllerLedgerTests(unittest.TestCase):
             "export_sha256": ledger.digest(export),
             "context_sha256": self.subject.context_sha256,
             "storage_resource_group_id": self.context["storage_resource_group_id"],
-            "ledger_deleted_at_utc": stamp, "conditional_delete_etag": self.io.etag,
+            "ledger_deleted_at_utc": deleted_stamp, "conditional_delete_etag": self.io.etag,
             "ledger_remaining_resources": [],
             "cleanup_event": event}
         final = signed(final_payload)
@@ -301,6 +303,19 @@ class ControllerLedgerTests(unittest.TestCase):
             cleanup_public_key=self.verifier.public_key().public_bytes_raw(),
             clock=lambda: self.now)
         self.assertTrue(verifier.verify_external_terminal(archive, export, final)["terminal"])
+        premature_export = signed({**export_payload,
+            "observed_at_utc": last_time.strftime("%Y-%m-%dT%H:%M:%SZ")})
+        premature_final = signed({**final_payload,
+            "export_sha256": ledger.digest(premature_export),
+            "ledger_deleted_at_utc": (last_time + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")})
+        with self.assertRaisesRegex(ledger.LedgerRejected, "retention has not expired"):
+            verifier.verify_external_terminal(archive, premature_export, premature_final)
+        premature_cost_receipt = signed({**payload, "verified_at_utc": deleted_stamp})
+        premature_cost_final = signed({**final_payload,
+            "ledger_deleted_at_utc": stamp,
+            "cleanup_event": {"kind": "cleanup_terminal", "cleanup_receipt": premature_cost_receipt}})
+        with self.assertRaisesRegex(ledger.LedgerRejected, "reconciliation must follow ledger deletion"):
+            verifier.verify_external_terminal(archive, export, premature_cost_final)
         self.assertIsNone(self.io.body)
         with self.assertRaisesRegex(ledger.LedgerRejected, 'archive verifier cannot append'):
             verifier.append(self.health, expected_sequence=0)
