@@ -72,6 +72,12 @@ class AzureVerifierTests(unittest.TestCase):
             'natGateway': {'id': n['nat_gateway_id']}, 'networkSecurityGroup': {'id': n['network_security_group_id']}})
         put(n['nat_gateway_id'], '2024-05-01', {'publicIpAddresses': [{'id': n['nat_gateway_public_ip_id']}]}, sku={'name': 'Standard'})
         put(n['nat_gateway_public_ip_id'], '2024-05-01', {'publicIPAllocationMethod': 'Static'}, sku={'name': 'Standard'})
+        self.extension_id = self.instance['resource_id'] + '/extensions/NvidiaGpuDriverLinux'
+        put(self.extension_id, '2024-03-01', {'provisioningState': 'Succeeded',
+            'publisher': 'Microsoft.HpcCompute', 'type': 'NvidiaGpuDriverLinux',
+            'typeHandlerVersion': '1.10', 'autoUpgradeMinorVersion': False,
+            'enableAutomaticUpgrade': False,
+            'settings': {'installCUDA': False, 'updateOS': False}})
         put(n['network_security_group_id'], '2024-05-01', {'securityRules': azure.expected_rules()})
         self.watchdog_principal = '12345678-1234-1234-1234-123456789aba'
         put(self.watchdog, '2019-05-01', {'state': 'Enabled', 'provisioningState': 'Succeeded',
@@ -129,7 +135,7 @@ class AzureVerifierTests(unittest.TestCase):
 
     def test_real_guest_issuer_azure_adapter_exchange(self):
         self.f.test_committed_response_matches_existing_guest_verifier()
-        self.assertEqual(len(self.reads), 17)
+        self.assertEqual(len(self.reads), 18)
         self.assertTrue(all(self.f.token not in url for url in self.reads))
 
     def test_foreign_expired_and_unsigned_identity_never_reads_arm(self):
@@ -163,6 +169,8 @@ class AzureVerifierTests(unittest.TestCase):
             (vm, lambda d: d['properties'].update(diagnosticsProfile={
                 'bootDiagnostics': {'enabled': True,
                                     'storageUri': 'https://untracked.blob.core.windows.net/'}})),
+            (vm, lambda d: d['properties'].update(priority='Spot', evictionPolicy='Deallocate')),
+            (vm, lambda d: d['properties'].update(billingProfile={'maxPrice': -1})),
             (nic, lambda d: d['properties']['ipConfigurations'][0]['properties'].update(publicIPAddress={'id': 'foreign'})),
             (subnet, lambda d: d['properties'].update(defaultOutboundAccess=True)),
             (subnet, lambda d: d['properties'].update(routeTable={'id': 'foreign'})),
@@ -174,6 +182,12 @@ class AzureVerifierTests(unittest.TestCase):
             (self.self_roles_url, lambda d: d.update(value=[])),
             (watchdog, lambda d: d['properties']['definition']['actions'].pop('delete_watchdog_group')),
             (self.roles_url, lambda d: d.update(nextLink='https://management.azure.com/more')),
+            (azure.ARM + self.network['nat_gateway_public_ip_id'] + '?api-version=2024-05-01',
+             lambda d: d['properties'].update(ddosSettings={'protectionMode': 'Enabled'})),
+            (azure.ARM + self.extension_id + '?api-version=2024-03-01',
+             lambda d: d['properties']['settings'].update(installCUDA=True)),
+            (azure.ARM + self.extension_id + '?api-version=2024-03-01',
+             lambda d: d['properties'].update(typeHandlerVersion='latest')),
         ]
         for url, mutate in mutations:
             self.documents = deepcopy(originals)

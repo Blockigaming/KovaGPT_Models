@@ -262,6 +262,9 @@ class AzureRequestVerifier:
         need(not props.get("diagnosticsProfile") or
              props["diagnosticsProfile"].get("bootDiagnostics") in (None, {"enabled": False}),
              "VM boot diagnostics may leave storage outside cleanup scope")
+        need(props.get("priority", "Regular") == "Regular" and
+             props.get("evictionPolicy") is None and not props.get("billingProfile"),
+             "Spot or eviction configuration is not approved for the one-use grant")
         # The VM's IMDS token is used only to prove its identity to the issuer.
         # No ARM role is needed by the guest. Check direct assignments at,
         # above and below the subscription, then effective group assignments.
@@ -315,7 +318,19 @@ class AzureRequestVerifier:
              nat["properties"]["publicIpAddresses"] == [{"id": network["nat_gateway_public_ip_id"]}] and
              not nat["properties"].get("publicIpPrefixes") and
              ip["properties"]["publicIPAllocationMethod"] == "Static" and
-             ip["properties"].get("publicIPAddressVersion", "IPv4") == "IPv4", "NAT path changed")
+             ip["properties"].get("publicIPAddressVersion", "IPv4") == "IPv4" and
+             not ip["properties"].get("ddosSettings"), "NAT path or public-IP cost changed")
+        extension_id = instance["resource_id"] + "/extensions/NvidiaGpuDriverLinux"
+        extension = self.resource(extension_id, "2024-03-01")["properties"]
+        need(extension.get("provisioningState") == "Succeeded" and
+             extension.get("publisher") == "Microsoft.HpcCompute" and
+             extension.get("type") == "NvidiaGpuDriverLinux" and
+             extension.get("typeHandlerVersion") == "1.10" and
+             extension.get("autoUpgradeMinorVersion") is False and
+             extension.get("enableAutomaticUpgrade") is False and
+             extension.get("settings") == {"installCUDA": False, "updateOS": False} and
+             not extension.get("protectedSettings"),
+             "GPU driver extension differs from reviewed source")
         rules = self.resource(network["network_security_group_id"], "2024-05-01")["properties"]["securityRules"]
         normalized = []
         for rule in rules:
@@ -353,13 +368,12 @@ class AzureRequestVerifier:
                      scope.casefold() + "/providers/microsoft.authorization/roleassignments/"),
                  "watchdog lacks a unique direct cleanup role")
             direct_role_ids[scope] = matches[0]["id"]
-        optional_pilot = [instance["resource_id"] + "/extensions/NvidiaGpuDriverLinux",
-                          network["subnet_id"], direct_role_ids[pilot]]
+        optional_pilot = [network["subnet_id"], direct_role_ids[pilot]]
         optional_pilot.extend(network["network_security_group_id"] + "/securityRules/" +
                               rule["name"] for rule in expected_rules())
         self.exact_group_resources(pilot, (
             instance["resource_id"], managed["id"], network["vm_nic_id"],
-            network["nat_gateway_id"], network["nat_gateway_public_ip_id"],
+            network["nat_gateway_id"], network["nat_gateway_public_ip_id"], extension_id,
             network["network_security_group_id"],
             network["subnet_id"].rsplit("/subnets/", 1)[0]), optional_pilot)
         watchdog_group = self.lifecycle["watchdog_resource_group_id"]
