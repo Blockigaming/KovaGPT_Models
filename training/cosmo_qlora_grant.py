@@ -209,17 +209,20 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
             return transport(trust["endpoint"], token, request)
 
         recovered = False
+        started = time.monotonic()
         try:
             response = send(MAX_GRANT_RESPONSE_DELAY.total_seconds())
         except authority.AuthorityError:
             # Retry the exact nonce and signed request only. The controller
             # can replay the original envelope but cannot grant a second run.
             recovered = True
-            limit = time.monotonic() + (MAX_GRANT_RECOVERY_DELAY -
-                                        MAX_GRANT_RESPONSE_DELAY).total_seconds()
+            limit = started + MAX_GRANT_RECOVERY_DELAY.total_seconds()
             while True:
+                remaining = limit - time.monotonic()
+                if remaining <= 0:
+                    raise
                 try:
-                    response = send(10)
+                    response = send(min(10, remaining))
                     break
                 except authority.AuthorityError:
                     if time.monotonic() + 5 >= limit:
