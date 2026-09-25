@@ -348,13 +348,31 @@ class AzureRequestVerifier:
              "subnet networking changed")
         expected_ip = network["vm_nic_id"] + "/ipConfigurations/private"
         attachments = subnet.get("ipConfigurations")
+        # Accept only properties in the reviewed 2024-05-01 subnet graph.
+        # A new ARM field must fail closed until its deletion implications are
+        # reviewed; foreign resources can refer to this subnet from elsewhere.
+        empty_properties = {
+            "addressPrefixes", "applicationGatewayIPConfigurations", "delegations",
+            "ipAllocations", "ipamPoolPrefixAllocations", "ipConfigurationProfiles",
+            "privateEndpoints", "resourceNavigationLinks", "serviceAssociationLinks",
+            "serviceEndpointPolicies", "serviceEndpoints",
+        }
+        expected_properties = {
+            "addressPrefix", "defaultOutboundAccess", "natGateway",
+            "networkSecurityGroup", "ipConfigurations", "provisioningState",
+            "privateEndpointNetworkPolicies", "privateLinkServiceNetworkPolicies",
+            "routeTable", *empty_properties,
+        }
         need(type(attachments) is list and len(attachments) == 1 and
              type(attachments[0]) is dict and
              attachments[0].get("id", "").casefold() == expected_ip.casefold() and
-             all(not subnet.get(field) for field in (
-                 "serviceAssociationLinks", "resourceNavigationLinks", "delegations",
-                 "privateEndpoints", "applicationGatewayIPConfigurations",
-                 "serviceEndpoints")),
+             set(subnet) <= expected_properties and
+             subnet.get("addressPrefix") == "10.91.1.0/24" and
+             subnet.get("provisioningState") == "Succeeded" and
+             subnet.get("privateEndpointNetworkPolicies") == "Disabled" and
+             subnet.get("privateLinkServiceNetworkPolicies", "Enabled") == "Enabled" and
+             not subnet.get("routeTable") and
+             all(subnet.get(field) in (None, []) for field in empty_properties),
              "pilot subnet has an unreviewed attachment")
         nat = self.resource(network["nat_gateway_id"], "2024-05-01")
         ip = self.resource(network["nat_gateway_public_ip_id"], "2024-05-01")
