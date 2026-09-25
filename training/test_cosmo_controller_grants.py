@@ -141,15 +141,51 @@ class GrantIssuerTests(unittest.TestCase):
         self.assertEqual(self.f.io.body, before)
 
     def test_duplicate_nonce_or_new_nonce_cannot_issue_second_grant(self):
-        self.issuer.issue(self.request)
-        for nonce in (self.request["request_nonce"], "b" * 64):
-            with self.assertRaises(LedgerRejected):
-                self.issuer.issue({**self.request, "request_nonce": nonce})
+        first = self.issuer.issue(self.request)
+        self.assertEqual(self.issuer.issue(self.request), first)
+        self.assertEqual(self.ledger.current_state()["sequence"], 3)
+        for key, value in (("request_nonce", "b" * 64),
+                           ("azure_instance_identity_token", "different.token.value")):
+            with self.subTest(key=key), self.assertRaises(LedgerRejected):
+                self.issuer.issue({**self.request, key: value})
 
     def test_lost_commit_response_leaves_slot_consumed(self):
         self.f.io.lose_append_response = True
         with self.assertRaises(LedgerRejected):
             self.issuer.issue(self.request)
+        self.assertEqual(self.ledger.current_state()["sequence"], 3)
+        recovered = self.issuer.issue(self.request)
+        self.assertEqual(recovered["payload"]["grant_id"],
+                         self.ledger.current_state()["events"][-1]["response_envelope"]["payload"]["grant_id"])
+        self.assertEqual(self.ledger.current_state()["sequence"], 3)
+
+    def test_guest_recovers_same_signed_grant_after_uncertain_commit(self):
+        self.f.io.lose_append_response = True
+        compute = {"resourceId": self.vm["resource_id"], "vmId": self.vm["vm_id"],
+            "location": "eastus", "vmSize": launch.SKU, "storageProfile": {
+                "imageReference": {"publisher": "Canonical", "offer": "ubuntu-24_04-lts",
+                    "sku": "server", "exactVersion": "24.04.202609040"}}}
+        calls = []
+        def uncertain(_endpoint, _token, request):
+            calls.append(request)
+            try:
+                return self.issuer.issue(request)
+            except LedgerRejected as exc:
+                raise authority.AuthorityError("synthetic lost response") from exc
+        with patch.object(authority, "_executing_azure_identity", return_value=(
+                self.token, self.token_digest, "2026-09-24T14:30:00Z")), \
+             patch.object(authority, "_load_bearer_token", return_value="synthetic"):
+            received = client.acquire_training_grant(quote=self.quote,
+                source_commit=self.f.context["source_commit"],
+                subscription_id=self.quote_fixture.subscription,
+                lifecycle_id=self.request["lifecycle_id"], preflight_ledger_sequence=2,
+                azure_instance=self.vm, runtime_evidence=self.runtime_path,
+                now=self.f.now, root=self.quote_fixture.root,
+                instance_transport=lambda _: compute, transport=uncertain)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0], calls[1])
+        self.assertEqual(received["training_runs_consumed"], 1)
+        self.assertEqual(self.ledger.current_state()["sequence"], 3)
         self.assertEqual(self.ledger.replay(self.f.io.body)[0]["sequence"], 3)
         with self.assertRaises(LedgerRejected):
             self.issuer.issue(self.request)
