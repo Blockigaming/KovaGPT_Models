@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 import hashlib
 import json
@@ -225,10 +225,74 @@ class ControllerLedger:
         return result
 
     def _transition(self, state, event, now):
-        if event.get("kind") == "training_grant" and "response_envelope" in event:
+        if event.get("kind") == "training_grant":
+            need(set(event) == {"kind", "family", "quote_sha256", "request_sha256",
+                                "response_envelope"}, "issuer-generated grant envelope required")
             events = state.get("events", [])
             need(events and event.get("quote_sha256") == events[-1].get("quote_sha256"),
                  "grant quote differs from the committed cost admission")
+            envelope = event["response_envelope"]
+            need(type(envelope) is dict and set(envelope) == {"payload", "signature"},
+                 "signed grant response required")
+            payload = envelope["payload"]
+            need(type(payload) is dict and set(payload) == {
+                "schema_version", "kind", "issuer", "source_commit", "subscription_id",
+                "quote_sha256", "lifecycle_id", "preflight_ledger_sequence",
+                "network_evidence_sha256", "ledger_sequence", "ledger_commit_id",
+                "ledger_append_only", "ledger_status", "grant_id", "azure_instance",
+                "azure_identity_token_sha256", "request_nonce", "issued_at_utc",
+                "expires_at_utc", "allocation_deadline_utc", "watchdog_cleanup_trigger_utc",
+                "training_runs_consumed", "all_in_reserved_usd", "all_in_ceiling_usd",
+                "watchdog_healthy", "cleanup_scope_verified", "deployment_authorized"},
+                "grant response shape mismatch")
+            try:
+                need(type(envelope["signature"]) is str and
+                     re.fullmatch(r"[0-9a-f]{128}", envelope["signature"]),
+                     "invalid grant signature")
+                self.public_key.verify(bytes.fromhex(envelope["signature"]),
+                                       authority.canonical(payload))
+            except (InvalidSignature, ValueError, TypeError) as exc:
+                raise LedgerRejected("untrusted grant response") from exc
+            group = self.context["lifecycle"]["pilot_resource_group_id"]
+            instance = authority.validate_azure_instance(payload["azure_instance"])
+            need(payload["source_commit"] == self.context["source_commit"] and
+                 payload["subscription_id"] == group.split("/")[2].lower() and
+                 payload["lifecycle_id"] == self.context["lifecycle"]["lifecycle_id"] and
+                 instance["resource_id"].casefold().startswith(group.casefold() + "/providers/microsoft.compute/virtualmachines/") and
+                 payload["quote_sha256"] == event["quote_sha256"] and
+                 payload["issuer"] == authority.ISSUER and
+                 payload["kind"] == "kova_cosmo_qlora_training_grant" and
+                 type(payload["schema_version"]) is int and payload["schema_version"] == 1,
+                 "grant context mismatch")
+            for key, expected in (("preflight_ledger_sequence", state["sequence"]),
+                                  ("ledger_sequence", state["sequence"] + 1),
+                                  ("training_runs_consumed", 1)):
+                need(type(payload[key]) is int and payload[key] == expected,
+                     "grant sequence or run limit mismatch")
+            for key in ("quote_sha256", "network_evidence_sha256",
+                        "azure_identity_token_sha256", "request_nonce"):
+                need(type(payload[key]) is str and re.fullmatch(r"[0-9a-f]{64}", payload[key]),
+                     "grant digest or nonce missing")
+            need(type(event["request_sha256"]) is str and
+                 re.fullmatch(r"[0-9a-f]{64}", event["request_sha256"]), "request digest missing")
+            for key in ("ledger_commit_id", "grant_id"):
+                need(type(payload[key]) is str and str(uuid.UUID(payload[key])) == payload[key],
+                     "grant identifier missing")
+            need(payload["ledger_append_only"] is True and
+                 payload["ledger_status"] == "grant_committed_before_response" and
+                 payload["watchdog_healthy"] is True and payload["cleanup_scope_verified"] is True and
+                 payload["deployment_authorized"] is False and
+                 payload["all_in_ceiling_usd"] == "3.3000" and
+                 0 < authority.money(payload["all_in_reserved_usd"]) <= authority.money("3.3000"),
+                 "grant controls or reservation invalid")
+            issued = authority.timestamp(payload["issued_at_utc"])
+            expires = authority.timestamp(payload["expires_at_utc"])
+            allocation = authority.timestamp(payload["allocation_deadline_utc"])
+            need(now - timedelta(seconds=60) <= issued <= now and
+                 now + timedelta(minutes=45) <= expires == self.deadline and
+                 payload["watchdog_cleanup_trigger_utc"] == self.context["grant_deadline_utc"] and
+                 expires + timedelta(minutes=15) <= allocation <= self.starts + timedelta(hours=2),
+                 "grant response deadline mismatch")
         return contract.append_ledger_event(state, event,
             expected_sequence=state["sequence"], now=now,
             trusted_lifecycle=self.context["lifecycle"],

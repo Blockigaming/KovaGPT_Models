@@ -85,6 +85,20 @@ resource workflow 'Microsoft.Logic/workflows@2019-05-01' = if (provisionWatchdog
             ]
           }
         }
+        delete_watchdog_group: {
+          type: 'Http'
+          inputs: {
+            method: 'DELETE'
+            uri: '${managementEndpoint}${substring(resourceGroup().id, 1)}?api-version=2022-09-01'
+            authentication: {
+              type: 'ManagedServiceIdentity'
+              audience: managementEndpoint
+            }
+          }
+          runAfter: {
+            delete_pilot_group: ['Succeeded']
+          }
+        }
       }
       outputs: {}
     }
@@ -96,6 +110,16 @@ module watchdogPilotContributor 'three-family-watchdog-pilot-role.bicep' = if (p
   scope: pilotGroup
   params: {
     watchdogPrincipalId: workflow!.identity.principalId
+  }
+}
+
+// Only the dedicated watchdog group; no subscription-wide role is granted.
+resource watchdogSelfCleanup 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (provisionWatchdog) {
+  name: guid(resourceGroup().id, workflow.id, 'watchdog-self-cleanup')
+  properties: {
+    principalId: workflow!.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c')
   }
 }
 

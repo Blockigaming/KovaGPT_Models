@@ -46,7 +46,8 @@ immutable VM ID, managed identity token, lifecycle, ledger sequence, and
 signed cost deadline of at most two hours. The trainer checks installed package versions and a tiny
 NF4 CUDA operation before it opens model weights, and accepts a protected
 snapshot with output in a separate tree. The independent server protocol,
-signer, cleanup watchdog and verified account prices are not provisioned.
+signer and cleanup watchdog are not provisioned. Account meter rates were
+read on 2026-09-25; a complete signed all-in quote is still absent.
 It refuses a grant and stops model work once the signed watchdog cleanup
 trigger arrives, leaving the remaining priced window for resource deletion.
 It reserves up to 60 seconds for grant acquisition and rechecks at least
@@ -74,10 +75,31 @@ never persisted. Deadline checks run again after external verification and
 after commit. The local protocol test sends a guest request through this issuer
 and verifies the returned signature with the existing guest client.
 
-**This is not the completed paid controller.** The production Entra/ARM
-`verify_live_request` adapter, authenticated HTTPS handler, provisioned immutable
-storage, key/credential isolation, watchdog self-cleanup and measured cost
-bound remain missing. The injected observation in local tests is synthetic.
+`training.cosmo_controller_azure.AzureRequestVerifier` now supplies the live
+read adapter. It verifies RS256 Entra tokens with the existing hash-pinned PyJWT
+library and tenant-specific keys, binds tenant/audience/issuer/principal/resource
+ID, then reads the VM, NIC, subnet, NAT, public IP, NSG, watchdog definition and
+direct cleanup roles on both dedicated groups from ARM. Guest credentials never authenticate ARM reads.
+Unexpected public networking, rule changes, another VM/image, a disabled or
+retimed watchdog, incomplete role evidence and stale reads reject the request.
+
+`training.cosmo_controller_http.build_application` wires that reader, the ledger,
+and issuer from a protected controller configuration outside the repository.
+The WSGI endpoint requires server-established HTTPS, the pinned host/path, a
+constant-time bearer credential check and a bounded JSON POST. It has no storage
+initialization, resource creation or administrative route. Failures return a
+sanitized rejection and never retry a possibly committed grant. Durable grant
+transitions require the complete signed issuer envelope; a bare event cannot
+consume the only run. The release fingerprint includes every controller source.
+
+**Paid launch remains blocked.** Source integration is implemented, but the
+TLS host, live immutable storage, isolated credentials and measured all-in
+cost/deletion bound remain unprovisioned or unverified. The watchdog template
+now deletes its own dedicated group after successful pilot-group deletion,
+with Contributor scoped only to those two groups. The verifier checks that
+exact sequence and both roles. Self-deletion has not been rehearsed in Azure.
+Tests use real RSA/Ed25519 signatures and the real guest/issuer/HTTP logic with
+synthetic ARM resources; they do not prove Azure deployment or cleanup.
 The default ledger CLI makes zero provider calls and rejects `--execute`.
 Its `AzureBlobIO` transport is implementation code for a later approved
 deployment; no live storage operations were performed to test it. Storage
@@ -160,30 +182,70 @@ az group exists --name "$WATCHDOG_RESOURCE_GROUP"
 | Emergency cleanup margin | 1.2500 |
 | **Conditional ceiling** | **3.3000** |
 
-At the earlier **public retail** `$0.5260` per hour VM rate, also consistent
-with the portal's nonbinding `$383.98` per 730-hour estimate, two hours of
-compute is `$1.0520`, and the revised reservations total **`$3.4520`**,
-**`$0.1520` over** the ceiling. A *90-minute* signed window would reserve
-`$0.7890` compute and **`$3.1890` all in** under the same unverified ancillary
-assumptions, leaving `$0.1110` of the `$3.30` source reservation unused. At
-that public compute rate a 102-minute signed window totals `$3.2942`, while
-103 minutes totals `$3.3030` and fails admission. The older `$3.2020`
-estimate omitted explicit
-NAT gateway and Logic App charges and cannot authorize the pilot. Algebraically,
-if all other reservations were sufficient,
-`2 × account VM hourly rate + $1.1500 + $1.2500 ≤ $3.3000`
-requires an account VM rate no higher than **`$0.4500` per hour** for a full
-two hours. For 90 minutes the same fixed assumptions allow up to `$0.6000`
-per compute hour. The listed
-ancillary figures are **source assumptions**, not verified subscription
-quotes; the independent admission must reject any account meter or maximum
-quantity exceeding its category reservation, including the NAT gateway hourly
-and bidirectional data processing charges, Standard outbound public IP, the
-minute-by-minute Logic App triggers and actions, watchdog storage, GPU driver
-setup, disks, model transfer, resource deletion latency and applicable tax if
-the owner ceiling covers the invoice total. A two-hour timer or Azure budget
-alert cannot guarantee the eventual invoice is at most `$3.30`. There is **no
-verified all-in cost bound** on this head.
+### Actual account meters, obtained 2026-09-25
+
+The authenticated MCA billing-profile September 2026 price-sheet export was
+successfully downloaded and read in Cloud Shell using the official Cost
+Management API. The following are USD consumption rates, not reservations,
+Spot rates or the portal monthly estimate. Billing identifiers and the raw
+export remain private.
+
+| Meter / scope | Account rate |
+| --- | ---: |
+| Linux NC4as T4 v3, US East | $0.526/hour |
+| Standard NAT Gateway, Global | $0.045/hour |
+| Standard NAT Data Processed, Global | $0.045/GB |
+| Standard IPv4 Static Public IP | $0.005/hour |
+| E6 LRS Standard SSD disk, US East | $4.80/month |
+| Logic Apps Consumption built-in actions | $0.000025/action |
+| Logic Apps Consumption data retention | $0.12/GB-month |
+| Blob Storage Hot LRS capacity, US East, first tier | $0.0208/GB-month |
+| Blob Storage Hot reads, US East | $0.004/10,000 operations |
+| Microsoft Global network internet data out, tier starting at 100 GB | $0.0875/GB |
+
+The selected VM meter is `b04b4869-b6a3-527b-aec2-650a6fb07224`, product
+`Virtual Machines NCasT4 v3 Series - NC4as T4 v3 - US East`, effective
+2026-09-01 through 2026-09-30. Free allowances are not assumed available.
+Storage rows do not select the as-yet-unprovisioned controller storage SKU;
+write/list/disk transaction rates, controller TLS hosting, retention quantities,
+applicable tax and a measured deletion bound remain unresolved.
+
+### The existing worksheet fails; no affordable run is established yet
+
+At the verified account VM rate, 90 minutes of compute is **$0.7890**;
+two hours is **$1.0520**. Keeping the existing ancillary reservations yields
+$3.1890 and $3.4520 respectively, but the 90-minute figure is **not a valid
+all-in bound**: its NAT-data category reserves only $0.1000.
+
+The pinned model manifest contains **1,519,207,673 bytes**. The 17 pinned Linux
+CPython 3.12 GPU dependency wheels (torch, bitsandbytes, triton and the 14
+`nvidia-*` packages) add **3,965,784,438 bytes**, for a known download floor of
+**5,484,992,111 bytes** on the proposed uncached Ubuntu/NAT path. Wheel sizes
+came from the official [PyPI version JSON API](https://docs.pypi.org/api/json/),
+with each filename's SHA-256 matched to the existing hash lock. Only metadata
+was fetched; no model weights or training wheels were downloaded.
+
+At $0.045/GB this is **$0.246825** for decimal GB, or **$0.229873** if interpreted
+as binary GiB. Both exceed the $0.10 reservation before other Python packages,
+OS/driver setup, request overhead, retries or uploads. Replacing only the
+insufficient NAT-data reservation puts the 90-minute worksheet at
+**$3.335825** (decimal) or **$3.318873** (binary), already above $3.30.
+These are corrected reservation totals, not predictions that the eventual
+invoice must exceed $3.30: other categories contain unused allowance, but
+rebalancing them requires verified quantities and a complete quote.
+
+For context, known 90-minute VM + NAT-hour + public-IP charges alone total
+$0.8640. Adding just the known decimal transfer floor gives $1.110825,
+**excluding** disk, storage, transactions, driver/setup traffic, controller,
+watchdog, deletion delay, retries and tax. This subtotal cannot authorize a run.
+
+The existing cost guard remains unchanged and correctly blocks a quote whose
+NAT category exceeds its allowance. Do not silently borrow another category's
+reserve, shrink the minimum 90-minute signed window or increase the owner's
+$3.30 ceiling. A corrected complete account worksheet and any reviewed cost
+category changes must precede a launch request. An Azure timer or budget alert
+cannot guarantee the eventual invoice. There is **no verified all-in cost
+bound** on this head.
 
 ## Read-only evidence to refresh in the intended subscription
 
@@ -221,17 +283,14 @@ CUDA 12.8 / bitsandbytes stack. No provider registration has been changed.
 resource graph, but it does not reserve a GPU. Capacity and exact hardware
 identity can be confirmed only after an approved allocation.
 
-Get the **current billing-account price sheet** for the account's agreement
-type (MCA/MPA or EA), locate the exact East US compute meter, and price every
-ancillary meter above. The public Retail Prices API is useful for comparison
-only. Microsoft documents separate [billing-profile price sheets](https://learn.microsoft.com/en-us/rest/api/cost-management/price-sheet/download-by-billing-profile?view=rest-cost-management-2025-03-01)
-for MCA/MPA and [billing-account price sheets](https://learn.microsoft.com/en-us/rest/api/cost-management/price-sheet/download-by-billing-account?view=rest-cost-management-2025-03-01)
-for EA. The MCA profile has been identified privately, but the current
-account-specific price sheet and all ancillary meters have **not** been read.
-The billing profile's September 2026 price-sheet export was requested and Azure
-reported success, but the browser transfer did not deliver a readable file.
-That notification is not evidence of any actual meter rate.
-Keep billing identifiers and price exports out of this public source branch.
+The current MCA account price sheet has now been read successfully; the earlier
+browser download failure is resolved. The export API first returned HTTP 202,
+then its completion endpoint returned the private download link. Selected
+account meters are recorded above; a price sheet does not itself supply the
+missing usage limits or sign the launch quote. Microsoft documents the
+[billing-profile price-sheet export](https://learn.microsoft.com/en-us/rest/api/cost-management/price-sheet/download-by-billing-profile?view=rest-cost-management-2025-03-01).
+Keep billing identifiers, authentication tokens, SAS links and raw exports out
+of this public source branch.
 
 ## Paid sequence awaiting final approval
 
@@ -299,19 +358,18 @@ Do not proceed to training from a failed or incomplete step.
   release. The exact East US SKU returned `restrictions: []`; the pinned
   East US image returned `imageState: Active`. Live allocation capacity,
   image deployability and runtime compatibility remain unverified.
-- The billing account and MCA profile were identified, but subscription rates,
-  all ancillary and control-plane meters, and the tax treatment remain unknown.
-  The revised two-hour `$3.4520` calculation using that earlier public rate exceeds
-  the ceiling by `$0.1520`; either a verified account compute rate at most
-  `$0.4500` per hour for a full two hours or a shorter signed allocation fitting
-  the verified all-in calculation is required. The public-rate
-  calculation is not an account quote or a hard cap.
+- Account compute and the principal ancillary rates are now known. The current
+  NAT-data reservation is insufficient even for the known model/GPU-wheel
+  download floor, pushing the otherwise unchanged 90-minute worksheet above
+  $3.30. A complete affordable worksheet still needs bounded setup/cleanup
+  quantities, remaining transaction and controller costs, retention and tax.
 - The independent authority endpoint/signing key, deployed atomic remote grants,
   watchdog health and self-cleanup proof, signed VM preflight, and signed
   subscription quote do not
   exist. The older `$2` authority contract is not a `$3.30` controller.
-  The new ledger persistence and grant issuer are source implementations;
-  production Entra/ARM verification and HTTPS integration are still absent.
+  The ledger, grant issuer, Entra/ARM reader and authenticated WSGI endpoint are
+  source implementations. Live hosting, identity isolation, locked storage and
+  cleanup rehearsal still require a separately approved concrete operation.
 - The `training.cosmo_qlora_training` paid entrypoint deliberately fails before
   any model load or Azure action. A separate reviewed source release and
   end-to-end lifecycle rehearsal must precede an executable purchase request.
@@ -320,3 +378,15 @@ Do not proceed to training from a failed or incomplete step.
 
 No resource creation, weights, training, deployment, or merge is authorized
 by this review package.
+
+## Verification for this source batch
+
+The 114 combined controller/guest/lifecycle/launch/training/release unit tests
+passed under Python 3.12 with the existing hash-locked authentication packages;
+`pip check` passed. Source infrastructure checks and compilation with the
+repository's checksum-pinned Bicep compiler passed. Tests exercise real RSA and
+Ed25519 signatures, the complete guest-to-issuer-to-ledger-to-HTTP path with
+synthetic Azure reads, rejected identity/network/watchdog variants, ambiguous
+append outcomes, bare-grant rejection, protected factory configuration and
+release fingerprint drift. These checks do not constitute a live cloud or GPU
+rehearsal. The 42 records, model pins and training configuration are unchanged.

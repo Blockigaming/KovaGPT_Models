@@ -1,0 +1,107 @@
+"""Authenticated WSGI endpoint for one Cosmo grant; does not start a server.
+
+A separately approved TLS host loads build_application from its private config.
+The app never initializes storage, creates resources, or releases the trainer.
+Request bodies cannot select controller keys, quotes, Azure scopes or files.
+"""
+import hashlib
+import hmac
+from pathlib import Path
+import re
+from urllib.parse import urlsplit
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from training import cosmo_lifecycle_authority as authority
+from training import cosmo_qlora_launch as launch
+from training.cosmo_controller_azure import AzureReadIO, AzureRequestVerifier, cli_token
+from training.cosmo_controller_grants import GrantIssuer
+from training.cosmo_controller_ledger import AzureBlobIO, ControllerLedger, need, parse_json
+
+
+class GrantApplication:
+    def __init__(self, *, issuer, endpoint, bearer_token):
+        endpoint = urlsplit(endpoint)
+        need(endpoint.scheme == "https" and endpoint.hostname and endpoint.path and
+             not endpoint.query and not endpoint.fragment and not endpoint.username and
+             not endpoint.password and endpoint.port in (None, 443), "pinned HTTPS endpoint required")
+        need(type(bearer_token) is str and authority.TOKEN.fullmatch(bearer_token),
+             "controller bearer token required")
+        self.issuer, self.host, self.path = issuer, endpoint.netloc, endpoint.path
+        self.token_hash = hashlib.sha256(bearer_token.encode("ascii")).digest()
+
+    def __call__(self, environ, start_response):
+        status, value = "403 Forbidden", {"error": "grant_request_rejected"}
+        try:
+            # Require the hosting server's TLS state. X-Forwarded-* is ignored.
+            need(environ.get("wsgi.url_scheme") == "https" and
+                 environ.get("HTTP_HOST") == self.host and
+                 environ.get("PATH_INFO") == self.path and not environ.get("QUERY_STRING") and
+                 environ.get("REQUEST_METHOD") == "POST", "invalid endpoint")
+            auth = environ.get("HTTP_AUTHORIZATION", "")
+            need(type(auth) is str and auth.startswith("Bearer ") and len(auth) <= 16391 and
+                 hmac.compare_digest(hashlib.sha256(auth[7:].encode("ascii")).digest(), self.token_hash),
+                 "invalid endpoint credential")
+            need(environ.get("CONTENT_TYPE", "").lower() in ("application/json", "application/json; charset=utf-8") and
+                 not environ.get("HTTP_TRANSFER_ENCODING") and not environ.get("HTTP_CONTENT_ENCODING"),
+                 "unsupported body encoding")
+            length = environ.get("CONTENT_LENGTH", "")
+            need(type(length) is str and re.fullmatch(r"[1-9][0-9]{0,4}", length) and
+                 int(length) <= 65536, "bounded body required")
+            raw = environ["wsgi.input"].read(int(length))
+            need(len(raw) == int(length), "incomplete body")
+            request = parse_json(raw)
+            value = self.issuer.issue(request)
+            status = "200 OK"
+        except Exception:
+            # Never return token, Azure error, signed quote or ledger internals.
+            # An uncertain append stays consumed; this handler does not retry it.
+            pass
+        raw = authority.canonical(value)
+        start_response(status, [("Content-Type", "application/json"),
+            ("Content-Length", str(len(raw))), ("Cache-Control", "no-store"),
+            ("X-Content-Type-Options", "nosniff")])
+        return [raw]
+
+
+def private_file(path, root, maximum=65536):
+    path = Path(path)
+    need(path.is_absolute() and path.is_file() and not path.is_symlink(), "private control file missing")
+    resolved, repository = path.resolve(strict=True), root.resolve(strict=True)
+    need(repository not in resolved.parents and repository != resolved and
+         resolved.stat().st_mode & 0o077 == 0 and resolved.stat().st_size <= maximum,
+         "control files must be protected and outside the repository")
+    return resolved.read_bytes()
+
+
+def build_application(config_path, *, root=launch.ROOT):
+    """Wire the production read adapter, ledger, issuer and HTTP boundary.
+
+    Merely building the app makes no Azure requests. The existing ledger must
+    already have independently verified health/cost admissions before a POST.
+    Host TLS/body/read timeouts and protected storage need separate approval.
+    """
+    config = parse_json(private_file(config_path, root))
+    need(type(config) is dict and set(config) == {"ledger_context", "tenant_id", "token_version",
+        "watchdog_resource_id", "signing_key_file", "preservation_public_key_hex",
+        "cleanup_public_key_hex", "bearer_token_file", "quote_file", "runtime_evidence_file"},
+        "controller configuration shape mismatch")
+    source = launch.clean_source_commit(root)
+    need(config["ledger_context"]["source_commit"] == source, "controller source pin mismatch")
+    trust = authority.load_trust_policy(root)
+    need(trust["status"] == "authority_pinned", "controller trust not pinned")
+    key = Ed25519PrivateKey.from_private_bytes(private_file(config["signing_key_file"], root, 32))
+    token = authority._load_bearer_token(Path(config["bearer_token_file"]), repository_root=root)
+    for name in ("quote_file", "runtime_evidence_file"):
+        private_file(config[name], root)
+    context = config["ledger_context"]
+    io = AzureBlobIO(account=context["storage_account"], token_for=cli_token)
+    ledger = ControllerLedger(context=context, signing_key=key, transport=io,
+        preservation_public_key=bytes.fromhex(config["preservation_public_key_hex"]),
+        cleanup_public_key=bytes.fromhex(config["cleanup_public_key_hex"]))
+    reader = AzureReadIO(account=context["storage_account"], tenant_id=config["tenant_id"])
+    verifier = AzureRequestVerifier(tenant_id=config["tenant_id"], token_version=config["token_version"],
+        lifecycle=context["lifecycle"], watchdog_id=config["watchdog_resource_id"], read_json=reader)
+    issuer = GrantIssuer(ledger=ledger, quote=Path(config["quote_file"]),
+        runtime_evidence=Path(config["runtime_evidence_file"]), verify_live_request=verifier, root=root)
+    return GrantApplication(issuer=issuer, endpoint=trust["endpoint"], bearer_token=token)

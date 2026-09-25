@@ -107,7 +107,27 @@ class ControllerLedgerTests(unittest.TestCase):
             "account_price_verified": True, "quote_sha256": "a" * 64,
             "remaining_budget_usd": "3.3000", "observed_at_utc": "2026-09-24T12:00:00Z",
             "expires_at_utc": "2026-09-24T12:05:00Z"}
-        self.grant = {"kind": "training_grant", "family": "kova-cosmo"}
+        payload = {"schema_version": 1, "kind": "kova_cosmo_qlora_training_grant",
+            "issuer": authority.ISSUER, "source_commit": self.context["source_commit"],
+            "subscription_id": "12345678-1234-1234-1234-123456789abc",
+            "quote_sha256": "a" * 64, "lifecycle_id": "cosmo42-once",
+            "preflight_ledger_sequence": 2, "ledger_sequence": 3,
+            "network_evidence_sha256": "b" * 64, "azure_identity_token_sha256": "c" * 64,
+            "request_nonce": "e" * 64, "ledger_commit_id": "12345678-1234-1234-1234-123456789abc",
+            "grant_id": "12345678-1234-1234-1234-123456789abd", "ledger_append_only": True,
+            "ledger_status": "grant_committed_before_response", "azure_instance": {
+                "resource_id": prefix + "pilot/providers/Microsoft.Compute/virtualMachines/kova-t4-test01",
+                "vm_id": "12345678-1234-1234-1234-123456789abd",
+                "system_assigned_identity_principal_id": "12345678-1234-1234-1234-123456789abe"},
+            "issued_at_utc": "2026-09-24T12:01:00Z", "expires_at_utc": "2026-09-24T13:15:00Z",
+            "allocation_deadline_utc": "2026-09-24T13:30:00Z",
+            "watchdog_cleanup_trigger_utc": "2026-09-24T13:15:00Z",
+            "training_runs_consumed": 1, "all_in_reserved_usd": "3.1890",
+            "all_in_ceiling_usd": "3.3000", "watchdog_healthy": True,
+            "cleanup_scope_verified": True, "deployment_authorized": False}
+        self.grant = {"kind": "training_grant", "family": "kova-cosmo", "quote_sha256": "a" * 64,
+            "request_sha256": "f" * 64, "response_envelope": {"payload": payload,
+                "signature": self.key.sign(authority.canonical(payload)).hex()}}
 
     def make(self, context=None):
         return ledger.ControllerLedger(context=context or self.context, signing_key=self.key,
@@ -119,6 +139,18 @@ class ControllerLedgerTests(unittest.TestCase):
         self.subject.append(self.health, expected_sequence=0)
         self.subject.append(self.cost, expected_sequence=1)
 
+    def test_bare_or_tampered_grant_cannot_consume_the_slot(self):
+        self.prepared()
+        before = self.io.body
+        bare = {"kind": "training_grant", "family": "kova-cosmo"}
+        tampered = deepcopy(self.grant)
+        tampered["response_envelope"]["payload"]["request_nonce"] = "0" * 64
+        for bad in (bare, {**self.grant, "extra": True}, tampered):
+            with self.subTest(bad=bad), self.assertRaises(ledger.LedgerRejected):
+                self.subject.append(bad, expected_sequence=2)
+            self.assertEqual(before, self.io.body)
+        self.subject.append(self.grant, expected_sequence=2)
+
     def test_restart_replays_history_and_cannot_grant_twice(self):
         self.prepared()
         record = self.subject.append(self.grant, expected_sequence=2)
@@ -127,7 +159,7 @@ class ControllerLedgerTests(unittest.TestCase):
                                        authority.canonical(record["payload"]))
         restarted = self.make()
         self.assertEqual(restarted.replay(self.io.body)[0]["family_order"], ["kova-cosmo"])
-        with self.assertRaises(contract.ContractError):
+        with self.assertRaises((ledger.LedgerRejected, contract.ContractError)):
             restarted.append(self.grant, expected_sequence=3)
         self.assertIsNone(self.io.lease)
 
@@ -204,7 +236,7 @@ class ControllerLedgerTests(unittest.TestCase):
         self.prepared()
         before = self.io.body
         self.now += timedelta(minutes=5)
-        with self.assertRaises(contract.ContractError):
+        with self.assertRaises((ledger.LedgerRejected, contract.ContractError)):
             self.subject.append(self.grant, expected_sequence=2)
         self.now = authority.timestamp(self.context["grant_deadline_utc"])
         with self.assertRaises(ledger.LedgerRejected):

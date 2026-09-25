@@ -34,6 +34,8 @@ export function validateSource() {
   assert.match(watchdog, /output externalAppendOnlyLedgerRequired bool = true/);
   assert.match(watchdog, /deallocate_after_deadline/);
   assert.match(watchdog, /delete_pilot_group/);
+  assert.match(watchdog, /delete_watchdog_group/);
+  assert.match(watchdog, /watchdogSelfCleanup/);
   assert.match(watchdog, /watchdogPilotContributor/);
   assert.match(watchdogRole, /watchdogPrincipalId/);
   assert.match(watchdogRole, /b24988ac-6180-42a0-ab88-20f7382dd24c/);

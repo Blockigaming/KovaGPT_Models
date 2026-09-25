@@ -1,9 +1,9 @@
-"""Independent controller grant issuer; HTTP/Entra/ARM integration is pending.
+"""Independent controller grant issuer; Azure and HTTP adapters are separate.
 
 The guest supplies a request, never the controller's quote, preflight, keys,
 ledger context, or verifier. A separately configured control-host verifier
 must validate the Entra signature and read live Azure identity/network/watchdog
-state. No default or boolean-only verifier is supplied by this source release.
+state. cosmo_controller_http.build_application wires the production Azure reader.
 """
 from datetime import timedelta
 import hashlib
@@ -35,7 +35,7 @@ class GrantIssuer:
         verify_live_request is trusted deployment code, not a guest-supplied
         callback. It must fetch/validate current Entra keys and Azure resources
         independently. The returned observation below is never accepted from
-        an HTTP body. Its production adapter remains an explicit launch blocker.
+        an HTTP body. cosmo_controller_azure supplies the production read adapter.
         """
         request = parse_json(authority.canonical(request))
         need(type(request) is dict and set(request) == {
