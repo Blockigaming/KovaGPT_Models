@@ -11,16 +11,55 @@ from execution.activity import activity_from_started_event
 from execution.contracts import ExecutionBlocked, ExecutionError, ExecutionSpec, canonical
 from execution.runner import LocalRunner
 from execution.store import LocalJobStore
-from execution.test_support import IDENTITY, OWNER, ModelFixture, grant_for, make_spec, tokens
+from execution.test_support import IDENTITY, OWNER, ModelFixture, SyntheticAdapterTestCase, grant_for, make_spec, tokens
 from execution.workers import ModelStageWorker
+from core.current_candidates import CORE_SERVING
+from worker.handler import PINNED_CORE_CANDIDATES
 
 
-class RunnerTests(unittest.TestCase):
+class RunnerTests(SyntheticAdapterTestCase):
     def setUp(self):
+        super().setUp()
         self.store = LocalJobStore()
 
     def tearDown(self):
         self.store.close()
+
+    def test_persisted_job_reads_after_adapter_rotation_and_dispatch_fails_closed(self):
+        spec = make_spec("instant")
+        grant = grant_for(spec)
+        job = self.store.create(grant, "adapter-rotation", spec)
+        self.assertEqual(self.store.server_spec(OWNER, job).fingerprint, spec.fingerprint)
+        candidate = next(c for c in CORE_SERVING["candidates"] if c["model"] == spec.snapshot()["runtime_identity"]["model"])
+        candidate["adapter_sha256"] = "e" * 64
+        PINNED_CORE_CANDIDATES[candidate["id"]]["adapter_sha256"] = "e" * 64
+        self.assertEqual(self.store.server_spec(OWNER, job).fingerprint, spec.fingerprint)
+        fixture = ModelFixture()
+        status = LocalRunner(self.store, lambda: grant, fixture.worker()).run(job)
+        self.assertEqual(status["state"], "failed")
+        self.assertEqual(fixture.calls, [])
+
+    def test_same_weights_but_changed_adapter_config_pin_blocks_dispatch(self):
+        spec = make_spec("instant")
+        grant = grant_for(spec)
+        job = self.store.create(grant, "bundle-rotation", spec)
+        candidate = next(c for c in CORE_SERVING["candidates"] if c["model"] == spec.snapshot()["runtime_identity"]["model"])
+        candidate["adapter_bundle_sha256"] = "e" * 64
+        PINNED_CORE_CANDIDATES[candidate["id"]]["adapter_bundle_sha256"] = "e" * 64
+        self.assertEqual(self.store.server_spec(OWNER, job).fingerprint, spec.fingerprint)
+        fixture = ModelFixture()
+        status = LocalRunner(self.store, lambda: grant, fixture.worker()).run(job)
+        self.assertEqual(status["state"], "failed")
+        self.assertEqual(fixture.calls, [])
+
+    def test_ultra_attempt_telemetry_includes_pinned_adapter(self):
+        spec, fixture, _, _, status = self.run_job(make_spec("ultra"))
+        self.assertEqual(status["state"], "succeeded")
+        self.assertTrue(fixture.records)
+        self.assertTrue(all(record["adapter_sha256"] == spec.snapshot()["runtime_identity"]["adapter_sha256"]
+                            for record in fixture.records))
+        self.assertTrue(all(record["adapter_bundle_sha256"] == spec.snapshot()["runtime_identity"]["adapter_bundle_sha256"]
+                            for record in fixture.records))
 
     def run_job(self, spec=None, fixture=None, *, worker=None, authorization=None, max_stages=None):
         spec = spec or make_spec()
@@ -31,7 +70,7 @@ class RunnerTests(unittest.TestCase):
         status = runner.run(job, max_stages=max_stages)
         return spec, fixture, job, runner, status
 
-    def test_all_twenty_core_profiles_execute_all_113_stages(self):
+    def test_all_current_core_profiles_execute_all_171_stages(self):
         from execution.contracts import ALL_ROUTES
         count = 0
         for route in sorted(ALL_ROUTES - {r for r in ALL_ROUTES if r == "ultra" or r.endswith(":ultra")}):
@@ -51,7 +90,7 @@ class RunnerTests(unittest.TestCase):
                     else:
                         self.assertIsNone(record["time_to_first_token_ms"])
                 count += len(spec.stages)
-        self.assertEqual(count, 113)
+        self.assertEqual(count, 171)
 
     def test_all_four_ultra_routes_execute_both_conditional_branches(self):
         for route in ("ultra", "work:cosmo:ultra", "work:orion:ultra", "work:nova:ultra"):

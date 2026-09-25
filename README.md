@@ -48,8 +48,8 @@ Kova is not a foundation model trained from scratch. Cosmo, Orion, and Nova are 
 Kova Auto sits above six Chat modes: Instant, Medium, High, Extra High, Max,
 and Ultra. Instant through Max use increasing compute policies over one Kova
 Core model. Ultra changes architecture to dynamic specialists, a disagreement
-check, a judge, and synthesis. Work exposes Kova 5.6 Cosmo, Kova 5.6 Orion,
-and Kova 5.6 Nova, each with Light through Ultra effort. Instant responds directly. Deeper modes
+check, a judge, and synthesis. Work exposes Kova Cosmo, Kova Orion,
+and Kova Nova, each with Light through Ultra effort. Instant responds directly. Deeper modes
 may provide concise, truthful progress updates and ask focused questions when
 missing information would materially change the result. Activity text is never
 hidden chain-of-thought and may only describe events that actually occurred.
@@ -196,10 +196,9 @@ customer price = attributable cost / 0.574
 This formula targets 42.6% before rounding. Realized margin must be measured from
 actual usage and recalibrated; it cannot be guaranteed from GPU list prices alone.
 
-The public catalog reserves Kova Auto, Kova 5.6 Cosmo, Kova 5.6 Orion, Kova 5.6
-Nova, and Kova Ultra. None is live. Public profile names describe actual compute and
-orchestration differences while sharing Core weights through Max; they never imply
-separate foundation models.
+The target catalog contains Kova Cosmo, Kova Orion, and Kova Nova. Nova is
+Work-only. Lite through Ultra are bounded processing configurations over the
+selected family, not separate foundation models. None is live.
 
 The offline evaluator resolves all 25 Auto, Chat, and Work route contracts through
 the actual router; builds provider-free Core or Ultra plans; verifies DAG, identity,

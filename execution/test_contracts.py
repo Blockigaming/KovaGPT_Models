@@ -5,12 +5,59 @@ from execution.contracts import (
     ALL_ROUTES, ExecutionBlocked, ExecutionError, ExecutionGrant, ExecutionLimits,
     ExecutionSpec, canonical,
 )
-from execution.test_support import IDENTITY, grant_for, make_plan, make_spec
+from execution.test_support import IDENTITY, SyntheticAdapterTestCase, grant_for, make_plan, make_spec
+from core.current_candidates import CORE_SERVING
 
 
-class ExecutionContractTests(unittest.TestCase):
-    def test_all_24_explicit_routes_keep_names_and_original_budgets(self):
-        self.assertEqual(len(ALL_ROUTES), 24)
+class ExecutionContractTests(SyntheticAdapterTestCase):
+    def test_new_admission_rejects_context_above_current_candidate_limit(self):
+        spec = make_spec("high")
+        identity = spec.snapshot()["runtime_identity"]
+        candidate = next(c for c in CORE_SERVING["candidates"] if c["model"] == identity["model"])
+        caps = {stage.id: stage.cost_cap_microusd for stage in spec.stages}
+        inflated = {**identity, "context_tokens": candidate["context_tokens"] + 1}
+        with self.assertRaisesRegex(ExecutionError, "served context exceeds current candidate context"):
+            ExecutionSpec.from_plan(spec.plan, limits=spec.limits,
+                                    runtime_identity=inflated, stage_cost_caps=caps)
+
+        previous_limit = candidate["context_tokens"]
+        self.addCleanup(candidate.__setitem__, "context_tokens", previous_limit)
+        candidate["context_tokens"] = previous_limit - 1
+        # Existing snapshots stay readable after a candidate context reduction.
+        self.assertEqual(ExecutionSpec(spec.encoded).fingerprint, spec.fingerprint)
+        with self.assertRaisesRegex(ExecutionError, "served context exceeds current candidate context"):
+            ExecutionSpec.from_plan(spec.plan, limits=spec.limits,
+                                    runtime_identity=identity, stage_cost_caps=caps)
+
+    def test_saved_snapshot_survives_adapter_rotation_but_new_admission_does_not(self):
+        spec = make_spec("instant")
+        candidate = next(c for c in CORE_SERVING["candidates"] if c["model"] == spec.snapshot()["runtime_identity"]["model"])
+        candidate["adapter_sha256"] = "e" * 64
+        self.assertEqual(ExecutionSpec(spec.encoded).fingerprint, spec.fingerprint)
+        with self.assertRaisesRegex(ExecutionError, "adapter differs from current candidate pin"):
+            ExecutionSpec.from_plan(spec.plan, limits=spec.limits,
+                                    runtime_identity=spec.snapshot()["runtime_identity"],
+                                    stage_cost_caps={stage.id: stage.cost_cap_microusd for stage in spec.stages})
+
+    def test_saved_snapshot_survives_bundle_rotation_but_new_admission_does_not(self):
+        spec = make_spec("instant")
+        candidate = next(c for c in CORE_SERVING["candidates"] if c["model"] == spec.snapshot()["runtime_identity"]["model"])
+        candidate["adapter_bundle_sha256"] = "e" * 64
+        self.assertEqual(ExecutionSpec(spec.encoded).fingerprint, spec.fingerprint)
+        with self.assertRaisesRegex(ExecutionError, "adapter bundle differs from current candidate pin"):
+            ExecutionSpec.from_plan(spec.plan, limits=spec.limits,
+                                    runtime_identity=spec.snapshot()["runtime_identity"],
+                                    stage_cost_caps={stage.id: stage.cost_cap_microusd for stage in spec.stages})
+
+    def test_ultra_snapshot_rejects_another_family_identity(self):
+        spec = make_spec("work:nova:ultra")
+        changed = spec.snapshot()
+        changed["runtime_identity"] = dict(IDENTITY)
+        with self.assertRaisesRegex(ExecutionError, "invalid execution snapshot"):
+            ExecutionSpec(canonical(changed))
+
+    def test_all_36_explicit_and_migration_routes_keep_bounded_budgets(self):
+        self.assertEqual(len(ALL_ROUTES), 36)
         for route in sorted(ALL_ROUTES):
             with self.subTest(route=route):
                 spec = make_spec(route)
@@ -35,7 +82,8 @@ class ExecutionContractTests(unittest.TestCase):
         plan = make_plan()
         expected = make_spec()
         caps = {s.id: 100 for s in expected.stages}
-        spec = ExecutionSpec.from_plan(plan, limits=expected.limits, runtime_identity=IDENTITY,
+        spec = ExecutionSpec.from_plan(plan, limits=expected.limits,
+                                       runtime_identity=expected.snapshot()["runtime_identity"],
                                        stage_cost_caps=caps)
         fingerprint = spec.fingerprint
         plan["display_name"] = "changed"
@@ -43,7 +91,7 @@ class ExecutionContractTests(unittest.TestCase):
         copy = spec.plan
         copy["display_name"] = "changed again"
         self.assertEqual(spec.fingerprint, fingerprint)
-        self.assertEqual(spec.plan["display_name"], "Kova 5.6 Nova")
+        self.assertEqual(spec.plan["display_name"], "Kova Orion — High")
         self.assertNotIn("PRIVATE", repr(spec))
 
     def test_every_stage_needs_explicit_cost_bounds_and_total_admission(self):
@@ -66,6 +114,8 @@ class ExecutionContractTests(unittest.TestCase):
             lambda v: v["stages"][0].update(maximum_output_tokens=999),
             lambda v: v["stages"][0].update(condition="always"),
             lambda v: v["runtime_identity"].update(model_revision="unpinned"),
+            lambda v: v["runtime_identity"].update(adapter_sha256="not-a-digest"),
+            lambda v: v["runtime_identity"].update(adapter_bundle_sha256="not-a-digest"),
             lambda v: v["runtime_identity"].update(context_tokens=1),
             lambda v: v["plan"].update(production_ready=True),
             lambda v: v["plan"].update(route_id="thinking"),
@@ -82,15 +132,10 @@ class ExecutionContractTests(unittest.TestCase):
                 with self.subTest(tier=tier, route=route), self.assertRaises(ExecutionBlocked):
                     grant_for(spec, tier=tier).authorize("fixture-owner", route)
 
-    def test_free_thinking_alias_is_narrow_and_still_needs_exact_route_grant(self):
+    def test_superseded_free_thinking_alias_is_rejected(self):
         grant = ExecutionGrant("fixture-owner", "free", frozenset(("medium",)), True)
-        grant.authorize("fixture-owner", "medium", application_mode_id="thinking")
-        for app_mode in (None, "medium", "instant", "THINKING"):
-            with self.subTest(app_mode=app_mode), self.assertRaises(ExecutionBlocked):
-                grant.authorize("fixture-owner", "medium", application_mode_id=app_mode)
         with self.assertRaises(ExecutionBlocked):
-            ExecutionGrant("fixture-owner", "free", frozenset(("instant",)), True).authorize(
-                "fixture-owner", "medium", application_mode_id="thinking")
+            grant.authorize("fixture-owner", "medium", application_mode_id="thinking")
 
     def test_complete_work_matrix_and_exact_route_allowlist_are_both_required(self):
         efforts = ("light", "medium", "high", "extra-high", "max", "ultra")
@@ -99,7 +144,7 @@ class ExecutionContractTests(unittest.TestCase):
                 for effort in efforts:
                     route = f"work:{family}:{effort}"
                     grant = ExecutionGrant("fixture-owner", tier, frozenset((route,)), True)
-                    expected = tier == "pro" or (tier == "plus" and effort in ("light", "medium", "high"))
+                    expected = tier in ("plus", "pro")
                     with self.subTest(tier=tier, route=route):
                         if expected:
                             grant.authorize("fixture-owner", route)

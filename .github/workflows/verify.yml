@@ -8,6 +8,27 @@ permissions:
   contents: read
 
 jobs:
+  three-family-model-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        family: [kova-cosmo, kova-orion, kova-nova]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate immutable family contract without provider calls
+        env:
+          KOVA_CONTRACT_FAMILY: ${{ matrix.family }}
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+        run: |
+          python -m training.three_family_contract > contract.json
+          python -c 'import json,os; r=json.load(open("contract.json")); assert os.environ["KOVA_CONTRACT_FAMILY"] in r["families"]; assert r["provider_calls_made"] == 0; assert r["weights_downloaded"] is False'
+
   cosmo-peft-cpu-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -96,6 +117,8 @@ jobs:
           "$compiler" --version
           echo "KOVA_BICEP=$compiler" >> "$GITHUB_ENV"
       - run: npm test
+      - name: Check current routing source against archived policy
+        run: python3 -m unittest release.test_source_policy_drift
       - run: npm run preflight
       - name: Archive verified committed source
         if: github.event_name == 'push'

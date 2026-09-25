@@ -83,6 +83,57 @@ class RolloutTests(unittest.TestCase):
         with self.assertRaises(RolloutRejected):
             self.promote()
 
+    def test_current_policy_or_family_revision_expires_a_staged_plan(self):
+        original = Path.read_bytes
+        for relative in ("release/rollout.py", "evaluation/offline.py",
+                         "ultra/conversation.py", "config/ultra-orchestration.v1.json",
+                         "config/activity-event.v1.json", "config/kova-three-family-evaluation.v1.json",
+                         "config/model-rollout.v1.json",
+                         "config/current-product-policy.v3.json",
+                         "config/kova-private-lineage.v1.json", "router/entitlements.py",
+                         "release/model_revisions.py", "core/current_candidates.py",
+                         "prompts/kova-identity.v3.txt", "core/identity.py",
+                         "config/kova-three-family-dataset.v2.json", "worker/handler.py",
+                         "config/qwen3-0.6b-download-manifest.v1.json",
+                         "config/qwen3-1.7b-download-manifest.v1.json",
+                         "config/qwen3-4b-download-manifest.v1.json",
+                         "worker/model_artifact.py", "worker/model_startup.py",
+                         "worker/serving_runtime.py", "execution/contracts.py",
+                         "scripts/summarize-core-benchmark.mjs", "ultra/binding.py",
+                         "execution/workers.py", "execution/source_context.py",
+                         "evaluation/three_family_guard.py", "config/inference-contract.v1.json",
+                         "training/three_family_contract.py",
+                         "training/cosmo_qlora_launch.py",
+                         "training/cosmo_qlora_training.py",
+                         "training/cosmo_qlora_grant.py",
+             "training/cosmo_controller_ledger.py", "training/cosmo_controller_grants.py",
+             "training/cosmo_controller_azure.py", "training/cosmo_controller_http.py",
+             "requirements/receiver-auth-py312-linux.lock",
+                         "training/cosmo_lifecycle_authority.py",
+                         "training/snapshot_verifier.py",
+                         "training/cosmo_hardware.py",
+                         "training/cosmo_runtime_probe.py",
+                         "training/cosmo_artifacts.py",
+                         "training/kova_cosmo_sft.py",
+                         "config/kova-cosmo-qlora.v1.json",
+                         "config/kova-three-family-cost-guard.v1.json",
+                         "config/kova-cosmo-lifecycle-trust.v1.json",
+                         "config/kova-three-family-training-stack.v1.json",
+                         "config/kova-t4-compatibility.v1.json",
+                         "requirements/kova-cosmo-sft-py312-linux.lock",
+                         "requirements/kova-three-family-bitsandbytes-py312-linux.lock",
+                         "infra/three-family-pilot-vm.bicep",
+                         "infra/three-family-watchdog.bicep",
+                         "infra/three-family-watchdog-pilot-role.bicep",
+                         "config/completion-target.v1.json"):
+            def changed(path):
+                data = original(path)
+                return data + b"\n# changed" if str(path).endswith(relative) else data
+            with self.subTest(relative=relative), patch.object(Path, "read_bytes", changed):
+                self.assertNotEqual(policy_digest(), self.plan["policy_sha256"])
+                with self.assertRaises(RolloutRejected):
+                    validate_plan(self.plan)
+
     def test_missing_failed_unknown_or_manual_pending_route_gates_block_every_route(self):
         for route in evidence(self.plan, 0)["routes"]:
             for bad in (None, "fail", "unknown", "pending_human_review", True):

@@ -15,10 +15,10 @@ from execution.postgres_store import install_postgres_schema
 from execution.record_cipher import KeyMaterial, RecordCipher
 from execution.runner import LocalRunner
 from execution.test_postgres_store import LocalPostgres
-from execution.test_support import OWNER, ModelFixture, grant_for, make_spec
+from execution.test_support import OWNER, ModelFixture, SyntheticAdapterTestCase, grant_for, make_spec
 
 
-class AccountAdmissionTests(unittest.TestCase):
+class AccountAdmissionTests(SyntheticAdapterTestCase):
     @classmethod
     def setUpClass(cls):
         cls.cluster = LocalPostgres()
@@ -28,6 +28,7 @@ class AccountAdmissionTests(unittest.TestCase):
         cls.cluster.close()
 
     def setUp(self):
+        super().setUp()
         self.now = time_ns() // 1000000
         self.ends = self.now + 600000
         self.schema = "kova_account_" + uuid4().hex

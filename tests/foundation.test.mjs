@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,12 +8,134 @@ import { test } from "node:test";
 import { realizedMargin, requiredPrice } from "../scripts/price-floor.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
+const copyActiveHardwareSources = (output) => {
+  for (const directory of ["core", "release", "training"]) mkdirSync(join(output, directory));
+  for (const source of ["core/current_candidates.py", "release/model_revisions.py",
+    "training/three_family_contract.py"]) {
+    copyFileSync(join(root, source), join(output, source));
+  }
+};
 for (const script of ["validate-data.mjs", "validate-stack.mjs"]) {
   test(`${script} passes`, () => {
     const result = spawnSync(process.execPath, [join(root, "scripts", script)], { encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
   });
 }
+
+test("stack validation rejects a changed approved identity prompt", (t) => {
+  const output = mkdtempSync(join(tmpdir(), "kova-identity-validation-"));
+  t.after(() => rmSync(output, { recursive: true, force: true }));
+  mkdirSync(join(output, "scripts"));
+  mkdirSync(join(output, "prompts"));
+  cpSync(join(root, "config"), join(output, "config"), { recursive: true });
+  copyActiveHardwareSources(output);
+  copyFileSync(join(root, "scripts/validate-stack.mjs"), join(output, "scripts/validate-stack.mjs"));
+  writeFileSync(
+    join(output, "prompts/kova-identity.v3.txt"),
+    `${readFileSync(join(root, "prompts/kova-identity.v3.txt"), "utf8")}\n`,
+  );
+  const result = spawnSync(process.execPath, [join(output, "scripts/validate-stack.mjs")], {
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /truthful_kova_identity_required/u);
+});
+
+test("Ultra entitlement contract tracks Chat Pro and Work Plus without admitting Work Free", (t) => {
+  const output = mkdtempSync(join(tmpdir(), "kova-ultra-entitlement-"));
+  t.after(() => rmSync(output, { recursive: true, force: true }));
+  mkdirSync(join(output, "scripts"));
+  mkdirSync(join(output, "prompts"));
+  cpSync(join(root, "config"), join(output, "config"), { recursive: true });
+  copyActiveHardwareSources(output);
+  copyFileSync(join(root, "scripts/validate-stack.mjs"), join(output, "scripts/validate-stack.mjs"));
+  copyFileSync(join(root, "prompts/kova-identity.v3.txt"), join(output, "prompts/kova-identity.v3.txt"));
+  const runValidation = () => spawnSync(process.execPath, [join(output, "scripts/validate-stack.mjs")], {
+    encoding: "utf8",
+  });
+  assert.equal(runValidation().status, 0);
+
+  const ultraPath = join(output, "config/ultra-orchestration.v1.json");
+  const ultra = JSON.parse(readFileSync(ultraPath, "utf8"));
+  writeFileSync(ultraPath, JSON.stringify({
+    ...ultra, minimum_entitlement_by_surface: { chat: "pro", work: "pro" },
+  }));
+  let result = runValidation();
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /ultra_orchestration_must_be_bounded_and_blocked/u);
+
+  writeFileSync(ultraPath, JSON.stringify(ultra));
+  const policyPath = join(output, "config/current-product-policy.v3.json");
+  const policy = JSON.parse(readFileSync(policyPath, "utf8"));
+  policy.entitlements.work.free.cosmo.push("ultra");
+  writeFileSync(policyPath, JSON.stringify(policy));
+  result = runValidation();
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /ultra_orchestration_must_be_bounded_and_blocked/u);
+});
+
+test("stack validation rejects obsolete completion target claims", (t) => {
+  const output = mkdtempSync(join(tmpdir(), "kova-completion-validation-"));
+  t.after(() => rmSync(output, { recursive: true, force: true }));
+  mkdirSync(join(output, "scripts"));
+  mkdirSync(join(output, "prompts"));
+  cpSync(join(root, "config"), join(output, "config"), { recursive: true });
+  copyActiveHardwareSources(output);
+  copyFileSync(join(root, "scripts/validate-stack.mjs"), join(output, "scripts/validate-stack.mjs"));
+  copyFileSync(join(root, "prompts/kova-identity.v3.txt"), join(output, "prompts/kova-identity.v3.txt"));
+  const runValidation = () => spawnSync(process.execPath, [join(output, "scripts/validate-stack.mjs")], {
+    encoding: "utf8",
+  });
+  assert.equal(runValidation().status, 0);
+
+  const path = join(output, "config/completion-target.v1.json");
+  const completion = JSON.parse(readFileSync(path, "utf8"));
+  const baseline = structuredClone(completion);
+  const newCriterion = "cosmo_orion_and_nova_each_have_distinct_pinned_base_weights_and_distinct_verified_trained_adapters";
+  const oldCriterion = "cosmo_orion_and_nova_are_truthfully_described_as_compute_profiles_not_separate_foundation_weights";
+  assert.ok(completion.definition_of_100_percent.includes(newCriterion));
+  completion.definition_of_100_percent = completion.definition_of_100_percent.map((criterion) =>
+    criterion === newCriterion ? oldCriterion : criterion
+  );
+  writeFileSync(path, JSON.stringify(completion));
+  const result = runValidation();
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /completion_family_weight_contract_mismatch/u);
+
+  const staleClaims = [
+    ["definition_of_100_percent", "auto_through_max_use_one_benchmark_selected_kova_core_engine"],
+    ["definition_of_100_percent", "runpod_flex_scales_to_zero_without_active_workers"],
+    ["definition_of_100_percent", "runpod_core_and_ultra_billing_tradeoffs_are_accepted_after_benchmarking"],
+    ["current_evidence", "verified_cosmo_fp8_upstream_checkpoint_is_pinned"],
+    ["current_evidence", "ultra_direct_requests_require_pro_authorization_and_remaining_budget"],
+  ];
+  for (const [section, staleClaim] of staleClaims) {
+    const changed = structuredClone(baseline);
+    changed[section].push(staleClaim);
+    writeFileSync(path, JSON.stringify(changed));
+    const staleResult = runValidation();
+    assert.equal(staleResult.status, 1, `${staleClaim}: ${staleResult.stderr}`);
+    assert.match(staleResult.stderr, /completion_current_policy_mismatch/u, staleClaim);
+  }
+
+  const missingMigration = structuredClone(baseline);
+  missingMigration.definition_of_100_percent = missingMigration.definition_of_100_percent.filter((claim) =>
+    claim !== "azure_gpu_inference_migration_is_verified_before_production_cutover"
+  );
+  writeFileSync(path, JSON.stringify(missingMigration));
+  const migrationResult = runValidation();
+  assert.equal(migrationResult.status, 1, migrationResult.stderr);
+  assert.match(migrationResult.stderr, /completion_current_policy_mismatch/u);
+
+  const legacyRouteCount = structuredClone(baseline);
+  delete legacyRouteCount.target_canonical_product_routes;
+  delete legacyRouteCount.target_route_contracts_including_compatibility_aliases;
+  legacyRouteCount.target_model_routes = 37;
+  writeFileSync(path, JSON.stringify(legacyRouteCount));
+  const countResult = runValidation();
+  assert.equal(countResult.status, 1, countResult.stderr);
+  assert.match(countResult.stderr, /completion_progress_contract_mismatch/u);
+});
 
 test("dataset compiler creates hashed isolated splits", () => {
   const output = mkdtempSync(join(tmpdir(), "kova-data-"));
@@ -77,7 +199,7 @@ test("model catalog keeps both unselected engines and all public profiles blocke
     assert.equal(profile.deployment_ready, false, profile.id);
   }
   assert.deepEqual(catalog.user_facing_hierarchy.map((mode) => mode.display_name), [
-    "Kova Auto", "Kova 5.6 Cosmo", "Kova 5.6 Orion", "Kova 5.6 Nova",
+    "Kova Auto", "Kova Cosmo", "Kova Orion", "Kova Nova",
     "Nova Extra High", "Nova Max", "Kova Ultra",
   ]);
 });
@@ -91,7 +213,7 @@ test("price floor targets a 42.6% gross margin before rounding", () => {
 test("product target contains six chat modes and eighteen Work combinations", () => {
   const surface = JSON.parse(readFileSync(join(root, "config/product-surface.v1.json"), "utf8"));
   assert.deepEqual(surface.chat_modes.map((mode) => mode.display_name), [
-    "Kova 5.6 Cosmo", "Kova 5.6 Orion", "Kova 5.6 Nova",
+    "Kova Cosmo", "Kova Orion", "Kova Nova",
     "Nova Extra High", "Nova Max", "Kova Ultra",
   ]);
   assert.equal(surface.work_families.length * surface.work_efforts.length, 18);
@@ -175,7 +297,7 @@ test("Core container pins upstream source while every build and deployment actio
   assert.ok(Object.values(config.safety).every((value) => value === false));
 });
 
-test("hardware planning covers both Core candidates without stale provider inventory claims", () => {
+test("hardware planning covers active three-family T4 candidates without stale inventory", () => {
   const config = JSON.parse(readFileSync(join(root, "config/hardware-benchmark.v1.json"), "utf8"));
   assert.equal(config.schema_version, 2);
   assert.equal(config.selected_candidate_id, null);
@@ -183,12 +305,17 @@ test("hardware planning covers both Core candidates without stale provider inven
   assert.equal(config.provider_inventory_snapshot, null);
   assert.equal(config.provider_price_snapshot, null);
   assert.equal(config.inventory_must_be_refreshed_at_benchmark_time, true);
+  assert.equal(config.candidate_source, "core/current_candidates.py:CORE_SERVING.candidates");
   assert.deepEqual(config.candidate_matrices.map((matrix) => [
     matrix.candidate_id, matrix.minimum_benchmark_vram_gb,
   ]), [
-    ["qwen3.8-27b-bf16", 80],
-    ["qwen3.8-27b-fp8", 48],
+    ["kova-cosmo", 6],
+    ["kova-orion", 9],
+    ["kova-nova", 14],
   ]);
+  assert.ok(config.candidate_matrices.every((matrix) =>
+    matrix.eligible_vram_tiers_gb.length === 1 && matrix.eligible_vram_tiers_gb[0] === 16
+  ));
   assert.ok(config.candidate_matrices.every((matrix) =>
     matrix.selected_provider_hardware_id === null &&
     matrix.compatibility_verified === false &&
@@ -197,4 +324,22 @@ test("hardware planning covers both Core candidates without stale provider inven
   assert.equal(config.paid_benchmark_authorized, false);
   assert.equal(config.deployment_authorized, false);
   assert.equal(config.production_routing_authorized, false);
+});
+
+test("hardware validation rejects a matrix from the superseded catalog", (t) => {
+  const output = mkdtempSync(join(tmpdir(), "kova-hardware-validation-"));
+  t.after(() => rmSync(output, { recursive: true, force: true }));
+  mkdirSync(join(output, "scripts"));
+  mkdirSync(join(output, "prompts"));
+  cpSync(join(root, "config"), join(output, "config"), { recursive: true });
+  copyActiveHardwareSources(output);
+  copyFileSync(join(root, "scripts/validate-stack.mjs"), join(output, "scripts/validate-stack.mjs"));
+  copyFileSync(join(root, "prompts/kova-identity.v3.txt"), join(output, "prompts/kova-identity.v3.txt"));
+  const hardwarePath = join(output, "config/hardware-benchmark.v1.json");
+  const hardware = JSON.parse(readFileSync(hardwarePath, "utf8"));
+  hardware.candidate_matrices[0].candidate_id = "qwen3.8-27b-bf16";
+  writeFileSync(hardwarePath, JSON.stringify(hardware));
+  const result = spawnSync(process.execPath, [join(output, "scripts/validate-stack.mjs")], {encoding:"utf8"});
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /invalid_hardware_matrix:kova-cosmo/u);
 });

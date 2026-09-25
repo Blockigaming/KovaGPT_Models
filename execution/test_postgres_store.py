@@ -27,7 +27,7 @@ from execution.postgres_store import (
 )
 from execution.record_cipher import KeyMaterial, RecordCipher
 from execution.runner import LocalRunner
-from execution.test_support import OWNER, ModelFixture, grant_for, make_spec
+from execution.test_support import OWNER, ModelFixture, SyntheticAdapterTestCase, grant_for, make_spec
 
 
 class LocalPostgres:
@@ -80,7 +80,7 @@ class LocalPostgres:
             self.directory.cleanup()
 
 
-class PostgresStoreTests(unittest.TestCase):
+class PostgresStoreTests(SyntheticAdapterTestCase):
     @classmethod
     def setUpClass(cls):
         cls.cluster = LocalPostgres()
@@ -96,6 +96,7 @@ class PostgresStoreTests(unittest.TestCase):
         cls.cluster.close()
 
     def setUp(self):
+        super().setUp()
         self.schema = "kova_test_" + uuid4().hex
         with self.cluster.connect() as connection:
             install_postgres_schema(connection, self.schema, administration_authorized=True)

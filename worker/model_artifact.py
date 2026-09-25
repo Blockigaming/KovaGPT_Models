@@ -23,9 +23,9 @@ READ_BYTES = 1024 * 1024
 SHA256 = re.compile(r"[a-f0-9]{64}\Z")
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,191}\Z")
 REQUIRED_FILES = frozenset((
-    "config.json", "tokenizer.json", "tokenizer_config.json", "model.safetensors.index.json",
+    "config.json", "tokenizer.json", "tokenizer_config.json", "adapter_config.json",
 ))
-PARSED_FILES = frozenset(("config.json", "tokenizer_config.json", "model.safetensors.index.json"))
+PARSED_FILES = frozenset(("config.json", "tokenizer_config.json", "adapter_config.json", "model.safetensors.index.json"))
 OPTIONAL_FILES = frozenset((
     "chat_template.jinja", "generation_config.json", "preprocessor_config.json",
     "processor_config.json", "video_preprocessor_config.json", "special_tokens_map.json",
@@ -90,16 +90,21 @@ def validate_manifest(encoded, expected_sha256):
     _require(hashlib.sha256(encoded).hexdigest() == expected_sha256,
              "artifact manifest digest mismatch")
     manifest = _json(encoded)
-    _require(set(manifest) == {"schema_version", "candidate_id", "model", "revision", "files"}
+    _require(set(manifest) == {"schema_version", "candidate_id", "model", "revision", "adapter_sha256", "files"}
              and type(manifest["schema_version"]) is int and manifest["schema_version"] == 1,
              "unsupported artifact manifest")
-    source = Path(__file__).resolve().parents[1] / "config" / "core-serving.v1.json"
-    catalog = _json(source.read_bytes())
+    from core.current_candidates import CORE_SERVING
+    catalog = CORE_SERVING
     matches = [c for c in catalog["candidates"] if c["id"] == manifest["candidate_id"]]
     _require(len(matches) == 1, "artifact candidate is not in the server allowlist")
     candidate = matches[0]
     _require(manifest["model"] == candidate["model"] and manifest["revision"] == candidate["revision"],
              "artifact identity differs from the pinned candidate")
+    adapter = candidate["adapter_sha256"]
+    _require(isinstance(adapter, str) and SHA256.fullmatch(adapter),
+             "trained adapter digest is not pinned")
+    _require(manifest["adapter_sha256"] == adapter,
+             "artifact trained adapter differs from the pinned candidate")
     files = manifest["files"]
     _require(isinstance(files, list) and 1 <= len(files) <= MAX_FILES, "invalid artifact file list")
     names = set()
@@ -110,7 +115,7 @@ def validate_manifest(encoded, expected_sha256):
         name = entry["path"]
         _require(isinstance(name, str) and NAME.fullmatch(name)
                  and name not in names and ".." not in name, "unsafe or duplicate artifact path")
-        _require(name in REQUIRED_FILES | OPTIONAL_FILES or name.endswith(".safetensors"),
+        _require(name in REQUIRED_FILES | OPTIONAL_FILES | {"model.safetensors.index.json"} or name.endswith(".safetensors"),
                  "unapproved artifact file type")
         _require(_integer(entry["bytes"]), "invalid artifact byte count")
         _require(isinstance(entry["sha256"], str) and SHA256.fullmatch(entry["sha256"]),
@@ -122,6 +127,15 @@ def validate_manifest(encoded, expected_sha256):
         names.add(name)
     _require(REQUIRED_FILES <= names and any(name.endswith(".safetensors") for name in names),
              "artifact lacks required weights or tokenizer files")
+    if candidate["id"] == "kova-cosmo":
+        _require("model.safetensors" in names and "model.safetensors.index.json" not in names,
+                 "Cosmo requires approved monolithic base weights")
+    else:
+        _require("model.safetensors.index.json" in names and "model.safetensors" not in names,
+                 "Orion and Nova require approved sharded base weights")
+    adapter_files = [entry for entry in files if entry["path"] == "adapter_model.safetensors"]
+    _require(len(adapter_files) == 1 and adapter_files[0]["sha256"] == adapter,
+             "artifact trained adapter bytes differ from pinned digest")
     return manifest
 
 
@@ -137,11 +151,26 @@ def _regular(info, size):
     _require(not info.st_mode & 0o022, "artifact file is writable by another account")
 
 
-def _metadata_contract(metadata, names):
+def _metadata_contract(metadata, names, candidate_id):
     for filename in ("config.json", "tokenizer_config.json"):
         # Remote Python classes are not part of the approved packaging contract.
         _require(metadata[filename].get("auto_map") in (None, {}),
                  "artifact requires unapproved remote model code")
+    adapter = metadata["adapter_config.json"]
+    from release.model_revisions import MODEL_SOURCE_REFERENCES
+    source = MODEL_SOURCE_REFERENCES.get(candidate_id)
+    _require(source is not None and adapter.get("base_model_name_or_path") == source.model,
+             "adapter base model differs from pinned family source")
+    _require(adapter.get("peft_type") == "LORA" and adapter.get("task_type") == "CAUSAL_LM"
+             and type(adapter.get("r")) is int
+             and adapter["r"] > 0
+             and isinstance(adapter.get("lora_alpha"), (int, float))
+             and not isinstance(adapter["lora_alpha"], bool) and adapter["lora_alpha"] > 0
+             and adapter.get("auto_mapping") in (None, {}), "invalid PEFT adapter configuration")
+    if "model.safetensors.index.json" not in names:
+        _require({name for name in names if name.endswith(".safetensors")}
+                 == {"model.safetensors", "adapter_model.safetensors"}, "unexpected base weights")
+        return
     index = metadata["model.safetensors.index.json"]
     _require(set(index) <= {"metadata", "weight_map"} and isinstance(index.get("weight_map"), dict)
              and index["weight_map"], "invalid artifact weight index")
@@ -149,7 +178,7 @@ def _metadata_contract(metadata, names):
     _require(all(isinstance(key, str) and key and isinstance(value, str)
                  for key, value in weight_map.items()), "invalid artifact tensor reference")
     referenced = set(weight_map.values())
-    shards = {name for name in names if name.endswith(".safetensors")}
+    shards = {name for name in names if name.endswith(".safetensors") and name != "adapter_model.safetensors"}
     _require(referenced == shards, "artifact weight index and packaged shards disagree")
     # Tensor contents, dimensions, dtype and engine compatibility require the
     # trusted safetensors loader/runtime rehearsal. A byte hash is not that test.
@@ -241,7 +270,7 @@ def verify_model_artifact(root, encoded_manifest, *, expected_manifest_sha256,
             finally:
                 os.close(file_fd)
         check()
-        _metadata_contract(metadata, names)
+        _metadata_contract(metadata, names, manifest["candidate_id"])
         _require(set(os.listdir(descriptor)) == names, "artifact directory changed")
         for name, identity in checked.items():
             _require(_identity(os.stat(name, dir_fd=descriptor, follow_symlinks=False)) == identity,
@@ -252,6 +281,7 @@ def verify_model_artifact(root, encoded_manifest, *, expected_manifest_sha256,
             "status": "local_artifact_bytes_verified",
             "candidate_id": manifest["candidate_id"], "model": manifest["model"],
             "revision": manifest["revision"], "manifest_sha256": expected_manifest_sha256,
+            "adapter_sha256": manifest["adapter_sha256"],
             "file_count": len(names), "total_bytes": total,
             "vendor_provenance_authenticated": False,
             "model_loaded": False, "serving_compatibility_verified": False,

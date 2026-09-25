@@ -1,4 +1,4 @@
-"""Run reproducible, provider-free checks for the 25 Kova route contracts."""
+"""Run reproducible, provider-free checks for the 37 Kova route contracts."""
 
 import json
 import re
@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from core.adapter import CANDIDATES, build_core_plan
+from release.model_revisions import source_reference_for_route
 from router.auto import classify_auto
 from router.policy import resolve_route
 from ultra.orchestrator import build_ultra_plan
@@ -14,7 +15,6 @@ from ultra.orchestrator import build_ultra_plan
 ROOT = Path(__file__).resolve().parents[1]
 SUITE = json.loads((ROOT / "evaluations" / "offline-suite.v1.json").read_text(encoding="utf-8"))
 ACTIVITY_CONTRACT = json.loads((ROOT / "config" / "activity-event.v1.json").read_text(encoding="utf-8"))
-CORE_CANDIDATE = "Qwen/Qwen3.8-27B"
 URL_PATTERN = re.compile(r"https?://[^\s<>\]\)]+", re.IGNORECASE)
 FORBIDDEN_RESPONSE_PATTERNS = (
     "foundation model trained from scratch",
@@ -49,8 +49,8 @@ def _route_contract(route_id):
 def build_route_manifest():
     """Resolve the checked-in expectations through the actual server router."""
     contracts = SUITE["route_contracts"]
-    _require(SUITE["target_routes"] == 25 and len(contracts) == 25, "offline suite must define exactly 25 routes")
-    _require(len({item["route_id"] for item in contracts}) == 25, "offline route IDs must be unique")
+    _require(SUITE["target_routes"] == 37 and len(contracts) == 37, "offline suite must define exactly 37 routes")
+    _require(len({item["route_id"] for item in contracts}) == 37, "offline route IDs must be unique")
     manifest = []
     for contract in contracts:
         selector = contract["selector"]
@@ -86,7 +86,7 @@ def _core_request(contract):
         "request_id": f"offline-{contract['route_id']}",
         "messages": [{"role": "user", "content": "Produce a concise, accurate project assessment."}],
     }
-    if selector["surface"] == "chat":
+    if selector["surface"] == "chat" and "route_id" in selector:
         return {**base, "route_id": selector["route_id"]}
     return {**base, **selector}
 
@@ -97,15 +97,16 @@ def _ultra_request(contract):
         "request_id": f"offline-{contract['route_id']}",
         "task": "Research competitors, compare pricing and security, and create a project report.",
     }
-    if selector["surface"] == "chat":
+    if selector["surface"] == "chat" and "route_id" in selector:
         return {**base, "route_id": selector["route_id"]}
     return {**base, **selector}
 
 
 def _validate_core_plan(contract):
+    candidate = source_reference_for_route(contract["route_id"]).slot
     plan = build_core_plan(
         _core_request(contract),
-        candidate_model=CORE_CANDIDATE,
+        candidate_model=candidate,
         token_counter=_core_token_count,
     )
     _require(plan["route_id"] == contract["route_id"], f"Core plan route mismatch:{contract['route_id']}")
@@ -127,7 +128,7 @@ def _validate_core_plan(contract):
         _require(operation["request_template"]["recount_bound_messages_with_trusted_tokenizer"] is True, "Core recount missing")
         _require(
             operation["maximum_input_tokens"] + operation["maximum_output_tokens"]
-            <= CANDIDATES[CORE_CANDIDATE]["context_tokens"],
+            <= CANDIDATES[candidate]["context_tokens"],
             "Core context reservation exceeded",
         )
         prior_ids.append(operation["stage_id"])
@@ -400,7 +401,7 @@ def run_offline_suite():
         "core": sum(item["engine"] == "kova-core" for item in manifest),
         "ultra": sum(item["engine"] == "kova-ultra" for item in manifest),
     }
-    _require(engine_counts == {"auto": 1, "core": 20, "ultra": 4}, "unexpected 25-route engine split")
+    _require(engine_counts == {"auto": 1, "core": 30, "ultra": 6}, "unexpected 37-route engine split")
 
     operation_counts = {}
     for contract in SUITE["route_contracts"]:

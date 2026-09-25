@@ -230,9 +230,9 @@ def _load_bearer_token(path: Path, *, repository_root: Path) -> str:
 
 def validate_azure_instance(value: object) -> dict:
     """Validate the exact VM identity observed by the independent preflight."""
-    need(type(value) is dict and list(value) == [
+    need(type(value) is dict and set(value) == {
         "resource_id", "vm_id", "system_assigned_identity_principal_id",
-    ])
+    })
     need(type(value["resource_id"]) is str and
          AZURE_VM_RESOURCE_ID.fullmatch(value["resource_id"]) is not None)
     need(type(value["vm_id"]) is str and

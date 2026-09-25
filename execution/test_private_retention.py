@@ -8,11 +8,12 @@ from execution.contracts import ExecutionError
 from execution.private_store import PrivateJobStore, RetentionExpired
 from execution.record_cipher import KeyMaterial, RecordCipher
 from execution.runner import LocalRunner
-from execution.test_support import OWNER, grant_for, make_spec
+from execution.test_support import OWNER, SyntheticAdapterTestCase, grant_for, make_spec
 
 
-class ExpiredPrivateRecordTests(unittest.TestCase):
+class ExpiredPrivateRecordTests(SyntheticAdapterTestCase):
     def setUp(self):
+        super().setUp()
         self.now = time_ns() // 1000000
         self.expiry = self.now + 120000
         self.key = KeyMaterial("test-key", secrets.token_bytes(64))

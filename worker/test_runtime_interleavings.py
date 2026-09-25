@@ -33,7 +33,8 @@ class RuntimeInterleavingTests(unittest.IsolatedAsyncioTestCase):
             True, True, True,
         )
         artifact = {"model": "fixture-model", "revision": "a" * 40,
-                    "candidate_id": self.policy.candidate_id, "manifest_sha256": "b" * 64}
+                    "candidate_id": self.policy.candidate_id, "manifest_sha256": "b" * 64,
+                    "adapter_sha256": "c" * 64}
         report = {"status": "artifact_verified_serving_blocked", "artifact_evidence": artifact}
         self.created = asyncio.Queue()
         self.tasks = []
@@ -51,6 +52,11 @@ class RuntimeInterleavingTests(unittest.IsolatedAsyncioTestCase):
             patch.object(runtime.model_startup, "validate_policy", return_value={
                 "verification_enabled": True, "artifact": {"root": "/fixture/model"}}),
             patch.object(runtime.model_startup, "run_startup", return_value=(0, report)),
+            patch.object(runtime, "CORE_SERVING", {"candidates": [{"id": artifact["candidate_id"],
+                "model": artifact["model"], "revision": artifact["revision"],
+                "adapter_sha256": artifact["adapter_sha256"],
+                "adapter_bundle_sha256": artifact["manifest_sha256"],
+                "context_tokens": runtime.CORE_SERVING["candidates"][0]["context_tokens"]}]}),
             patch.object(runtime, "_environment_guard"),
             patch.object(runtime, "NativeVllm", side_effect=factory),
         )

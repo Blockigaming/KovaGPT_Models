@@ -91,11 +91,16 @@ class ModelStartupTests(unittest.TestCase):
                          self.policy["artifact"]["expected_manifest_sha256"])
         self.assertEqual(report["artifact_evidence"]["status"], "local_artifact_bytes_verified")
 
-    def test_both_candidates_verify_without_becoming_a_serving_grant(self):
+    def test_all_candidates_verify_without_becoming_a_serving_grant(self):
         for index, candidate in enumerate(fixtures.CATALOG["candidates"]):
+            if index == 1:
+                self.fixture.use_sharded_weights()
+            elif index == 2:
+                self.fixture.set_base_model(index)
             with self.subTest(candidate=candidate["id"]):
                 self.manifest.write_bytes(self.fixture.encode(self.fixture.snapshot(index)))
                 self.policy["artifact"]["expected_manifest_sha256"] = hashlib.sha256(self.manifest.read_bytes()).hexdigest()
+                self.policy["artifact"]["maximum_total_bytes"] = sum(map(len, self.fixture.files.values()))
                 self.save()
                 code, report = self.run_gate(verify_only=True)
                 self.assertEqual(code, 0)
@@ -274,8 +279,8 @@ class ModelStartupTests(unittest.TestCase):
 
     def test_cli_default_startup_and_verification_have_distinct_exit_codes(self):
         for args, expected in (((), 78), (("--check-source",), 0),
-                               (("--config", str(self.policy_path)), 78),
-                               (("--verify-only", "--config", str(self.policy_path)), 0)):
+                               (("--config", str(self.policy_path)), 1),
+                               (("--verify-only", "--config", str(self.policy_path)), 1)):
             with self.subTest(args=args):
                 result = self.cli(*args)
                 self.assertEqual(result.returncode, expected, result.stderr)
@@ -336,7 +341,9 @@ class ModelStartupTests(unittest.TestCase):
             self.assertFalse(list(image.rglob("*.pyc")))
             self.assertEqual(sorted(str(p.relative_to(image)) for p in image.rglob("*") if p.is_file()),
                              sorted(("worker/__init__.py", "worker/model_artifact.py", "worker/model_startup.py",
-                                     "config/core-serving.v1.json", "config/model-startup.v1.json")))
+                                     "config/core-serving.v1.json", "config/model-startup.v1.json",
+                                     "core/__init__.py", "core/current_candidates.py",
+                                     "release/__init__.py", "release/model_revisions.py")))
 
     def test_unknown_missing_artifact_fields_and_coerced_run_modes_fail(self):
         for key in self.policy["artifact"]:
@@ -379,7 +386,9 @@ class ModelStartupTests(unittest.TestCase):
                 self.assertIn("--chown=0:0 --chmod=0444", line)
                 sources.extend(line.split()[3:-1])
         self.assertEqual(sorted(sources), sorted(("worker/__init__.py", "worker/model_artifact.py", "worker/model_startup.py",
-                                                 "config/core-serving.v1.json", "config/model-startup.v1.json")))
+                                                 "config/core-serving.v1.json", "config/model-startup.v1.json",
+                                                 "core/__init__.py", "core/current_candidates.py",
+                                                 "release/__init__.py", "release/model_revisions.py")))
         self.assertTrue(all((ROOT / path).is_file() for path in sources))
 
 

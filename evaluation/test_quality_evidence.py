@@ -60,10 +60,10 @@ class QualityEvidenceTests(unittest.TestCase):
     def run_bundle(self, value, source=None):
         return analyze(source or suite(), value, expected_suite_sha256=digest(source or suite()), expected_source_commit=COMMIT)
 
-    def test_no_records_keeps_all_25_routes_both_conditions_and_every_case_missing(self):
+    def test_no_records_keeps_all_37_routes_both_conditions_and_every_case_missing(self):
         result = self.run_bundle(bundle())
-        self.assertEqual(result["expected_units"], 100)
-        self.assertEqual(result["unit_counts"], {"missing": 100})
+        self.assertEqual(result["expected_units"], 148)
+        self.assertEqual(result["unit_counts"], {"missing": 148})
         self.assertIsNone(result["reported_total_cost_microusd"])
         self.assertEqual(result["timings_by_configuration"], {})
 
@@ -77,8 +77,8 @@ class QualityEvidenceTests(unittest.TestCase):
                     if case == "explanation":
                         value["reviews"].append(review(row))
         result = self.run_bundle(value)
-        self.assertEqual(result["unit_counts"], {"pass": 100})
-        self.assertEqual(result["provided_reviews"], 50)
+        self.assertEqual(result["unit_counts"], {"pass": 148})
+        self.assertEqual(result["provided_reviews"], 74)
         for field in ("phase_b_ready", "provenance_authenticated", "human_reviewer_identity_verified", "historical_suite_reconciled"):
             self.assertFalse(result[field])
         self.assertEqual(result["live_routes_verified"], [])
@@ -274,7 +274,7 @@ class QualityEvidenceTests(unittest.TestCase):
                        str(root / "bundle.json"), digest(suite()), COMMIT]
             result = subprocess.run(command, cwd=ROOT, capture_output=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr.decode())
-            self.assertEqual(json.loads(result.stdout)["expected_units"], 100)
+            self.assertEqual(json.loads(result.stdout)["expected_units"], 148)
             self.assertEqual((root / "bundle.json").read_bytes(), before)
             command[-1] = "f" * 40
             self.assertNotEqual(subprocess.run(command, cwd=ROOT, capture_output=True, timeout=10).returncode, 0)

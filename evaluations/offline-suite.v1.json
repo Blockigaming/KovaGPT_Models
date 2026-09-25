@@ -1,65 +1,684 @@
 {
   "schema_version": 1,
   "status": "offline_contract_only_no_model_quality_claim",
-  "target_routes": 25,
+  "target_routes": 37,
   "route_contracts": [
-    { "route_id": "kova-auto", "selector": { "surface": "auto" }, "expected": { "display_name": "Kova Auto", "engine": "server-selected", "profile": "server-selected", "behavior_contract_id": "auto_server_classifier", "activity_updates": "route-dependent" } },
-    { "route_id": "instant", "selector": { "surface": "chat", "route_id": "instant" }, "expected": { "display_name": "Kova 5.6 Cosmo", "engine": "kova-core", "profile": "cosmo", "behavior_contract_id": "chat_instant_direct", "activity_updates": false } },
-    { "route_id": "medium", "selector": { "surface": "chat", "route_id": "medium" }, "expected": { "display_name": "Kova 5.6 Orion", "engine": "kova-core", "profile": "orion", "behavior_contract_id": "chat_medium_balanced", "activity_updates": false } },
-    { "route_id": "high", "selector": { "surface": "chat", "route_id": "high" }, "expected": { "display_name": "Kova 5.6 Nova", "engine": "kova-core", "profile": "nova", "behavior_contract_id": "chat_high_rigorous", "activity_updates": true } },
-    { "route_id": "extra-high", "selector": { "surface": "chat", "route_id": "extra-high" }, "expected": { "display_name": "Nova Extra High", "engine": "kova-core", "profile": "nova", "behavior_contract_id": "chat_extra_high_deep", "activity_updates": true } },
-    { "route_id": "max", "selector": { "surface": "chat", "route_id": "max" }, "expected": { "display_name": "Nova Max", "engine": "kova-core", "profile": "nova", "behavior_contract_id": "chat_max_single_engine", "activity_updates": true } },
-    { "route_id": "ultra", "selector": { "surface": "chat", "route_id": "ultra" }, "expected": { "display_name": "Kova Ultra", "engine": "kova-ultra", "profile": "ultra", "behavior_contract_id": "chat_ultra_multi_specialist", "activity_updates": true } },
-
-    { "route_id": "work:cosmo:light", "selector": { "surface": "work", "family": "cosmo", "effort": "Light" }, "expected": { "display_name": "Kova 5.6 Cosmo — Light", "engine": "kova-core", "profile": "cosmo", "behavior_contract_id": "work_cosmo_action_first", "activity_updates": true } },
-    { "route_id": "work:cosmo:medium", "selector": { "surface": "work", "family": "cosmo", "effort": "Medium" }, "expected": { "display_name": "Kova 5.6 Cosmo — Medium", "engine": "kova-core", "profile": "cosmo", "behavior_contract_id": "work_cosmo_action_first", "activity_updates": true } },
-    { "route_id": "work:cosmo:high", "selector": { "surface": "work", "family": "cosmo", "effort": "High" }, "expected": { "display_name": "Kova 5.6 Cosmo — High", "engine": "kova-core", "profile": "cosmo", "behavior_contract_id": "work_cosmo_action_first", "activity_updates": true } },
-    { "route_id": "work:cosmo:extra-high", "selector": { "surface": "work", "family": "cosmo", "effort": "Extra High" }, "expected": { "display_name": "Kova 5.6 Cosmo — Extra High", "engine": "kova-core", "profile": "cosmo", "behavior_contract_id": "work_cosmo_action_first", "activity_updates": true } },
-    { "route_id": "work:cosmo:max", "selector": { "surface": "work", "family": "cosmo", "effort": "Max" }, "expected": { "display_name": "Kova 5.6 Cosmo — Max", "engine": "kova-core", "profile": "cosmo", "behavior_contract_id": "work_cosmo_action_first", "activity_updates": true } },
-    { "route_id": "work:cosmo:ultra", "selector": { "surface": "work", "family": "cosmo", "effort": "Ultra" }, "expected": { "display_name": "Kova 5.6 Cosmo — Ultra", "engine": "kova-ultra", "profile": "cosmo", "behavior_contract_id": "work_cosmo_action_first", "activity_updates": true } },
-
-    { "route_id": "work:orion:light", "selector": { "surface": "work", "family": "orion", "effort": "Light" }, "expected": { "display_name": "Kova 5.6 Orion — Light", "engine": "kova-core", "profile": "orion", "behavior_contract_id": "work_orion_balanced", "activity_updates": true } },
-    { "route_id": "work:orion:medium", "selector": { "surface": "work", "family": "orion", "effort": "Medium" }, "expected": { "display_name": "Kova 5.6 Orion — Medium", "engine": "kova-core", "profile": "orion", "behavior_contract_id": "work_orion_balanced", "activity_updates": true } },
-    { "route_id": "work:orion:high", "selector": { "surface": "work", "family": "orion", "effort": "High" }, "expected": { "display_name": "Kova 5.6 Orion — High", "engine": "kova-core", "profile": "orion", "behavior_contract_id": "work_orion_balanced", "activity_updates": true } },
-    { "route_id": "work:orion:extra-high", "selector": { "surface": "work", "family": "orion", "effort": "Extra High" }, "expected": { "display_name": "Kova 5.6 Orion — Extra High", "engine": "kova-core", "profile": "orion", "behavior_contract_id": "work_orion_balanced", "activity_updates": true } },
-    { "route_id": "work:orion:max", "selector": { "surface": "work", "family": "orion", "effort": "Max" }, "expected": { "display_name": "Kova 5.6 Orion — Max", "engine": "kova-core", "profile": "orion", "behavior_contract_id": "work_orion_balanced", "activity_updates": true } },
-    { "route_id": "work:orion:ultra", "selector": { "surface": "work", "family": "orion", "effort": "Ultra" }, "expected": { "display_name": "Kova 5.6 Orion — Ultra", "engine": "kova-ultra", "profile": "orion", "behavior_contract_id": "work_orion_balanced", "activity_updates": true } },
-
-    { "route_id": "work:nova:light", "selector": { "surface": "work", "family": "nova", "effort": "Light" }, "expected": { "display_name": "Kova 5.6 Nova — Light", "engine": "kova-core", "profile": "nova", "behavior_contract_id": "work_nova_rigorous", "activity_updates": true } },
-    { "route_id": "work:nova:medium", "selector": { "surface": "work", "family": "nova", "effort": "Medium" }, "expected": { "display_name": "Kova 5.6 Nova — Medium", "engine": "kova-core", "profile": "nova", "behavior_contract_id": "work_nova_rigorous", "activity_updates": true } },
-    { "route_id": "work:nova:high", "selector": { "surface": "work", "family": "nova", "effort": "High" }, "expected": { "display_name": "Kova 5.6 Nova — High", "engine": "kova-core", "profile": "nova", "behavior_contract_id": "work_nova_rigorous", "activity_updates": true } },
-    { "route_id": "work:nova:extra-high", "selector": { "surface": "work", "family": "nova", "effort": "Extra High" }, "expected": { "display_name": "Kova 5.6 Nova — Extra High", "engine": "kova-core", "profile": "nova", "behavior_contract_id": "work_nova_rigorous", "activity_updates": true } },
-    { "route_id": "work:nova:max", "selector": { "surface": "work", "family": "nova", "effort": "Max" }, "expected": { "display_name": "Kova 5.6 Nova — Max", "engine": "kova-core", "profile": "nova", "behavior_contract_id": "work_nova_rigorous", "activity_updates": true } },
-    { "route_id": "work:nova:ultra", "selector": { "surface": "work", "family": "nova", "effort": "Ultra" }, "expected": { "display_name": "Kova 5.6 Nova — Ultra", "engine": "kova-ultra", "profile": "nova", "behavior_contract_id": "work_nova_rigorous", "activity_updates": true } }
+    {
+      "route_id": "kova-auto",
+      "selector": {
+        "surface": "auto"
+      },
+      "expected": {
+        "display_name": "Kova Auto",
+        "engine": "server-selected",
+        "profile": "server-selected",
+        "behavior_contract_id": "auto_server_classifier",
+        "activity_updates": "route-dependent"
+      }
+    },
+    {
+      "route_id": "instant",
+      "selector": {
+        "surface": "chat",
+        "route_id": "instant"
+      },
+      "expected": {
+        "display_name": "Kova Cosmo",
+        "engine": "kova-core",
+        "profile": "cosmo",
+        "behavior_contract_id": "chat_instant_direct",
+        "activity_updates": false
+      }
+    },
+    {
+      "route_id": "medium",
+      "selector": {
+        "surface": "chat",
+        "route_id": "medium"
+      },
+      "expected": {
+        "display_name": "Kova Orion",
+        "engine": "kova-core",
+        "profile": "orion",
+        "behavior_contract_id": "chat_medium_balanced",
+        "activity_updates": false
+      }
+    },
+    {
+      "route_id": "high",
+      "selector": {
+        "surface": "chat",
+        "route_id": "high"
+      },
+      "expected": {
+        "display_name": "Kova Orion — High",
+        "engine": "kova-core",
+        "profile": "orion",
+        "behavior_contract_id": "chat_high_rigorous",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "extra-high",
+      "selector": {
+        "surface": "chat",
+        "route_id": "extra-high"
+      },
+      "expected": {
+        "display_name": "Kova Orion — Extra High",
+        "engine": "kova-core",
+        "profile": "orion",
+        "behavior_contract_id": "chat_extra_high_deep",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "max",
+      "selector": {
+        "surface": "chat",
+        "route_id": "max"
+      },
+      "expected": {
+        "display_name": "Kova Orion — Max",
+        "engine": "kova-core",
+        "profile": "orion",
+        "behavior_contract_id": "chat_max_single_engine",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "ultra",
+      "selector": {
+        "surface": "chat",
+        "route_id": "ultra"
+      },
+      "expected": {
+        "display_name": "Kova Orion — Ultra",
+        "engine": "kova-ultra",
+        "profile": "orion",
+        "behavior_contract_id": "chat_ultra_multi_specialist",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "chat:cosmo:light",
+      "selector": {
+        "surface": "chat",
+        "family": "cosmo",
+        "effort": "Light"
+      },
+      "expected": {
+        "display_name": "Kova Cosmo — Light",
+        "engine": "kova-core",
+        "profile": "cosmo",
+        "behavior_contract_id": "work_cosmo_action_first",
+        "activity_updates": false
+      }
+    },
+    {
+      "route_id": "chat:cosmo:medium",
+      "selector": {
+        "surface": "chat",
+        "family": "cosmo",
+        "effort": "Medium"
+      },
+      "expected": {
+        "display_name": "Kova Cosmo — Medium",
+        "engine": "kova-core",
+        "profile": "cosmo",
+        "behavior_contract_id": "work_cosmo_action_first",
+        "activity_updates": false
+      }
+    },
+    {
+      "route_id": "chat:cosmo:high",
+      "selector": {
+        "surface": "chat",
+        "family": "cosmo",
+        "effort": "High"
+      },
+      "expected": {
+        "display_name": "Kova Cosmo — High",
+        "engine": "kova-core",
+        "profile": "cosmo",
+        "behavior_contract_id": "work_cosmo_action_first",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "chat:cosmo:extra-high",
+      "selector": {
+        "surface": "chat",
+        "family": "cosmo",
+        "effort": "Extra High"
+      },
+      "expected": {
+        "display_name": "Kova Cosmo — Extra High",
+        "engine": "kova-core",
+        "profile": "cosmo",
+        "behavior_contract_id": "work_cosmo_action_first",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "chat:cosmo:max",
+      "selector": {
+        "surface": "chat",
+        "family": "cosmo",
+        "effort": "Max"
+      },
+      "expected": {
+        "display_name": "Kova Cosmo — Max",
+        "engine": "kova-core",
+        "profile": "cosmo",
+        "behavior_contract_id": "work_cosmo_action_first",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "chat:cosmo:ultra",
+      "selector": {
+        "surface": "chat",
+        "family": "cosmo",
+        "effort": "Ultra"
+      },
+      "expected": {
+        "display_name": "Kova Cosmo — Ultra",
+        "engine": "kova-ultra",
+        "profile": "cosmo",
+        "behavior_contract_id": "work_cosmo_action_first",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "chat:orion:light",
+      "selector": {
+        "surface": "chat",
+        "family": "orion",
+        "effort": "Light"
+      },
+      "expected": {
+        "display_name": "Kova Orion — Light",
+        "engine": "kova-core",
+        "profile": "orion",
+        "behavior_contract_id": "work_orion_balanced",
+        "activity_updates": false
+      }
+    },
+    {
+      "route_id": "chat:orion:medium",
+      "selector": {
+        "surface": "chat",
+        "family": "orion",
+        "effort": "Medium"
+      },
+      "expected": {
+        "display_name": "Kova Orion — Medium",
+        "engine": "kova-core",
+        "profile": "orion",
+        "behavior_contract_id": "work_orion_balanced",
+        "activity_updates": false
+      }
+    },
+    {
+      "route_id": "chat:orion:high",
+      "selector": {
+        "surface": "chat",
+        "family": "orion",
+        "effort": "High"
+      },
+      "expected": {
+        "display_name": "Kova Orion — High",
+        "engine": "kova-core",
+        "profile": "orion",
+        "behavior_contract_id": "work_orion_balanced",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "chat:orion:extra-high",
+      "selector": {
+        "surface": "chat",
+        "family": "orion",
+        "effort": "Extra High"
+      },
+      "expected": {
+        "display_name": "Kova Orion — Extra High",
+        "engine": "kova-core",
+        "profile": "orion",
+        "behavior_contract_id": "work_orion_balanced",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "chat:orion:max",
+      "selector": {
+        "surface": "chat",
+        "family": "orion",
+        "effort": "Max"
+      },
+      "expected": {
+        "display_name": "Kova Orion — Max",
+        "engine": "kova-core",
+        "profile": "orion",
+        "behavior_contract_id": "work_orion_balanced",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "chat:orion:ultra",
+      "selector": {
+        "surface": "chat",
+        "family": "orion",
+        "effort": "Ultra"
+      },
+      "expected": {
+        "display_name": "Kova Orion — Ultra",
+        "engine": "kova-ultra",
+        "profile": "orion",
+        "behavior_contract_id": "work_orion_balanced",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:cosmo:light",
+      "selector": {
+        "surface": "work",
+        "family": "cosmo",
+        "effort": "Light"
+      },
+      "expected": {
+        "display_name": "Kova Cosmo — Light",
+        "engine": "kova-core",
+        "profile": "cosmo",
+        "behavior_contract_id": "work_cosmo_action_first",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:cosmo:medium",
+      "selector": {
+        "surface": "work",
+        "family": "cosmo",
+        "effort": "Medium"
+      },
+      "expected": {
+        "display_name": "Kova Cosmo — Medium",
+        "engine": "kova-core",
+        "profile": "cosmo",
+        "behavior_contract_id": "work_cosmo_action_first",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:cosmo:high",
+      "selector": {
+        "surface": "work",
+        "family": "cosmo",
+        "effort": "High"
+      },
+      "expected": {
+        "display_name": "Kova Cosmo — High",
+        "engine": "kova-core",
+        "profile": "cosmo",
+        "behavior_contract_id": "work_cosmo_action_first",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:cosmo:extra-high",
+      "selector": {
+        "surface": "work",
+        "family": "cosmo",
+        "effort": "Extra High"
+      },
+      "expected": {
+        "display_name": "Kova Cosmo — Extra High",
+        "engine": "kova-core",
+        "profile": "cosmo",
+        "behavior_contract_id": "work_cosmo_action_first",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:cosmo:max",
+      "selector": {
+        "surface": "work",
+        "family": "cosmo",
+        "effort": "Max"
+      },
+      "expected": {
+        "display_name": "Kova Cosmo — Max",
+        "engine": "kova-core",
+        "profile": "cosmo",
+        "behavior_contract_id": "work_cosmo_action_first",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:cosmo:ultra",
+      "selector": {
+        "surface": "work",
+        "family": "cosmo",
+        "effort": "Ultra"
+      },
+      "expected": {
+        "display_name": "Kova Cosmo — Ultra",
+        "engine": "kova-ultra",
+        "profile": "cosmo",
+        "behavior_contract_id": "work_cosmo_action_first",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:orion:light",
+      "selector": {
+        "surface": "work",
+        "family": "orion",
+        "effort": "Light"
+      },
+      "expected": {
+        "display_name": "Kova Orion — Light",
+        "engine": "kova-core",
+        "profile": "orion",
+        "behavior_contract_id": "work_orion_balanced",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:orion:medium",
+      "selector": {
+        "surface": "work",
+        "family": "orion",
+        "effort": "Medium"
+      },
+      "expected": {
+        "display_name": "Kova Orion — Medium",
+        "engine": "kova-core",
+        "profile": "orion",
+        "behavior_contract_id": "work_orion_balanced",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:orion:high",
+      "selector": {
+        "surface": "work",
+        "family": "orion",
+        "effort": "High"
+      },
+      "expected": {
+        "display_name": "Kova Orion — High",
+        "engine": "kova-core",
+        "profile": "orion",
+        "behavior_contract_id": "work_orion_balanced",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:orion:extra-high",
+      "selector": {
+        "surface": "work",
+        "family": "orion",
+        "effort": "Extra High"
+      },
+      "expected": {
+        "display_name": "Kova Orion — Extra High",
+        "engine": "kova-core",
+        "profile": "orion",
+        "behavior_contract_id": "work_orion_balanced",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:orion:max",
+      "selector": {
+        "surface": "work",
+        "family": "orion",
+        "effort": "Max"
+      },
+      "expected": {
+        "display_name": "Kova Orion — Max",
+        "engine": "kova-core",
+        "profile": "orion",
+        "behavior_contract_id": "work_orion_balanced",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:orion:ultra",
+      "selector": {
+        "surface": "work",
+        "family": "orion",
+        "effort": "Ultra"
+      },
+      "expected": {
+        "display_name": "Kova Orion — Ultra",
+        "engine": "kova-ultra",
+        "profile": "orion",
+        "behavior_contract_id": "work_orion_balanced",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:nova:light",
+      "selector": {
+        "surface": "work",
+        "family": "nova",
+        "effort": "Light"
+      },
+      "expected": {
+        "display_name": "Kova Nova — Light",
+        "engine": "kova-core",
+        "profile": "nova",
+        "behavior_contract_id": "work_nova_rigorous",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:nova:medium",
+      "selector": {
+        "surface": "work",
+        "family": "nova",
+        "effort": "Medium"
+      },
+      "expected": {
+        "display_name": "Kova Nova — Medium",
+        "engine": "kova-core",
+        "profile": "nova",
+        "behavior_contract_id": "work_nova_rigorous",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:nova:high",
+      "selector": {
+        "surface": "work",
+        "family": "nova",
+        "effort": "High"
+      },
+      "expected": {
+        "display_name": "Kova Nova — High",
+        "engine": "kova-core",
+        "profile": "nova",
+        "behavior_contract_id": "work_nova_rigorous",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:nova:extra-high",
+      "selector": {
+        "surface": "work",
+        "family": "nova",
+        "effort": "Extra High"
+      },
+      "expected": {
+        "display_name": "Kova Nova — Extra High",
+        "engine": "kova-core",
+        "profile": "nova",
+        "behavior_contract_id": "work_nova_rigorous",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:nova:max",
+      "selector": {
+        "surface": "work",
+        "family": "nova",
+        "effort": "Max"
+      },
+      "expected": {
+        "display_name": "Kova Nova — Max",
+        "engine": "kova-core",
+        "profile": "nova",
+        "behavior_contract_id": "work_nova_rigorous",
+        "activity_updates": true
+      }
+    },
+    {
+      "route_id": "work:nova:ultra",
+      "selector": {
+        "surface": "work",
+        "family": "nova",
+        "effort": "Ultra"
+      },
+      "expected": {
+        "display_name": "Kova Nova — Ultra",
+        "engine": "kova-ultra",
+        "profile": "nova",
+        "behavior_contract_id": "work_nova_rigorous",
+        "activity_updates": true
+      }
+    }
   ],
   "auto_cases": [
-    { "id": "simple_direct", "prompt": "What's 8 × 7?", "entitlement": "pro", "budget": { "ultra_authorized": true, "remaining_usd": 2.0, "estimated_ultra_usd": 0.5 }, "expected_route_id": "instant" },
-    { "id": "substring_guard", "prompt": "What is a bracelet?", "entitlement": "pro", "budget": { "ultra_authorized": true, "remaining_usd": 2.0, "estimated_ultra_usd": 0.5 }, "expected_route_id": "instant" },
-    { "id": "current_information", "prompt": "What is the latest weather today?", "entitlement": "plus", "budget": { "ultra_authorized": false, "remaining_usd": 1.0, "estimated_ultra_usd": 0.5 }, "expected_route_id": "medium" },
-    { "id": "serious_analysis", "prompt": "Analyze this architecture for race conditions and security risks.", "entitlement": "pro", "budget": { "ultra_authorized": true, "remaining_usd": 2.0, "estimated_ultra_usd": 0.5 }, "expected_route_id": "high" },
-    { "id": "ultra_admitted", "prompt": "Research competitors and create a comprehensive cross-functional launch strategy and full report.", "entitlement": "pro", "budget": { "ultra_authorized": true, "remaining_usd": 2.0, "estimated_ultra_usd": 0.5 }, "expected_route_id": "ultra" },
-    { "id": "ultra_budget_fallback", "prompt": "Research competitors and create a comprehensive cross-functional launch strategy and full report.", "entitlement": "pro", "budget": { "ultra_authorized": true, "remaining_usd": 0.1, "estimated_ultra_usd": 0.5 }, "expected_route_id": "max" },
-    { "id": "free_cap", "prompt": "Create a comprehensive multi-domain competitor launch strategy.", "entitlement": "free", "budget": { "ultra_authorized": false, "remaining_usd": 0.0, "estimated_ultra_usd": 0.5 }, "expected_route_id": "instant" }
+    {
+      "id": "simple_direct",
+      "prompt": "What's 8 × 7?",
+      "entitlement": "pro",
+      "budget": {
+        "ultra_authorized": true,
+        "remaining_usd": 2,
+        "estimated_ultra_usd": 0.5
+      },
+      "expected_route_id": "instant"
+    },
+    {
+      "id": "substring_guard",
+      "prompt": "What is a bracelet?",
+      "entitlement": "pro",
+      "budget": {
+        "ultra_authorized": true,
+        "remaining_usd": 2,
+        "estimated_ultra_usd": 0.5
+      },
+      "expected_route_id": "instant"
+    },
+    {
+      "id": "current_information",
+      "prompt": "What is the latest weather today?",
+      "entitlement": "plus",
+      "budget": {
+        "ultra_authorized": false,
+        "remaining_usd": 1,
+        "estimated_ultra_usd": 0.5
+      },
+      "expected_route_id": "medium"
+    },
+    {
+      "id": "serious_analysis",
+      "prompt": "Analyze this architecture for race conditions and security risks.",
+      "entitlement": "pro",
+      "budget": {
+        "ultra_authorized": true,
+        "remaining_usd": 2,
+        "estimated_ultra_usd": 0.5
+      },
+      "expected_route_id": "high"
+    },
+    {
+      "id": "ultra_admitted",
+      "prompt": "Research competitors and create a comprehensive cross-functional launch strategy and full report.",
+      "entitlement": "pro",
+      "budget": {
+        "ultra_authorized": true,
+        "remaining_usd": 2,
+        "estimated_ultra_usd": 0.5
+      },
+      "expected_route_id": "ultra"
+    },
+    {
+      "id": "ultra_budget_fallback",
+      "prompt": "Research competitors and create a comprehensive cross-functional launch strategy and full report.",
+      "entitlement": "pro",
+      "budget": {
+        "ultra_authorized": true,
+        "remaining_usd": 0.1,
+        "estimated_ultra_usd": 0.5
+      },
+      "expected_route_id": "max"
+    },
+    {
+      "id": "free_cap",
+      "prompt": "Create a comprehensive multi-domain competitor launch strategy.",
+      "entitlement": "free",
+      "budget": {
+        "ultra_authorized": false,
+        "remaining_usd": 0,
+        "estimated_ultra_usd": 0.5
+      },
+      "expected_route_id": "instant"
+    }
   ],
   "response_cases": [
     {
       "id": "kova_identity",
-      "artifact": { "text": "I'm Kova, your AI assistant.", "identity_requested": true, "provider_disclosure_requested": false, "tool_claims": [], "runtime_tool_results": [], "user_source_urls": [] },
+      "artifact": {
+        "text": "I'm Kova, your AI assistant.",
+        "identity_requested": true,
+        "provider_disclosure_requested": false,
+        "tool_claims": [],
+        "runtime_tool_results": [],
+        "user_source_urls": []
+      },
       "expect_pass": true
     },
     {
       "id": "truthful_provider_disclosure",
-      "artifact": { "text": "I'm Kova. This request uses RunPod Serverless with upstream model Qwen/Qwen3.8-27B.", "identity_requested": true, "provider_disclosure_requested": true, "selected_provider": "RunPod Serverless", "selected_upstream_model": "Qwen/Qwen3.8-27B", "tool_claims": [], "runtime_tool_results": [], "user_source_urls": [] },
+      "artifact": {
+        "text": "I'm Kova. This request uses RunPod Serverless with upstream model Qwen/Qwen3.8-27B.",
+        "identity_requested": true,
+        "provider_disclosure_requested": true,
+        "selected_provider": "RunPod Serverless",
+        "selected_upstream_model": "Qwen/Qwen3.8-27B",
+        "tool_claims": [],
+        "runtime_tool_results": [],
+        "user_source_urls": []
+      },
       "expect_pass": true
     },
     {
       "id": "reject_false_foundation_claim",
-      "artifact": { "text": "Kova is a foundation model trained from scratch.", "identity_requested": true, "provider_disclosure_requested": false, "tool_claims": [], "runtime_tool_results": [], "user_source_urls": [] },
+      "artifact": {
+        "text": "Kova is a foundation model trained from scratch.",
+        "identity_requested": true,
+        "provider_disclosure_requested": false,
+        "tool_claims": [],
+        "runtime_tool_results": [],
+        "user_source_urls": []
+      },
       "expect_pass": false
     },
     {
       "id": "reject_hidden_reasoning",
-      "artifact": { "text": "<think>private chain of thought</think> Here is the answer.", "identity_requested": false, "provider_disclosure_requested": false, "tool_claims": [], "runtime_tool_results": [], "user_source_urls": [] },
+      "artifact": {
+        "text": "<think>private chain of thought</think> Here is the answer.",
+        "identity_requested": false,
+        "provider_disclosure_requested": false,
+        "tool_claims": [],
+        "runtime_tool_results": [],
+        "user_source_urls": []
+      },
       "expect_pass": false
     },
     {
@@ -68,39 +687,138 @@
         "text": "I checked https://example.com/source and found the recorded result.",
         "identity_requested": false,
         "provider_disclosure_requested": false,
-        "tool_claims": [{ "operation_id": "tool-1", "tool": "web", "source_url": "https://example.com/source" }],
-        "runtime_tool_results": [{ "operation_id": "tool-1", "status": "success", "tool": "web", "source_urls": ["https://example.com/source"] }],
+        "tool_claims": [
+          {
+            "operation_id": "tool-1",
+            "tool": "web",
+            "source_url": "https://example.com/source"
+          }
+        ],
+        "runtime_tool_results": [
+          {
+            "operation_id": "tool-1",
+            "status": "success",
+            "tool": "web",
+            "source_urls": [
+              "https://example.com/source"
+            ]
+          }
+        ],
         "user_source_urls": []
       },
       "expect_pass": true
     },
     {
       "id": "reject_fabricated_source",
-      "artifact": { "text": "I checked https://example.com/invented.", "identity_requested": false, "provider_disclosure_requested": false, "tool_claims": [{ "operation_id": "missing", "tool": "web", "source_url": "https://example.com/invented" }], "runtime_tool_results": [], "user_source_urls": [] },
+      "artifact": {
+        "text": "I checked https://example.com/invented.",
+        "identity_requested": false,
+        "provider_disclosure_requested": false,
+        "tool_claims": [
+          {
+            "operation_id": "missing",
+            "tool": "web",
+            "source_url": "https://example.com/invented"
+          }
+        ],
+        "runtime_tool_results": [],
+        "user_source_urls": []
+      },
       "expect_pass": false
     }
   ],
   "activity_cases": [
-    { "id": "instant_silent", "route_id": "instant", "events": [], "runtime_operations": [], "expect_pass": true },
+    {
+      "id": "instant_silent",
+      "route_id": "instant",
+      "events": [],
+      "runtime_operations": [],
+      "expect_pass": true
+    },
     {
       "id": "deep_grounded_event",
       "route_id": "high",
-      "events": [{ "event_id": "event-1", "request_id": "request-activity", "sequence": 1, "phase": "checking", "title": "Checking the source", "summary": "Verified the recorded result.", "occurred_at": "2026-09-14T00:00:01Z", "grounding_operation_id": "op-1", "tool": "web", "source_url": "https://example.com/source" }],
-      "runtime_operations": [{ "operation_id": "op-1", "request_id": "request-activity", "phase": "checking", "started_at": "2026-09-14T00:00:00Z", "status": "success", "tool": "web", "source_urls": ["https://example.com/source"] }],
+      "events": [
+        {
+          "event_id": "event-1",
+          "request_id": "request-activity",
+          "sequence": 1,
+          "phase": "checking",
+          "title": "Checking the source",
+          "summary": "Verified the recorded result.",
+          "occurred_at": "2026-09-14T00:00:01Z",
+          "grounding_operation_id": "op-1",
+          "tool": "web",
+          "source_url": "https://example.com/source"
+        }
+      ],
+      "runtime_operations": [
+        {
+          "operation_id": "op-1",
+          "request_id": "request-activity",
+          "phase": "checking",
+          "started_at": "2026-09-14T00:00:00Z",
+          "status": "success",
+          "tool": "web",
+          "source_urls": [
+            "https://example.com/source"
+          ]
+        }
+      ],
       "expect_pass": true
     },
     {
       "id": "instant_rejects_activity",
       "route_id": "instant",
-      "events": [{ "event_id": "event-1", "request_id": "request-activity", "sequence": 1, "phase": "thinking", "title": "Thinking", "summary": "Working.", "occurred_at": "2026-09-14T00:00:01Z", "grounding_operation_id": "op-1" }],
-      "runtime_operations": [{ "operation_id": "op-1", "request_id": "request-activity", "phase": "thinking", "started_at": "2026-09-14T00:00:00Z", "status": "started", "source_urls": [] }],
+      "events": [
+        {
+          "event_id": "event-1",
+          "request_id": "request-activity",
+          "sequence": 1,
+          "phase": "thinking",
+          "title": "Thinking",
+          "summary": "Working.",
+          "occurred_at": "2026-09-14T00:00:01Z",
+          "grounding_operation_id": "op-1"
+        }
+      ],
+      "runtime_operations": [
+        {
+          "operation_id": "op-1",
+          "request_id": "request-activity",
+          "phase": "thinking",
+          "started_at": "2026-09-14T00:00:00Z",
+          "status": "started",
+          "source_urls": []
+        }
+      ],
       "expect_pass": false
     },
     {
       "id": "reject_unstarted_activity",
       "route_id": "high",
-      "events": [{ "event_id": "event-1", "request_id": "request-activity", "sequence": 1, "phase": "checking", "title": "Checking", "summary": "Working.", "occurred_at": "2026-09-14T00:00:00Z", "grounding_operation_id": "op-1" }],
-      "runtime_operations": [{ "operation_id": "op-1", "request_id": "request-activity", "phase": "checking", "started_at": "2026-09-14T00:00:01Z", "status": "started", "source_urls": [] }],
+      "events": [
+        {
+          "event_id": "event-1",
+          "request_id": "request-activity",
+          "sequence": 1,
+          "phase": "checking",
+          "title": "Checking",
+          "summary": "Working.",
+          "occurred_at": "2026-09-14T00:00:00Z",
+          "grounding_operation_id": "op-1"
+        }
+      ],
+      "runtime_operations": [
+        {
+          "operation_id": "op-1",
+          "request_id": "request-activity",
+          "phase": "checking",
+          "started_at": "2026-09-14T00:00:01Z",
+          "status": "started",
+          "source_urls": []
+        }
+      ],
       "expect_pass": false
     }
   ],

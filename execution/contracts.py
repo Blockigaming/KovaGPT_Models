@@ -11,8 +11,11 @@ import json
 import math
 import re
 
-from router.entitlements import FREE_THINKING_MODE_ID, FREE_THINKING_ROUTE, WORK_ALLOWED_BY_TIER
-from router.policy import CHAT_POLICIES, WORK_FAMILIES, WORK_EFFORTS
+from router.entitlements import (
+    CHAT_ALLOWED_BY_TIER, COMPAT_CHAT_ALLOWED_BY_TIER, WORK_ALLOWED_BY_TIER,
+)
+from router.policy import CHAT_FAMILIES, CHAT_POLICIES, WORK_FAMILIES, WORK_EFFORTS
+from release.model_revisions import source_reference_for_route
 
 
 class ExecutionError(ValueError):
@@ -69,17 +72,17 @@ def identifier(value, name):
             f"invalid {name}")
 
 
-ALL_ROUTES = frozenset(CHAT_POLICIES) | frozenset(
+CANONICAL_CHAT_ROUTES = frozenset(
+    f"chat:{family}:{effort.lower().replace(' ', '-')}"
+    for family in CHAT_FAMILIES for effort in WORK_EFFORTS
+)
+ALL_ROUTES = frozenset(CHAT_POLICIES) | CANONICAL_CHAT_ROUTES | frozenset(
     f"work:{family}:{effort.lower().replace(' ', '-')}"
     for family in WORK_FAMILIES for effort in WORK_EFFORTS
 )
 # Direct Chat route entitlement. Free Thinking is a separately authorized app-mode
 # alias to medium/Orion; it intentionally does not make direct Free `medium` valid.
-CHAT_ALLOWED = {
-    "free": frozenset(("instant",)),
-    "plus": frozenset(("instant", "medium", "high")),
-    "pro": frozenset(CHAT_POLICIES),
-}
+CHAT_ALLOWED = COMPAT_CHAT_ALLOWED_BY_TIER
 
 
 @dataclass(frozen=True)
@@ -111,16 +114,14 @@ class ExecutionGrant:
         if route_id not in self.allowed_routes:
             raise ExecutionBlocked("route is not in the current server entitlement")
         if route_id in CHAT_POLICIES:
-            free_thinking_alias = (
-                self.tier == "free"
-                and application_mode_id == FREE_THINKING_MODE_ID
-                and route_id == FREE_THINKING_ROUTE
-            )
-            if route_id not in CHAT_ALLOWED[self.tier] and not free_thinking_alias:
+            if route_id not in CHAT_ALLOWED[self.tier]:
+                raise ExecutionBlocked("route exceeds the current Chat plan")
+        elif route_id.startswith("chat:"):
+            if route_id not in CHAT_ALLOWED_BY_TIER[self.tier]:
                 raise ExecutionBlocked("route exceeds the current Chat plan")
         elif route_id.startswith("work:") and route_id not in WORK_ALLOWED_BY_TIER[self.tier]:
             raise ExecutionBlocked("route exceeds the current Work plan")
-        if (route_id == "ultra" or route_id.endswith(":ultra")) and self.tier != "pro":
+        if route_id == "ultra" and self.tier != "pro":
             raise ExecutionBlocked("Ultra requires current Pro entitlement")
 
 
@@ -193,11 +194,17 @@ class ExecutionSpec:
             require(value["schema_version"] == 1, "unsupported execution snapshot")
             ExecutionLimits(**value["limits"])
             identity = value["runtime_identity"]
-            require(set(identity) == {"model", "model_revision", "context_tokens"},
+            require(set(identity) == {"model", "model_revision", "adapter_sha256", "adapter_bundle_sha256", "context_tokens"},
                     "invalid execution runtime identity")
             require(isinstance(identity["model"], str) and identity["model"].strip(), "missing model")
             require(isinstance(identity["model_revision"], str)
                     and re.fullmatch(r"[a-f0-9]{40}", identity["model_revision"]), "unpinned model")
+            require(isinstance(identity["adapter_sha256"], str)
+                    and re.fullmatch(r"[a-f0-9]{64}", identity["adapter_sha256"]),
+                    "unpinned trained adapter")
+            require(isinstance(identity["adapter_bundle_sha256"], str)
+                    and re.fullmatch(r"[a-f0-9]{64}", identity["adapter_bundle_sha256"]),
+                    "unpinned adapter bundle")
             positive_integer(identity["context_tokens"], "context tokens")
             plan = value["plan"]
             require(plan["route_id"] in ALL_ROUTES, "invalid execution route")
@@ -209,6 +216,15 @@ class ExecutionSpec:
                         and plan["candidate_revision"] == identity["model_revision"], "Core identity mismatch")
             else:
                 require(plan["model_selection_required"] is True, "Ultra live model remains unselected")
+                source = source_reference_for_route(plan["route_id"])
+                require(identity["model"] == source.slot and identity["model_revision"] == source.revision,
+                        "Ultra identity differs from selected route family")
+            from core.current_candidates import CORE_SERVING
+            candidates = [c for c in CORE_SERVING["candidates"] if c["model"] == identity["model"]
+                          and c["revision"] == identity["model_revision"]]
+            # Persisted snapshots retain the admitted adapter identity across pin rotation.
+            # The current pin is enforced on admission and again at worker dispatch.
+            require(len(candidates) == 1, "snapshot model differs from selected candidate")
             stages = value["stages"]
             require(isinstance(stages, list) and 1 <= len(stages) <= 16, "invalid stage count")
             seen = set()
@@ -251,6 +267,19 @@ class ExecutionSpec:
     def from_plan(cls, plan, *, limits, runtime_identity, stage_cost_caps):
         require(type(limits) is ExecutionLimits, "explicit execution limits required")
         require(isinstance(plan, dict) and isinstance(stage_cost_caps, dict), "trusted plan/cost bounds required")
+        from core.current_candidates import CORE_SERVING
+        require(isinstance(runtime_identity, dict), "runtime identity required")
+        admitted = [c for c in CORE_SERVING["candidates"]
+                    if c["model"] == runtime_identity.get("model")
+                    and c["revision"] == runtime_identity.get("model_revision")]
+        require(len(admitted) == 1 and runtime_identity.get("adapter_sha256") == admitted[0]["adapter_sha256"]
+                and isinstance(admitted[0]["adapter_sha256"], str), "adapter differs from current candidate pin")
+        require(runtime_identity.get("adapter_bundle_sha256") == admitted[0]["adapter_bundle_sha256"]
+                and isinstance(admitted[0]["adapter_bundle_sha256"], str),
+                "adapter bundle differs from current candidate pin")
+        positive_integer(runtime_identity.get("context_tokens"), "context tokens")
+        require(runtime_identity["context_tokens"] <= admitted[0]["context_tokens"],
+                "served context exceeds current candidate context")
         operations = plan.get("operations", [])
         ids = [op.get("stage_id", op.get("id")) for op in operations]
         require(set(stage_cost_caps) == set(ids), "every stage requires an explicit server cost cap")

@@ -10,12 +10,14 @@ import json
 import os
 from pathlib import Path
 import tempfile
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
 from worker import serving_runtime as runtime
 from worker.model_startup import SAFETY_FIELDS
+from core.current_candidates import CORE_SERVING
+from release.model_revisions import MODEL_SOURCE_REFERENCES
 
 
 class FakeBackend:
@@ -27,6 +29,8 @@ class FakeBackend:
         self.bad_close = False
         self.observed = {"model_path": root, "tokenizer_path": root,
             "model_revision": artifact["revision"], "tokenizer_revision": artifact["revision"],
+            "adapter_sha256": artifact["adapter_sha256"],
+            "adapter_bundle_sha256": artifact["manifest_sha256"],
             "served_model_names": [artifact["model"]], "context_tokens": policy.context_tokens,
             "trust_remote_code": False}
 
@@ -51,17 +55,30 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.root = Path(self.directory.name)
         self.model = self.root / "model"
         self.model.mkdir(mode=0o700)
-        self.candidate = json.loads((Path(__file__).resolve().parents[1] / "config/core-serving.v1.json").read_text())["candidates"][0]
+        self.candidate = CORE_SERVING["candidates"][0]
+        previous_pin = self.candidate["adapter_sha256"]
+        previous_bundle = self.candidate["adapter_bundle_sha256"]
+        adapter_bytes = b"synthetic serving adapter"
+        self.candidate["adapter_sha256"] = hashlib.sha256(adapter_bytes).hexdigest()
+        self.addCleanup(self.candidate.update, adapter_sha256=previous_pin)
+        self.addCleanup(self.candidate.update, adapter_bundle_sha256=previous_bundle)
         files = {"config.json": b'{"model_type":"synthetic"}', "tokenizer.json": b'{}',
-            "tokenizer_config.json": b'{}', "fixture.safetensors": b'NOT REAL MODEL WEIGHTS',
-            "model.safetensors.index.json": b'{"weight_map":{"fixture":"fixture.safetensors"}}'}
+            "tokenizer_config.json": b'{}',
+            "adapter_config.json": json.dumps({"peft_type": "LORA", "task_type": "CAUSAL_LM",
+                "r": 8, "lora_alpha": 16,
+                "base_model_name_or_path": MODEL_SOURCE_REFERENCES[self.candidate["id"]].model}).encode(),
+            "model.safetensors": b'NOT REAL MODEL WEIGHTS',
+            "adapter_model.safetensors": adapter_bytes,
+        }
         for name, value in files.items():
             (self.model / name).write_bytes(value)
         manifest = {"schema_version":1, "candidate_id":self.candidate["id"], "model":self.candidate["model"],
-            "revision":self.candidate["revision"], "files":[{"path":name, "bytes":len(value),
+            "revision":self.candidate["revision"], "adapter_sha256":self.candidate["adapter_sha256"],
+            "files":[{"path":name, "bytes":len(value),
                 "sha256":hashlib.sha256(value).hexdigest()} for name, value in sorted(files.items())]}
         manifest_path = self.root / "manifest.json"
         manifest_bytes = json.dumps(manifest).encode()
+        self.candidate["adapter_bundle_sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
         manifest_path.write_bytes(manifest_bytes)
         manifest_path.chmod(0o600)
         startup = {"schema_version":1, "status":"source_only_serving_blocked", "verification_enabled":True,
@@ -94,6 +111,7 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         identity = await self.controller.identity()
         self.assertEqual(identity["model"], self.candidate["model"])
         self.assertEqual(identity["model_revision"], self.candidate["revision"])
+        self.assertEqual(identity["adapter_bundle_sha256"], self.candidate["adapter_bundle_sha256"])
         self.assertEqual(identity["context_tokens"], 8192)
         self.assertEqual(identity["container_image_digest"], self.policy.container_image_digest)
         self.assertNotIn("artifact_root", identity)
@@ -102,6 +120,16 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(self.backend.health_calls, 3)
         self.assertFalse(self.controller.stop()["ready"])
         self.assertEqual(self.backend.closed, [True])
+
+    async def test_loaded_base_without_observed_trained_adapter_cannot_be_ready(self):
+        def base_only(root, artifact, policy):
+            backend = FakeBackend(root, artifact, policy)
+            backend.observed.pop("adapter_sha256")
+            return backend
+        self.factory.side_effect = base_only
+        with self.assertRaises(runtime.ServingRuntimeError):
+            await self.controller.start()
+        self.assertFalse(self.controller.status()["ready"])
 
     async def test_each_disabled_loading_gate_blocks_before_artifacts_callbacks_or_engine(self):
         for field in ("enabled", "model_loading_authorized", "gpu_execution_authorized"):
@@ -129,8 +157,31 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.controller.status()["state"], "failed")
 
     async def test_changed_weight_bytes_are_rejected_by_real_startup_verifier(self):
-        path = self.model / "fixture.safetensors"
+        path = self.model / "model.safetensors"
         path.write_bytes(b"x" * len(path.read_bytes()))
+        with self.assertRaises(runtime.ServingRuntimeError):
+            await self.controller.start()
+        self.factory.assert_not_called()
+
+    async def test_valid_changed_adapter_config_manifest_with_same_weights_rejects_unpinned_bundle(self):
+        config = self.model / "adapter_config.json"
+        changed = json.loads(config.read_bytes())
+        changed["lora_alpha"] = 32
+        config.write_bytes(json.dumps(changed).encode())
+        manifest_path = self.root / "manifest.json"
+        manifest = json.loads(manifest_path.read_bytes())
+        entry = next(entry for entry in manifest["files"] if entry["path"] == config.name)
+        entry["bytes"] = len(config.read_bytes())
+        entry["sha256"] = hashlib.sha256(config.read_bytes()).hexdigest()
+        manifest_path.write_bytes(json.dumps(manifest).encode())
+        startup = json.loads(self.policy_path.read_bytes())
+        startup["artifact"]["expected_manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        self.policy_path.write_bytes(json.dumps(startup).encode())
+        self.policy = replace(self.policy, startup_policy_sha256=hashlib.sha256(self.policy_path.read_bytes()).hexdigest())
+        self.controller = runtime.ServingRuntime(self.policy, lambda _: True,
+            lambda: self.policy.container_image_digest)
+        self.assertNotEqual(startup["artifact"]["expected_manifest_sha256"],
+                            self.candidate["adapter_bundle_sha256"])
         with self.assertRaises(runtime.ServingRuntimeError):
             await self.controller.start()
         self.factory.assert_not_called()
@@ -141,6 +192,22 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(runtime.ServingRuntimeError):
             await controller.start()
         self.factory.assert_not_called()
+
+    async def test_current_candidate_context_limit_blocks_oversized_loader_before_native_allocation(self):
+        for value in (self.candidate["context_tokens"] + 1, 262144):
+            policy = replace(self.policy, context_tokens=value)
+            controller = runtime.ServingRuntime(policy, lambda _: True,
+                                                lambda: policy.container_image_digest)
+            with self.subTest(context_tokens=value), self.assertRaises(runtime.ServingRuntimeError):
+                await controller.start()
+            self.assertEqual(controller.status()["state"], "failed")
+            self.factory.assert_not_called()
+        policy = replace(self.policy, context_tokens=self.candidate["context_tokens"])
+        controller = runtime.ServingRuntime(policy, lambda _: True,
+                                            lambda: policy.container_image_digest)
+        await controller.start()
+        self.assertEqual((await controller.identity())["context_tokens"], self.candidate["context_tokens"])
+        controller.stop()
 
     async def test_observed_native_configuration_mismatch_closes_backend_and_refuses_readiness(self):
         original = self.factory.side_effect
@@ -201,7 +268,7 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_restart_rehashes_artifacts_and_does_not_reuse_old_loader_success(self):
         await self.controller.start()
         self.controller.stop()
-        path = self.model / "fixture.safetensors"
+        path = self.model / "model.safetensors"
         path.write_bytes(b"changed")
         with self.assertRaises(runtime.ServingRuntimeError):
             await self.controller.start()
@@ -245,54 +312,19 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
 
 class NativeBindingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_native_binding_uses_documented_vllm_api_and_no_remote_model_or_logging(self):
+    async def test_native_base_only_loader_rejects_before_gpu_allocation(self):
         policy = runtime.LoaderPolicy("/trusted/policy.json", "a"*64, "fixture", "sha256:"+"b"*64,
                                        8192, 0.8, 2, 60, 2, 2, True, True, True)
-        captured = {}
-        class Args:
-            def __init__(self, **values):
-                self.values = values
-        class Engine:
-            def __init__(self, values):
-                self.model_config = SimpleNamespace(model=values["model"], tokenizer=values["tokenizer"],
-                    revision=values["revision"], tokenizer_revision=values["tokenizer_revision"],
-                    served_model_name=values["served_model_name"], max_model_len=values["max_model_len"],
-                    trust_remote_code=values["trust_remote_code"])
-            async def check_health(self):
-                captured["health"] = True
-            def shutdown(self, timeout=None):
-                captured["shutdown_timeout"] = timeout
-        class AsyncLLM:
-            @staticmethod
-            def from_engine_args(args):
-                captured.update(args.values)
-                return Engine(args.values)
-        modules = {name:ModuleType(name) for name in ("vllm", "vllm.engine", "vllm.engine.arg_utils",
-            "vllm.v1", "vllm.v1.engine", "vllm.v1.engine.async_llm")}
-        modules["vllm.engine.arg_utils"].AsyncEngineArgs = Args
-        modules["vllm.v1.engine.async_llm"].AsyncLLM = AsyncLLM
-        with patch.dict("sys.modules", modules), patch.object(runtime.importlib.metadata, "version", return_value="0.29.0"):
-            backend = runtime.NativeVllm("/readonly/model", {"model":"fixture-model", "revision":"a"*40}, policy)
-            await backend.health()
-            self.assertEqual(backend.observed_configuration()["model_path"], "/readonly/model")
-            backend.close()
-        self.assertEqual(captured["model"], "/readonly/model")
-        self.assertEqual(captured["tokenizer"], "/readonly/model")
-        self.assertEqual(captured["load_format"], "safetensors")
-        self.assertFalse(captured["trust_remote_code"])
-        self.assertFalse(captured["enable_log_requests"])
-        self.assertTrue(captured["disable_log_stats"])
-        self.assertFalse(captured["enable_prefix_caching"])
-        self.assertEqual(captured["tensor_parallel_size"], 1)
-        self.assertEqual(captured["shutdown_timeout"], 2)
-        self.assertTrue(captured["health"])
+        with patch.dict("sys.modules", {"vllm": None}), self.assertRaisesRegex(
+                runtime.ServingRuntimeError, "trained adapter loading is unavailable"):
+            runtime.NativeVllm("/readonly/model", {"model":"fixture-model", "revision":"a"*40}, policy)
 
-    async def test_wrong_vllm_version_fails_before_native_import(self):
+    async def test_disabled_native_policy_fails_before_loader(self):
         policy = runtime.LoaderPolicy("/trusted/policy.json", "a"*64, "fixture", "sha256:"+"b"*64,
                                        8192, 0.8, 2, 60, 2, 2, True, True, True)
-        with patch.object(runtime.importlib.metadata, "version", return_value="other-version"):
-            with self.assertRaises(runtime.ServingRuntimeError):
-                runtime.NativeVllm("/readonly/model", {"model":"fixture", "revision":"a"*40}, policy)
+        with self.assertRaises(runtime.ServingRuntimeError):
+            runtime.NativeVllm("/readonly/model", {"model":"fixture", "revision":"a"*40},
+                               replace(policy, enabled=False))
 
     async def test_concrete_environment_guard_requires_nonroot_readonly_and_offline_flags(self):
         environment = {name:"1" for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "VLLM_NO_USAGE_STATS", "DO_NOT_TRACK")}

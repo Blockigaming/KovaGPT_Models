@@ -6,13 +6,16 @@ import math
 import re
 from pathlib import Path
 
-from router.policy import resolve_route
+from router.policy import resolve_route, RUNTIME_PROFILES
+from core.current_candidates import NATIVE_CONTEXT_TOKENS
+from core.identity import load_runtime_identity, selected_candidate_provenance
+from release.model_revisions import source_reference_for_route
 from ultra.binding import DISAGREEMENT_INSTRUCTION, JUDGE_INSTRUCTION
 from ultra.conversation import validated_conversation
 
 
 ROOT = Path(__file__).resolve().parents[1]
-IDENTITY = json.loads((ROOT / "config" / "identity.v1.json").read_text(encoding="utf-8"))["system_identity"]
+IDENTITY = load_runtime_identity()
 ULTRA_CONFIG = json.loads((ROOT / "config" / "ultra-orchestration.v1.json").read_text(encoding="utf-8"))
 DOMAIN_SPECIALISTS = {
     "coding": ("planner", "implementation", "security", "test", "performance"),
@@ -57,11 +60,15 @@ def _domains(task):
     return selected or ["general"]
 
 
-def _validate_admission(admission):
+def _validate_admission(admission, *, surface):
     _require(isinstance(admission, dict), "trusted Ultra admission missing")
     expected = {"entitlement", "ultra_authorized", "remaining_usd", "estimated_max_usd", "max_agents", "max_total_tokens"}
     _require(set(admission) == expected, "invalid Ultra admission")
-    _require(admission["entitlement"] == "pro", "Ultra requires Pro entitlement")
+    _require(surface in ("chat", "work"), "invalid Ultra surface")
+    if surface == "chat":
+        _require(admission["entitlement"] == "pro", "Chat Ultra requires Pro entitlement")
+    else:
+        _require(admission["entitlement"] in ("plus", "pro"), "Work Ultra requires Plus or Pro entitlement")
     _require(admission["ultra_authorized"] is True, "Ultra execution is not authorized")
     for field in ("remaining_usd", "estimated_max_usd"):
         value = admission[field]
@@ -82,11 +89,20 @@ def _resolve_request(request):
     if "route_id" in request:
         _require(set(request) == {"request_id", "route_id"} | content_fields,
                  "Ultra request contains unsupported fields")
-        policy = resolve_route({"surface": "chat", "route_id": request["route_id"]})
+        route_id = request["route_id"]
+        if isinstance(route_id, str) and route_id.startswith("chat:"):
+            parts = route_id.split(":")
+            _require(len(parts) == 3, "invalid canonical Chat Ultra route")
+            policy = resolve_route({"surface": "chat", "family": parts[1],
+                                    "effort": parts[2].replace("-", " ").title()})
+        else:
+            policy = resolve_route({"surface": "chat", "route_id": route_id})
     else:
         expected = {"request_id", "surface", "family", "effort"} | content_fields
-        _require(set(request) == expected and request.get("surface") == "work", "Ultra request contains unsupported fields")
-        policy = resolve_route({"surface": "work", "family": request["family"], "effort": request["effort"]})
+        _require(set(request) == expected and request.get("surface") in ("chat", "work"),
+                 "Ultra request contains unsupported fields")
+        policy = resolve_route({"surface": request["surface"], "family": request["family"],
+                                "effort": request["effort"]})
     _require(policy["engine"] == "kova-ultra", "route is not eligible for Kova Ultra")
     return policy
 
@@ -117,11 +133,12 @@ def _select_specialists(domains, maximum):
 
 
 def _messages_template(task, behavior_instruction, operation_instruction, artifact_ids,
-                       optional_artifact_ids=(), *, conversation=None):
+                       optional_artifact_ids=(), *, conversation=None, identity, provenance):
     optional = set(optional_artifact_ids)
     bindings = []
     messages = [
-        {"role": "system", "content": IDENTITY},
+        {"role": "system", "content": identity},
+        provenance,
         {"role": "system", "content": behavior_instruction},
         {"role": "system", "content": operation_instruction},
         *(deepcopy(conversation) if conversation is not None else [{"role": "user", "content": task}]),
@@ -156,14 +173,19 @@ def _trusted_count(token_counter, messages):
 
 def build_ultra_plan(request, *, admission, token_counter):
     """Build a single-task or full-text-conversation DAG without executing it."""
+    identity = load_runtime_identity()
     policy = _resolve_request(request)
+    reference = source_reference_for_route(policy["route_id"])
+    provenance = selected_candidate_provenance(policy["route_id"], reference.slot)
     request_id = request["request_id"]
     _require(isinstance(request_id, str) and 1 <= len(request_id) <= 128, "invalid request_id")
     conversation = validated_conversation(request["messages"]) if "messages" in request else None
     task = conversation[-1]["content"] if conversation is not None else request["task"]
     _require(isinstance(task, str) and task.strip(), "task must be nonempty text")
     _require(len(task) <= 250_000, "task too large")
-    _validate_admission(admission)
+    _validate_admission(admission, surface=policy["surface"])
+    _require(admission["max_agents"] <= RUNTIME_PROFILES["ultra"]["maximum_specialists"],
+             "Ultra specialist profile limit exceeded")
     _require(callable(token_counter), "trusted token counter missing")
     domains = _domains(task)
     _require(len(domains) <= admission["max_agents"], "max_agents insufficient for detected domain coverage")
@@ -214,6 +236,7 @@ def build_ultra_plan(request, *, admission, token_counter):
         messages, bindings = _messages_template(
             task, policy["behavior_instruction"], spec["instruction"], spec["artifact_ids"],
             spec.get("optional_artifact_ids", ()), conversation=conversation,
+            identity=identity, provenance=provenance,
         )
         spec["messages"] = messages
         spec["artifact_bindings"] = bindings
@@ -223,6 +246,12 @@ def build_ultra_plan(request, *, admission, token_counter):
     output_and_propagation_units = len(specs) + sum(len(spec["artifact_ids"]) for spec in specs)
     available = admission["max_total_tokens"] - fixed_input_tokens
     per_operation_tokens = available // output_and_propagation_units
+    per_operation_tokens = min(per_operation_tokens, RUNTIME_PROFILES["ultra"]["maximum_output_tokens"])
+    per_operation_tokens = min(
+        per_operation_tokens,
+        *(max(0, (NATIVE_CONTEXT_TOKENS - spec["template_input_tokens"]) //
+               (1 + len(spec["artifact_ids"]))) for spec in specs),
+    )
     _require(per_operation_tokens >= 512, "Ultra token budget too small after input and artifact reservation")
 
     operations = []

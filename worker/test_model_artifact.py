@@ -12,13 +12,20 @@ import unittest
 from unittest.mock import patch
 
 from worker import model_artifact as artifact
+from core.current_candidates import CORE_SERVING
+from release.model_revisions import MODEL_SOURCE_REFERENCES
 
 
-CATALOG = json.loads((Path(__file__).resolve().parents[1] / "config/core-serving.v1.json").read_text())
+CATALOG = CORE_SERVING
 
 
 class ModelArtifactTests(unittest.TestCase):
     def setUp(self):
+        self.adapter_bytes = b"synthetic fixture adapter bytes"
+        self.adapter_digest = hashlib.sha256(self.adapter_bytes).hexdigest()
+        self.original_pins = [candidate["adapter_sha256"] for candidate in CATALOG["candidates"]]
+        for candidate in CATALOG["candidates"]:
+            candidate["adapter_sha256"] = self.adapter_digest
         self.directory = tempfile.TemporaryDirectory(prefix="kova-artifact-fixture-")
         self.root = Path(self.directory.name) / "model"
         self.root.mkdir(mode=0o700)
@@ -26,16 +33,21 @@ class ModelArtifactTests(unittest.TestCase):
             "config.json": b'{"model_type":"synthetic_fixture"}',
             "tokenizer.json": b'{"fixture":true}',
             "tokenizer_config.json": b'{"tokenizer_class":"SyntheticFixture"}',
-            "model.safetensors.index.json": b'{"metadata":{"total_size":16},"weight_map":{"fixture.weight":"model-00001-of-00001.safetensors"}}',
+            "adapter_config.json": json.dumps({"peft_type": "LORA", "task_type": "CAUSAL_LM",
+                "r": 8, "lora_alpha": 16,
+                "base_model_name_or_path": MODEL_SOURCE_REFERENCES["kova-cosmo"].model}).encode(),
             # Deliberately not a loadable model: only the byte-integrity layer is tested.
-            "model-00001-of-00001.safetensors": b"synthetic fixture weight bytes",
+            "model.safetensors": b"synthetic fixture weight bytes",
             "README.md": b"Synthetic model-artifact fixture; not upstream weights.\n",
+            "adapter_model.safetensors": self.adapter_bytes,
         }
         for name, content in self.files.items():
             (self.root / name).write_bytes(content)
         self.manifest = self.snapshot()
 
     def tearDown(self):
+        for candidate, previous in zip(CATALOG["candidates"], self.original_pins):
+            candidate["adapter_sha256"] = previous
         self.directory.cleanup()
 
     def snapshot(self, candidate_index=0):
@@ -43,6 +55,7 @@ class ModelArtifactTests(unittest.TestCase):
         return {
             "schema_version": 1, "candidate_id": candidate["id"],
             "model": candidate["model"], "revision": candidate["revision"],
+            "adapter_sha256": candidate["adapter_sha256"],
             "files": [{"path": name, "bytes": len(content), "sha256": hashlib.sha256(content).hexdigest()}
                       for name, content in sorted(self.files.items())],
         }
@@ -66,8 +79,26 @@ class ModelArtifactTests(unittest.TestCase):
         (self.root / name).write_bytes(content)
         self.manifest = self.snapshot()
 
-    def test_both_pinned_candidates_produce_integrity_only_evidence(self):
+    def set_base_model(self, candidate_index):
+        value = json.loads(self.files["adapter_config.json"])
+        value["base_model_name_or_path"] = MODEL_SOURCE_REFERENCES[CATALOG["candidates"][candidate_index]["id"]].model
+        self.change_metadata("adapter_config.json", json.dumps(value).encode())
+
+    def use_sharded_weights(self):
+        (self.root / "model.safetensors").unlink()
+        del self.files["model.safetensors"]
+        self.change_metadata("model.safetensors.index.json",
+                             b'{"metadata":{"total_size":16},"weight_map":{"fixture.weight":"model-00001-of-00001.safetensors"}}')
+        self.change_metadata("model-00001-of-00001.safetensors", b"synthetic fixture weight bytes")
+        self.set_base_model(1)
+        self.manifest = self.snapshot(1)
+
+    def test_all_pinned_candidates_produce_integrity_only_evidence(self):
         for index, candidate in enumerate(CATALOG["candidates"]):
+            if index == 1:
+                self.use_sharded_weights()
+            elif index == 2:
+                self.set_base_model(index)
             with self.subTest(candidate=candidate["id"]):
                 result = self.verify(self.snapshot(index))
                 self.assertEqual(result["status"], "local_artifact_bytes_verified")
@@ -79,10 +110,81 @@ class ModelArtifactTests(unittest.TestCase):
                               "gpu_execution_authorized", "production_routing_authorized"):
                     self.assertIs(result[field], False)
 
+    def test_cosmo_monolithic_base_and_adapter_config_are_verified(self):
+        self.assertEqual(self.verify()["status"], "local_artifact_bytes_verified")
+        changed = json.loads(self.files["adapter_config.json"])
+        changed["peft_type"] = "OTHER"
+        self.change_metadata("adapter_config.json", json.dumps(changed).encode())
+        with self.assertRaisesRegex(artifact.ModelArtifactError, "invalid PEFT adapter configuration"):
+            self.verify()
+
+    def test_adapter_config_is_required_and_tampering_rejected(self):
+        altered = deepcopy(self.manifest)
+        altered["files"] = [entry for entry in altered["files"]
+                            if entry["path"] != "adapter_config.json"]
+        with self.assertRaises(artifact.ModelArtifactError):
+            self.verify(altered)
+        config = self.root / "adapter_config.json"
+        config.write_bytes(b"x" * len(self.files["adapter_config.json"]))
+        with self.assertRaisesRegex(artifact.ModelArtifactError, "approved digest"):
+            self.verify()
+
+    def test_reviewed_adapter_config_must_be_a_safe_causal_lora(self):
+        for change in ({"peft_type": "OTHER"}, {"task_type": "SEQ_CLS"}, {"r": True},
+                       {"r": 0}, {"lora_alpha": -1},
+                       {"auto_mapping": {"base_model_class": "RemoteModel"}}):
+            value = json.loads(self.files["adapter_config.json"])
+            value.update(change)
+            self.change_metadata("adapter_config.json", json.dumps(value).encode())
+            with self.subTest(change=change), \
+                    self.assertRaisesRegex(artifact.ModelArtifactError, "invalid PEFT adapter configuration"):
+                self.verify()
+
+    def test_family_weight_layouts_must_match_pinned_manifests(self):
+        for index in (1, 2):
+            with self.subTest(candidate=CATALOG["candidates"][index]["id"]), \
+                    self.assertRaisesRegex(artifact.ModelArtifactError, "sharded base weights"):
+                self.verify(self.snapshot(index))
+        self.use_sharded_weights()
+        with self.assertRaisesRegex(artifact.ModelArtifactError, "monolithic base weights"):
+            self.verify(self.snapshot(0))
+        for index in (1, 2):
+            with self.subTest(candidate=CATALOG["candidates"][index]["id"]):
+                self.set_base_model(index)
+                self.assertEqual(self.verify(self.snapshot(index))["status"],
+                                 "local_artifact_bytes_verified")
+
+    def test_adapter_base_must_match_trusted_family_even_with_a_reviewed_manifest(self):
+        for base in ("Other/Model", "Qwen/Qwen3-1.7B", "/external/verified-snapshot", "", None):
+            value = json.loads(self.files["adapter_config.json"])
+            value["base_model_name_or_path"] = base
+            self.change_metadata("adapter_config.json", json.dumps(value).encode())
+            with self.subTest(base=base), self.assertRaisesRegex(
+                artifact.ModelArtifactError, "adapter base model differs from pinned family source"
+            ):
+                self.verify()
+        value.pop("base_model_name_or_path")
+        self.change_metadata("adapter_config.json", json.dumps(value).encode())
+        with self.assertRaisesRegex(artifact.ModelArtifactError, "adapter base model differs"):
+            self.verify()
+
     def test_missing_or_mismatched_reviewed_manifest_pin_is_rejected(self):
         for digest in (None, "", "0" * 64, "A" * 64, "sha256:" + "a" * 64):
             with self.subTest(digest=digest), self.assertRaises(artifact.ModelArtifactError):
                 self.verify(expected_manifest_sha256=digest)
+
+    def test_adapter_file_must_match_separate_candidate_pin(self):
+        changed = deepcopy(self.manifest)
+        changed["adapter_sha256"] = "e" * 64
+        with self.assertRaises(artifact.ModelArtifactError):
+            self.verify(changed)
+        changed = deepcopy(self.manifest)
+        next(entry for entry in changed["files"] if entry["path"] == "adapter_model.safetensors")["sha256"] = "e" * 64
+        with self.assertRaises(artifact.ModelArtifactError):
+            self.verify(changed)
+        CATALOG["candidates"][0]["adapter_sha256"] = None
+        with self.assertRaisesRegex(artifact.ModelArtifactError, "trained adapter digest is not pinned"):
+            self.verify()
 
     def test_unknown_candidate_and_changed_identity_do_not_pass_with_a_new_checksum(self):
         for field, value in (("candidate_id", "unknown"), ("model", "Unapproved/Model"),
@@ -121,7 +223,7 @@ class ModelArtifactTests(unittest.TestCase):
             self.verify({**self.manifest, "gpu_execution_authorized": True})
 
     def test_all_required_metadata_and_weights_must_be_present(self):
-        for name in artifact.REQUIRED_FILES | {"model-00001-of-00001.safetensors"}:
+        for name in artifact.REQUIRED_FILES | {"model.safetensors"}:
             value = deepcopy(self.manifest)
             value["files"] = [item for item in value["files"] if item["path"] != name]
             with self.subTest(name=name), self.assertRaises(artifact.ModelArtifactError):
@@ -138,7 +240,7 @@ class ModelArtifactTests(unittest.TestCase):
             self.verify()
 
     def test_size_and_same_size_content_changes_are_rejected(self):
-        path = self.root / "model-00001-of-00001.safetensors"
+        path = self.root / "model.safetensors"
         original = path.read_bytes()
         for altered in (original + b"extra", b"x" * len(original)):
             path.write_bytes(altered)
@@ -191,13 +293,14 @@ class ModelArtifactTests(unittest.TestCase):
             self.change_metadata(name, original)
 
     def test_weight_index_requires_exactly_the_packaged_shard_set(self):
+        self.use_sharded_weights()
         name = "model.safetensors.index.json"
         for value in ({"weight_map": {}}, {"weight_map": {"x": "missing.safetensors"}},
                       {"weight_map": {"x": "../model.safetensors"}}, {"weight_map": {"x": []}},
                       {"weight_map": {"x": "tokenizer.json"}}, {"bad": True}):
             self.change_metadata(name, json.dumps(value).encode())
             with self.subTest(value=value), self.assertRaises(artifact.ModelArtifactError):
-                self.verify()
+                self.verify(self.snapshot(1))
 
     def test_metadata_duplicate_keys_nonfinite_and_invalid_utf8_are_rejected(self):
         for content in (b'{"auto_map":{},"auto_map":{}}', b'{"x":NaN}', b'{"x":1e400}',
@@ -240,8 +343,8 @@ class ModelArtifactTests(unittest.TestCase):
 
     def test_mutation_after_hashing_is_detected_before_success(self):
         original = artifact._metadata_contract
-        def changed(metadata, names):
-            original(metadata, names)
+        def changed(metadata, names, candidate_id):
+            original(metadata, names, candidate_id)
             (self.root / "config.json").write_bytes(b"x" * len(self.files["config.json"]))
         with patch.object(artifact, "_metadata_contract", side_effect=changed):
             with self.assertRaises(artifact.ModelArtifactError):

@@ -15,7 +15,7 @@ from pathlib import Path
 import re
 import sys
 
-from release.model_revisions import MODEL_SOURCE_REFERENCES
+from release.model_revisions import LEGACY_WORK_COSMO_REFERENCE
 from training.cosmo_lifecycle_authority import (
     AuthorityError,
     PHASE_RESERVED_SECONDS,
@@ -102,7 +102,7 @@ def load_policy(root: Path = ROOT) -> dict:
             "required_controls", "owner_approvals", "runtime_evidence",
             "phase_b_ready",
         ])
-        reference = MODEL_SOURCE_REFERENCES["work-cosmo"]
+        reference = LEGACY_WORK_COSMO_REFERENCE
         need(value["schema_version"] == 1)
         need(value["model_slot"] == reference.slot)
         need(value["base_model"] == reference.model)

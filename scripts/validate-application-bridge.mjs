@@ -7,11 +7,13 @@ import { MODE_IDS_BY_TIER } from "../tests/fixtures/app-mode-entitlements.mjs";
 export function validateApplicationBridge(value) {
   assert.deepEqual(Object.keys(value ?? {}).sort(), [
     "schema_version", "status", "selection_schema", "application_source", "application_chat_modes",
-    "legacy", "rules", "safety", "unresolved",
+    "legacy", "rules", "safety", "unresolved", "superseded_by", "must_not_drive_current_routing",
   ].sort());
   assert.equal(value.schema_version, 1);
-  assert.equal(value.status, "source_only_versioned_bridge");
+  assert.equal(value.status, "superseded_non_authoritative_history");
   assert.equal(value.selection_schema, "kova-models.v1");
+  assert.equal(value.superseded_by, "config/current-product-policy.v3.json");
+  assert.equal(value.must_not_drive_current_routing, true);
   assert.deepEqual(value.application_source, {
     repository: "Blockigaming/KovaGPT",
     commit: "b964d1bc9fcd81fcfc70e97a22cbf4a516605c94",
@@ -49,7 +51,7 @@ export function validateApplicationBridge(value) {
     "free_thinking_custom_model_mapping", "complete_work_plan_matrix",
     "application_startup_provider_cutover", "older_application_identity_prompt_reconciliation",
   ]);
-  return { status: "versioned_application_bridge_checked_live_routing_blocked", provider_calls: 0 };
+  return { status: "historical_application_bridge_checked_current_policy_authoritative", provider_calls: 0 };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

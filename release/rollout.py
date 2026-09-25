@@ -67,10 +67,50 @@ def pin(value, length=64):
 
 
 def policy_digest():
-    # Include implemented policy/planners, not only user-facing labels.
-    paths = ("config/route-policy.v1.json", "config/identity.v1.json", "router/policy.py",
-             "router/auto.py", "core/adapter.py", "ultra/orchestrator.py",
-             "config/evaluation-gates.v1.json", "evaluations/offline-suite.v1.json")
+    # A staged plan must expire when any current family, entitlement, model,
+    # planner, or evidence source changes. Archived routing files are excluded.
+    paths = ("release/rollout.py", "config/current-product-policy.v3.json",
+             "config/kova-private-lineage.v1.json",
+             "prompts/kova-identity.v3.txt", "core/identity.py",
+             "config/kova-three-family-dataset.v2.json",
+             "config/qwen3-0.6b-download-manifest.v1.json",
+             "config/qwen3-1.7b-download-manifest.v1.json",
+             "config/qwen3-4b-download-manifest.v1.json",
+             "config/kova-runtime-profiles.v1.json", "router/policy.py",
+             "config/ultra-orchestration.v1.json", "config/activity-event.v1.json",
+             "config/kova-three-family-evaluation.v1.json", "config/model-rollout.v1.json",
+             "router/entitlements.py", "router/auto.py", "router/application.py",
+             "release/model_revisions.py", "core/current_candidates.py",
+             "core/adapter.py", "ultra/orchestrator.py", "ultra/conversation.py",
+             "worker/handler.py", "ultra/binding.py", "execution/workers.py",
+             "execution/source_context.py", "evaluation/offline.py",
+             "worker/model_artifact.py", "worker/model_startup.py",
+             "worker/serving_runtime.py", "execution/contracts.py",
+             "scripts/summarize-core-benchmark.mjs",
+             "evaluation/three_family_guard.py", "config/inference-contract.v1.json",
+             "training/three_family_contract.py",
+             "training/cosmo_qlora_launch.py", "training/cosmo_qlora_training.py",
+             "training/cosmo_qlora_grant.py",
+             "training/cosmo_controller_ledger.py", "training/cosmo_controller_grants.py",
+             "training/cosmo_controller_azure.py", "training/cosmo_controller_http.py",
+             "training/cosmo_controller_host.py", "training/cosmo_adapter_preservation.py",
+             "requirements/receiver-auth-py312-linux.lock",
+             "training/cosmo_lifecycle_authority.py", "training/snapshot_verifier.py",
+             "training/cosmo_hardware.py", "training/cosmo_runtime_probe.py",
+             "training/cosmo_artifacts.py", "training/kova_cosmo_sft.py",
+             "config/kova-cosmo-qlora.v1.json",
+             "config/kova-three-family-cost-guard.v1.json",
+             "config/kova-cosmo-lifecycle-trust.v1.json",
+             "config/kova-three-family-training-stack.v1.json",
+             "config/kova-t4-compatibility.v1.json",
+             "requirements/kova-cosmo-sft-py312-linux.lock",
+             "requirements/kova-three-family-bitsandbytes-py312-linux.lock",
+             "infra/three-family-pilot-vm.bicep",
+             "infra/three-family-watchdog.bicep",
+             "infra/three-family-watchdog-pilot-role.bicep",
+             "infra/cosmo-protected-storage.bicep",
+             "config/completion-target.v1.json", "config/evaluation-gates.v1.json",
+             "evaluations/offline-suite.v1.json")
     return digest({path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in paths})
 
 

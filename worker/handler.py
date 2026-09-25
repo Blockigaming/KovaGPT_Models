@@ -2,14 +2,15 @@
 
 import json
 import math
-from pathlib import Path
 from time import perf_counter_ns
 from uuid import UUID, uuid4
 
 from core.adapter import bind_core_operation, build_core_plan
+from core.current_candidates import CORE_SERVING
+from core.identity import load_runtime_identity
+from router.policy import CHAT_POLICIES, WORK_EFFORTS, WORK_FAMILY_POLICIES, resolve_route
 
 
-ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_EFFORTS = frozenset(("low", "medium", "xhigh"))
 ALLOWED_SERVING_ENGINES = frozenset(("vllm", "sglang"))
 ALLOWED_ENDPOINT_TYPES = frozenset(("queue_based", "load_balancing"))
@@ -21,20 +22,14 @@ MAX_TOOL_CALLS = 32
 MAX_TOOL_ARGUMENT_CHARS = 250_000
 MAX_TOOL_JSON_DEPTH = 64
 MAX_TOOL_JSON_NODES = 50_000
-TRUSTED_SYSTEM_IDENTITY = json.loads(
-    (ROOT / "config" / "identity.v1.json").read_text(encoding="utf-8")
-)["system_identity"]
-ROUTE_POLICY = json.loads(
-    (ROOT / "config" / "route-policy.v1.json").read_text(encoding="utf-8")
-)
-CORE_SERVING = json.loads(
-    (ROOT / "config" / "core-serving.v1.json").read_text(encoding="utf-8")
-)
+TRUSTED_SYSTEM_IDENTITY = load_runtime_identity()
 PINNED_CORE_CANDIDATES = {
     candidate["id"]: {
         "id": candidate["id"],
         "model": candidate["model"],
         "model_revision": candidate["revision"],
+        "adapter_sha256": candidate["adapter_sha256"],
+        "adapter_bundle_sha256": candidate["adapter_bundle_sha256"],
     }
     for candidate in CORE_SERVING["candidates"]
 }
@@ -42,7 +37,8 @@ RUNTIME_NUMERIC_FIELDS = (
     "worker_start_ms", "model_load_ms", "queue_ms", "gpu_rate_per_second_usd",
 )
 RUNTIME_IDENTITY_FIELDS = (
-    "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "cold_start",
+    "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "loaded_adapter_sha256",
+    "loaded_adapter_bundle_sha256", "cold_start",
     "worker_start_ms", "model_load_ms", "queue_ms", "gpu_rate_per_second_usd", "gpu_type_id",
     "gpu_count", "serving_engine", "endpoint_type", "container_image_digest",
 )
@@ -66,30 +62,31 @@ def _selected_candidate(candidate_id):
 
 def _stage_ids(policy):
     stages = []
-    for phase, field in (
-        ("planning", "planning_passes"), ("answer", "answer_passes"),
-        ("critic", "critic_passes"), ("verification", "verification_passes"),
-    ):
-        stages.extend(f"{phase}-{index}" for index in range(1, policy.get(field, 0) + 1))
+    for phase, count in zip(("planning", "answer", "critic", "verification"), policy["passes"]):
+        stages.extend(f"{phase}-{index}" for index in range(1, count + 1))
     return stages
 
 
 CORE_ROUTE_STAGES = {}
 CORE_ROUTE_EFFORTS = {}
 WORK_ROUTE_REQUESTS = {}
-for route in ROUTE_POLICY["chat"]:
-    if route["engine"] == "kova-core":
-        CORE_ROUTE_STAGES[route["id"]] = _stage_ids(route)
-        CORE_ROUTE_EFFORTS[route["id"]] = route["reasoning_effort"]
-for family in ROUTE_POLICY["work"]["families"]:
-    for effort in ROUTE_POLICY["work"]["effort_profiles"]:
-        if effort["engine"] == "kova-core":
-            route_id = f"work:{family}:{effort['name'].lower().replace(' ', '-')}"
-            CORE_ROUTE_STAGES[route_id] = _stage_ids(effort)
+for route_id, policy in CHAT_POLICIES.items():
+    if policy["engine"] == "kova-core":
+        CORE_ROUTE_STAGES[route_id] = _stage_ids(resolve_route({"surface": "chat", "route_id": route_id}))
+        CORE_ROUTE_EFFORTS[route_id] = policy["reasoning_effort"]
+for family in WORK_FAMILY_POLICIES:
+    for name, effort in WORK_EFFORTS.items():
+        if name != "Ultra":
+            route_id = f"work:{family}:{name.lower().replace(' ', '-')}"
+            CORE_ROUTE_STAGES[route_id] = _stage_ids(resolve_route({"surface": "work", "family": family, "effort": name}))
             CORE_ROUTE_EFFORTS[route_id] = effort["reasoning_effort"]
             WORK_ROUTE_REQUESTS[route_id] = {
-                "surface": "work", "family": family, "effort": effort["name"],
+                "surface": "work", "family": family, "effort": name,
             }
+            if family in ("cosmo", "orion"):
+                chat_route_id = f"chat:{family}:{name.lower().replace(' ', '-')}"
+                CORE_ROUTE_STAGES[chat_route_id] = _stage_ids(resolve_route({"surface": "chat", "family": family, "effort": name}))
+                CORE_ROUTE_EFFORTS[chat_route_id] = effort["reasoning_effort"]
 
 
 def _validated_message(message):
@@ -167,6 +164,18 @@ def _validate_runtime_value(value, selected_candidate):
         value.get("loaded_model_revision") == selected_candidate["model_revision"],
         "runtime loaded model revision does not match selected pinned revision",
     )
+    pinned_adapter = selected_candidate["adapter_sha256"]
+    _require(isinstance(pinned_adapter, str) and len(pinned_adapter) == 64
+             and all(character in "0123456789abcdef" for character in pinned_adapter),
+             "trained adapter digest is not pinned for this candidate")
+    _require(value.get("loaded_adapter_sha256") == pinned_adapter,
+             "runtime loaded adapter does not match pinned trained adapter")
+    pinned_bundle = selected_candidate["adapter_bundle_sha256"]
+    _require(isinstance(pinned_bundle, str) and len(pinned_bundle) == 64
+             and all(character in "0123456789abcdef" for character in pinned_bundle),
+             "trained adapter bundle digest is not pinned for this candidate")
+    _require(value.get("loaded_adapter_bundle_sha256") == pinned_bundle,
+             "runtime loaded adapter bundle does not match pinned manifest")
     for field in RUNTIME_NUMERIC_FIELDS:
         number = value.get(field)
         _require(isinstance(number, (int, float)) and not isinstance(number, bool), f"invalid {field}")
@@ -198,6 +207,7 @@ def _planner_request(value, route_id):
 
 
 def build_engine_request(value, execution_context, *, token_counter):
+    _require(load_runtime_identity() == TRUSTED_SYSTEM_IDENTITY, "approved Kova identity prompt changed")
     value = validate_input(value)
     execution = validate_execution_context(execution_context)
     selected_candidate = _selected_candidate(execution["benchmark_candidate_id"])
@@ -488,6 +498,8 @@ def _attempt_record(value, execution, attempt_id, outcome, elapsed_ms, first_tok
         "outcome": outcome,
         "model": runtime["loaded_model"],
         "model_revision": runtime["loaded_model_revision"],
+        "adapter_sha256": runtime["loaded_adapter_sha256"],
+        "adapter_bundle_sha256": runtime["loaded_adapter_bundle_sha256"],
         "route_id": execution["route_id"],
         "stage_id": execution["stage_id"],
         "public_response": execution["public_response"],
@@ -521,14 +533,16 @@ def emit_lifecycle_close(
     selected_candidate = _selected_candidate(benchmark_candidate_id)
     value = runtime_close_probe()
     required = {
-        "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "billed_lifecycle_ms",
+        "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "loaded_adapter_sha256",
+        "loaded_adapter_bundle_sha256", "billed_lifecycle_ms",
         "attributed_idle_timeout_ms", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count",
         "serving_engine", "endpoint_type", "container_image_digest",
     }
     _require(isinstance(value, dict) and set(value) == required, "invalid lifecycle close probe")
     identity_probe = {
         **{field: value[field] for field in (
-            "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision",
+            "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "loaded_adapter_sha256",
+            "loaded_adapter_bundle_sha256",
             "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count", "serving_engine",
             "endpoint_type", "container_image_digest",
         )},
@@ -553,6 +567,8 @@ def emit_lifecycle_close(
         "worker_lifecycle_id": validated["worker_lifecycle_id"],
         "model": validated["loaded_model"],
         "model_revision": validated["loaded_model_revision"],
+        "adapter_sha256": validated["loaded_adapter_sha256"],
+        "adapter_bundle_sha256": validated["loaded_adapter_bundle_sha256"],
         "billed_lifecycle_ms": billed_ms,
         "attributed_idle_timeout_ms": idle_ms,
         "gpu_rate_per_second_usd": validated["gpu_rate_per_second_usd"],

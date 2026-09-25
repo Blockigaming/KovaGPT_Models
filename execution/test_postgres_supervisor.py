@@ -25,7 +25,7 @@ from execution.postgres_supervisor import DispatchClaim, DispatchRejected, Postg
 from execution.record_cipher import KeyMaterial, RecordCipher
 from execution.runner import LocalRunner
 from execution.test_postgres_store import LocalPostgres
-from execution.test_support import OWNER, ModelFixture, grant_for, make_spec
+from execution.test_support import OWNER, ModelFixture, SyntheticAdapterTestCase, grant_for, make_spec
 
 
 def crashed_worker(socket_path, schema, key_bytes, expiry, pipe):
@@ -56,7 +56,7 @@ def crashed_worker(socket_path, schema, key_bytes, expiry, pipe):
         pipe.close()
 
 
-class PostgresSupervisorTests(unittest.TestCase):
+class PostgresSupervisorTests(SyntheticAdapterTestCase):
     @classmethod
     def setUpClass(cls):
         cls.cluster = LocalPostgres()
@@ -66,6 +66,7 @@ class PostgresSupervisorTests(unittest.TestCase):
         cls.cluster.close()
 
     def setUp(self):
+        super().setUp()
         self.schema = "kova_queue_" + uuid4().hex
         self.expiry = time_ns() // 1000000 + 600000
         with self.cluster.connect() as connection:

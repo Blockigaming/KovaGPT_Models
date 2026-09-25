@@ -11,13 +11,14 @@ import unittest
 from unittest.mock import Mock, patch
 
 from core.adapter import build_core_plan
+from core.identity import TRUSTED_SYSTEM_MESSAGE_COUNT
 from execution.contracts import ALL_ROUTES, ExecutionError, ExecutionGrant, ExecutionLimits, ExecutionSpec, canonical
 from execution.runner import LocalRunner
 from execution.source_context import (
     ContextRejected, ContextScope, SourceContext, SourceRecord, SourceRef, REFERENCE_PREFIX,
 )
 from execution.store import LocalJobStore
-from execution.test_support import IDENTITY, ModelFixture, OWNER, tokens
+from execution.test_support import IDENTITY, ModelFixture, OWNER, SyntheticAdapterTestCase, tokens
 from ultra.orchestrator import build_ultra_plan
 
 
@@ -69,15 +70,24 @@ def specification(prepared, route="high"):
             "remaining_usd": 1, "estimated_max_usd": 0.5, "max_agents": 3, "max_total_tokens": 65536},
             token_counter=lambda messages: tokens(IDENTITY["model"], messages))
     else:
-        plan = build_core_plan(request, candidate_model=IDENTITY["model"], token_counter=tokens)
+        from release.model_revisions import source_reference_for_route
+        plan = build_core_plan(request, candidate_model=source_reference_for_route(route).slot,
+                               token_counter=tokens)
     ids = [op.get("stage_id", op.get("id")) for op in plan["operations"]]
     cap = sum(op["maximum_input_tokens"] + op["maximum_output_tokens"] for op in plan["operations"])
+    from release.model_revisions import source_reference_for_route
+    identity = ({**IDENTITY, "model": plan["candidate_model"],
+                 "model_revision": plan["candidate_revision"]}
+                if plan["engine"] == "kova-core" else {**IDENTITY,
+                   "model": source_reference_for_route(route).slot,
+                   "model_revision": source_reference_for_route(route).revision})
     return ExecutionSpec.from_plan(plan, limits=ExecutionLimits(time_ns() // 1000000 + 60000,
-        cap, len(ids) * 100, 3, 5), runtime_identity=IDENTITY, stage_cost_caps={key: 100 for key in ids})
+        cap, len(ids) * 100, 3, 5), runtime_identity=identity, stage_cost_caps={key: 100 for key in ids})
 
 
-class SourceContextTests(unittest.TestCase):
+class SourceContextTests(SyntheticAdapterTestCase):
     def setUp(self):
+        super().setUp()
         self.f = EvidenceFixture()
 
     def prepared(self, *refs):
@@ -102,8 +112,9 @@ class SourceContextTests(unittest.TestCase):
                 self.assertEqual(status["state"], "succeeded")
                 self.assertEqual(store.result(OWNER, job)["content"], "Kova final response")
                 for _, request in model.requests:
-                    self.assertEqual(request["messages"][3:3 + len(prepared.messages())], prepared.messages())
-                    self.assertEqual([m["role"] for m in request["messages"][:3]], ["system"] * 3)
+                    first_client_message = TRUSTED_SYSTEM_MESSAGE_COUNT
+                    self.assertEqual(request["messages"][first_client_message:first_client_message + len(prepared.messages())], prepared.messages())
+                    self.assertEqual([m["role"] for m in request["messages"][:first_client_message]], ["system"] * 4)
                     self.assertNotIn("tools", request)
                 self.assertEqual(len(model.calls), len(model.closed))
 

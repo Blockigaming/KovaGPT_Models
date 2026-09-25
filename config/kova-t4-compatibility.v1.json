@@ -1,0 +1,14 @@
+{
+  "schema_version":1,
+  "device":{"exact_name":"NVIDIA T4","vram_bytes":17179869184,"cuda_compute_capability":"7.5","four_bit_quantization_required":true},
+  "families":{
+    "kova-cosmo":{"estimated_peak_vram_bytes":6442450944,"maximum_sequence_length":1024,"minimum_free_disk_bytes":3038415346},
+    "kova-orion":{"estimated_peak_vram_bytes":9663676416,"maximum_sequence_length":1024,"minimum_free_disk_bytes":8158897080},
+    "kova-nova":{"estimated_peak_vram_bytes":15032385536,"maximum_sequence_length":768,"minimum_free_disk_bytes":16121850112}
+  },
+  "combined_base_and_adapter_disk_minimum_bytes":30064771072,
+  "nova_fail_closed_if_probe_exceeds_estimate_or_available_vram":true,
+  "paid_runtime_probe_complete":false,
+  "runtime_compatible":false,
+  "resource_creation_authorized":false
+}

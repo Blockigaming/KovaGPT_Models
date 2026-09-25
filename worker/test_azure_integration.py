@@ -8,12 +8,21 @@ from core.adapter import build_core_plan
 from router.policy import CHAT_POLICIES, WORK_FAMILIES, WORK_EFFORTS
 from worker.azure_container_apps import AzureResponse, AzureSettings, make_azure_inference_client
 from worker.handler import PINNED_CORE_CANDIDATES, handle_job
+from release.model_revisions import source_reference_for_route
 
 
 class AzureKovaIntegrationTests(unittest.TestCase):
-    candidate = PINNED_CORE_CANDIDATES["qwen3.8-27b-bf16"]
+    candidate = PINNED_CORE_CANDIDATES["kova-cosmo"]
 
     def setUp(self):
+        self.original_pins = {key: (value["adapter_sha256"], value["adapter_bundle_sha256"])
+                              for key, value in PINNED_CORE_CANDIDATES.items()}
+        for candidate in PINNED_CORE_CANDIDATES.values():
+            candidate["adapter_sha256"] = "f" * 64
+            candidate["adapter_bundle_sha256"] = "d" * 64
+        self.addCleanup(lambda: [PINNED_CORE_CANDIDATES[key].update(adapter_sha256=value[0],
+                                 adapter_bundle_sha256=value[1])
+                                 for key, value in self.original_pins.items()])
         self.closed = 0
         self.captured = []
         self.records = []
@@ -37,6 +46,8 @@ class AzureKovaIntegrationTests(unittest.TestCase):
         return {
             "source": "server_provider_runtime", "worker_lifecycle_id": "azure-fixture-lifecycle",
             "loaded_model": self.candidate["model"], "loaded_model_revision": self.candidate["model_revision"],
+            "loaded_adapter_sha256": self.candidate["adapter_sha256"],
+            "loaded_adapter_bundle_sha256": self.candidate["adapter_bundle_sha256"],
             "cold_start": False, "worker_start_ms": 0, "model_load_ms": 0, "queue_ms": 0,
             "gpu_rate_per_second_usd": 0.001, "gpu_type_id": "fixture-not-real-gpu", "gpu_count": 1,
             "serving_engine": "vllm", "endpoint_type": "load_balancing",
@@ -79,6 +90,11 @@ class AzureKovaIntegrationTests(unittest.TestCase):
         )
 
     def plan(self, selection):
+        route = selection.get("route_id") or (
+            f"{selection['surface']}:{selection['family']}:{selection['effort'].lower().replace(' ', '-')}")
+        self.candidate = PINNED_CORE_CANDIDATES[source_reference_for_route(route).slot]
+        self.config = replace(self.config, served_model=self.candidate["model"])
+        self.json_body["model"] = self.candidate["model"]
         return build_core_plan(
             {"request_id": "azure-fixture-request", "messages": [{"role": "user", "content": "Help with this fixture"}], **selection},
             candidate_model=self.candidate["model"], token_counter=lambda *_: 10,

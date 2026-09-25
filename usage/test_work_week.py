@@ -10,12 +10,13 @@ from unittest.mock import patch
 from execution.contracts import ALL_ROUTES, ExecutionBlocked, ExecutionGrant
 from execution.runner import LocalRunner
 from execution.store import LocalJobStore
-from execution.test_support import ModelFixture, make_spec
+from execution.test_support import ModelFixture, SyntheticAdapterTestCase, make_spec
 from usage.work_week import MAX, WEEK_MS, WorkUsageError, WorkUsageLedger, WorkWeek, WorkQuote, usage_units
 
 
-class WorkWeekTests(unittest.TestCase):
+class WorkWeekTests(SyntheticAdapterTestCase):
     def setUp(self):
+        SyntheticAdapterTestCase.setUp(self)
         self.temp = TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.path = str(Path(self.temp.name) / 'usage.sqlite')
         self.now = 1900000000000
