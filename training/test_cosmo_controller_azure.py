@@ -89,6 +89,15 @@ class AzureVerifierTests(unittest.TestCase):
         pilot = self.lifecycle['pilot_resource_group_id']
         self.locks_url = azure.ARM + pilot.split('/resourceGroups/')[0] + '/providers/Microsoft.Authorization/locks?api-version=2016-09-01'
         self.documents[self.locks_url] = {'value': []}
+        subscription = pilot.split('/resourceGroups/')[0]
+        self.denials_url = azure.ARM + subscription + '/providers/Microsoft.Authorization/denyAssignments?api-version=2022-04-01'
+        self.documents[self.denials_url] = {'value': []}
+        self.at_scope_urls = [azure.ARM + group +
+            '/providers/Microsoft.Authorization/denyAssignments?api-version=2022-04-01&' +
+            urlencode({'$filter': 'atScope()'}) for group in
+            (pilot, self.lifecycle['watchdog_resource_group_id'])]
+        for url in self.at_scope_urls:
+            self.documents[url] = {'value': []}
         self.guest_roles_url = (azure.ARM + pilot.split('/resourceGroups/')[0] +
             '/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&' +
             urlencode({'$filter': 'principalId eq ' + self.instance['system_assigned_identity_principal_id']}))
@@ -135,7 +144,7 @@ class AzureVerifierTests(unittest.TestCase):
 
     def test_real_guest_issuer_azure_adapter_exchange(self):
         self.f.test_committed_response_matches_existing_guest_verifier()
-        self.assertEqual(len(self.reads), 18)
+        self.assertEqual(len(self.reads), 21)
         self.assertTrue(all(self.f.token not in url for url in self.reads))
 
     def test_foreign_expired_and_unsigned_identity_never_reads_arm(self):
@@ -249,6 +258,33 @@ class AzureVerifierTests(unittest.TestCase):
             self.assertEqual(before, self.f.f.io.body)
         self.documents[self.locks_url] = {'value': [{'id': pilot + '-unrelated/providers/Microsoft.Authorization/locks/keep',
             'properties': {'level': 'ReadOnly'}}]}
+        self.assertTrue(self.observe()['cleanup_scope_verified'])
+
+    def test_inherited_and_child_deny_assignments_reject_cleanup_grant(self):
+        before = self.f.f.io.body
+        pilot = self.lifecycle['pilot_resource_group_id']
+        for url in self.at_scope_urls:
+            for result in ({'value': [{'properties': {'scope': pilot}}]},
+                           {}, {'value': [], 'nextLink': 'https://management.azure.com/more'}):
+                self.documents[url] = result
+                with self.subTest(url=url, result=result), self.assertRaises(LedgerRejected):
+                    self.f.issuer.issue(self.f.request)
+                self.assertEqual(self.f.f.io.body, before)
+            self.documents[url] = {'value': []}
+        for scope in (pilot, self.disk, self.lifecycle['watchdog_resource_group_id'],
+                      self.watchdog):
+            self.documents[self.denials_url] = {'value': [{'properties': {'scope': scope}}]}
+            with self.subTest(scope=scope), self.assertRaises(LedgerRejected):
+                self.f.issuer.issue(self.f.request)
+            self.assertEqual(self.f.f.io.body, before)
+        for incomplete in ({}, {'value': [], 'nextLink': 'https://management.azure.com/more'},
+                           {'value': [{'properties': {}}]}):
+            self.documents[self.denials_url] = incomplete
+            with self.assertRaises(LedgerRejected):
+                self.f.issuer.issue(self.f.request)
+            self.assertEqual(self.f.f.io.body, before)
+        unrelated = pilot + '-unrelated'
+        self.documents[self.denials_url] = {'value': [{'properties': {'scope': unrelated}}]}
         self.assertTrue(self.observe()['cleanup_scope_verified'])
 
     def test_pilot_identity_arm_roles_reject_before_grant_commit(self):

@@ -216,6 +216,40 @@ class AzureRequestVerifier:
                          parts[0].startswith(group + "/") for group in groups),
                  "management lock prevents bounded cleanup")
 
+    def cleanup_scopes_without_denials(self):
+        """Reject any inherited or child denial in either exclusive cleanup group."""
+        groups = [self.lifecycle[k] for k in
+                  ("pilot_resource_group_id", "watchdog_resource_group_id")]
+        subscription = groups[0].split("/resourceGroups/")[0]
+
+        def complete(url):
+            result = self.read(url)
+            need(type(result) is dict and type(result.get("value")) is list and
+                 not result.get("nextLink"), "deny assignment inventory incomplete")
+            return result["value"]
+
+        # atScope includes ancestors, including management-group denials that
+        # a subscription-scoped enumeration alone may omit.
+        for group in groups:
+            need(not complete(ARM + group +
+                 "/providers/Microsoft.Authorization/denyAssignments?api-version=2022-04-01&" +
+                 urlencode({"$filter": "atScope()"})),
+                 "inherited deny assignment may prevent cleanup")
+        # The unfiltered subscription enumeration covers children of both
+        # groups. Reject all denials in their exclusive scopes; no guessing at
+        # wildcard actions, exclusions or condition evaluation before deletion.
+        for item in complete(ARM + subscription +
+                             "/providers/Microsoft.Authorization/denyAssignments?api-version=2022-04-01"):
+            need(type(item) is dict and type(item.get("properties")) is dict and
+                 type(item["properties"].get("scope")) is str,
+                 "deny assignment scope unknown")
+            scope = item["properties"]["scope"].casefold()
+            need(scope == subscription.casefold() or scope.startswith(subscription.casefold() + "/"),
+                 "deny assignment scope outside subscription")
+            need(not any(scope == group.casefold() or scope.startswith(group.casefold() + "/") or
+                         group.casefold().startswith(scope + "/") for group in groups),
+                 "deny assignment may prevent cleanup")
+
     def exact_group_resources(self, group, required, optional=()):
         inventory = self.read(ARM + group + "/resources?api-version=2021-04-01")
         need(type(inventory) is dict and type(inventory.get("value")) is list and
@@ -380,6 +414,7 @@ class AzureRequestVerifier:
         self.exact_group_resources(watchdog_group, (self.watchdog,), (
             self.watchdog + "/triggers/every_minute", direct_role_ids[watchdog_group]))
         self.unlocked_cleanup_scopes()
+        self.cleanup_scopes_without_denials()
         after = self.clock()
         need(0 <= (after - before).total_seconds() <= 30 and
              after < authority.timestamp(cleanup_trigger_utc) < authority.timestamp(expiry),
