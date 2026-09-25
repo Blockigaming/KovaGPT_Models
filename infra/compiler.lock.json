@@ -1,0 +1,9 @@
+{
+  "name": "Microsoft Azure Bicep",
+  "version": "0.47.16",
+  "platform": "linux-x64",
+  "url": "https://github.com/Azure/bicep/releases/download/v0.47.16/bicep-linux-x64",
+  "sha256": "64c345a58e0c3e48b1bc98a4e62d6b3adb1d238281297de3400aeafb2697aa5a",
+  "source_asset_id": 543182547,
+  "purpose": "offline_template_compilation_only"
+}

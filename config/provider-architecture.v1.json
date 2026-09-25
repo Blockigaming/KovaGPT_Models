@@ -1,11 +1,10 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "planning_only",
-  "decision_verified_on": "2026-09-14",
+  "decision_verified_on": "2026-09-15",
   "source_urls": {
-    "runpod_serverless_pricing": "https://docs.runpod.io/serverless/pricing",
-    "runpod_endpoint_settings": "https://docs.runpod.io/serverless/endpoints/endpoint-configurations",
-    "runpod_vllm": "https://docs.runpod.io/serverless/vllm/get-started",
+    "azure_container_apps_serverless_gpu": "https://learn.microsoft.com/en-us/azure/container-apps/gpu-serverless-overview",
+    "azure_container_apps_workload_profiles": "https://learn.microsoft.com/en-us/azure/container-apps/workload-profiles-overview",
     "qwen3_8_27b": "https://huggingface.co/Qwen/Qwen3.8-27B",
     "qwen3_8_27b_fp8": "https://huggingface.co/Qwen/Qwen3.8-27B-FP8"
   },
@@ -17,8 +16,31 @@
   "application_plane": {
     "provider": "azure_container_apps",
     "role": "kovagpt_application_router_tools_billing_and_streaming",
-    "migration_policy": "add_runpod_behind_existing_provider_abstraction",
+    "migration_policy": "migrate_inference_to_azure_behind_existing_provider_abstraction",
     "delete_existing_azure_deployments": false,
+    "production_routing_authorized": false
+  },
+  "inference_decision": {
+    "provider": "runpod_serverless",
+    "status": "legacy_source_only_pending_azure_migration",
+    "physical_endpoint_count": 2,
+    "production_live": false,
+    "cloudflare_workers_ai_status": "rejected_as_primary_inference_backend",
+    "cloudflare_test_observation_source": "user_supplied_architecture_decision_not_reproducible_telemetry",
+    "reason": "existing_source_transport_retained_only_until_azure_adapter_is_verified",
+    "do_not_claim_cloudflare_benchmark_evidence": true
+  },
+  "inference_migration_target": {
+    "provider": "azure_container_apps_consumption_gpu",
+    "config_source": "config/azure-container-apps-gpu.v1.json",
+    "physical_app_count": 2,
+    "scale_to_zero_required": true,
+    "per_second_billing_required": true,
+    "gpu_profile_selection_status": "benchmark_and_quota_verification_required",
+    "region_selection_status": "availability_and_quota_verification_required",
+    "migration_status": "cpu_adapter_verified_live_transport_blocked",
+    "paid_execution_authorized": false,
+    "deployment_authorized": false,
     "production_routing_authorized": false
   },
   "data_and_billing": {
@@ -26,18 +48,11 @@
     "customer_billing": "stripe",
     "server_secrets": "azure_key_vault"
   },
-  "inference_decision": {
-    "provider": "runpod_serverless",
-    "physical_endpoint_count": 2,
-    "cloudflare_workers_ai_status": "rejected_as_primary_inference_backend",
-    "cloudflare_test_observation_source": "user_supplied_architecture_decision_not_reproducible_telemetry",
-    "reason": "inconsistent_interactive_latency",
-    "do_not_claim_cloudflare_benchmark_evidence": true
-  },
   "engines": [
     {
       "id": "kova-core",
       "provider": "runpod_serverless",
+      "migration_target_provider": "azure_container_apps_consumption_gpu",
       "purpose": "auto_through_max_and_work_non_ultra_single_model_inference",
       "endpoint_name_reserved": "kova-core",
       "endpoint_deployed": false,
@@ -47,7 +62,7 @@
       "selected_quantization": null,
       "selected_gpu": null,
       "selected_serving_engine": null,
-      "selection_status": "model_quantization_gpu_and_server_benchmark_required",
+      "selection_status": "model_quantization_gpu_server_and_azure_profile_benchmark_required",
       "candidate_source": "config/core-serving.v1.json",
       "paid_execution_authorized": false,
       "deployment_authorized": false,
@@ -57,6 +72,7 @@
     {
       "id": "kova-ultra",
       "provider": "runpod_serverless",
+      "migration_target_provider": "azure_container_apps_consumption_gpu",
       "purpose": "dynamic_multi_agent_judge_and_synthesis",
       "endpoint_name_reserved": "kova-ultra",
       "endpoint_deployed": false,
@@ -66,7 +82,7 @@
       "selected_quantization": null,
       "selected_gpu": null,
       "selected_serving_engine": null,
-      "selection_status": "orchestrator_and_worker_model_benchmark_required",
+      "selection_status": "orchestrator_worker_model_and_azure_capacity_benchmark_required",
       "paid_execution_authorized": false,
       "deployment_authorized": false,
       "production_routing_authorized": false,
@@ -80,6 +96,7 @@
     "one_core_endpoint_serves_all_core_profiles": true,
     "activity_events_require_real_runtime_or_tool_events": true,
     "existing_production_infrastructure_must_not_be_deleted_before_verified_cutover": true,
+    "legacy_provider_transport_must_not_be_removed_before_azure_adapter_verification": true,
     "paid_or_production_actions_authorized": false
   }
 }

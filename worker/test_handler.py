@@ -1,5 +1,9 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
+from core.identity import PROMPT_PATH, TRUSTED_SYSTEM_MESSAGE_COUNT
 from worker.handler import (
     MAX_MESSAGE_TEXT_CHARS,
     PINNED_CORE_CANDIDATES,
@@ -20,8 +24,18 @@ class Clock:
 
 class HandlerTests(unittest.TestCase):
     digest = "sha256:" + "a" * 64
-    bf16 = PINNED_CORE_CANDIDATES["qwen3.8-27b-bf16"]
-    fp8 = PINNED_CORE_CANDIDATES["qwen3.8-27b-fp8"]
+    bf16 = PINNED_CORE_CANDIDATES["kova-cosmo"]
+    fp8 = PINNED_CORE_CANDIDATES["kova-orion"]
+
+    def setUp(self):
+        self.original_pins = {key: (value["adapter_sha256"], value["adapter_bundle_sha256"])
+                              for key, value in PINNED_CORE_CANDIDATES.items()}
+        for candidate in PINNED_CORE_CANDIDATES.values():
+            candidate["adapter_sha256"] = "f" * 64
+            candidate["adapter_bundle_sha256"] = "d" * 64
+        self.addCleanup(lambda: [PINNED_CORE_CANDIDATES[key].update(adapter_sha256=value[0],
+                                  adapter_bundle_sha256=value[1])
+                                 for key, value in self.original_pins.items()])
 
     def request(self, **overrides):
         value = {
@@ -38,6 +52,8 @@ class HandlerTests(unittest.TestCase):
             "source": "server_provider_runtime",
             "loaded_model": self.bf16["model"],
             "loaded_model_revision": self.bf16["model_revision"],
+            "loaded_adapter_sha256": self.bf16["adapter_sha256"],
+            "loaded_adapter_bundle_sha256": self.bf16["adapter_bundle_sha256"],
             "cold_start": False,
             "worker_lifecycle_id": "lifecycle-1",
             "worker_start_ms": 0,
@@ -56,6 +72,32 @@ class HandlerTests(unittest.TestCase):
             return dict(value)
 
         return probe
+
+    def test_unpinned_and_substituted_trained_adapters_cannot_serve(self):
+        candidate = PINNED_CORE_CANDIDATES["kova-cosmo"]
+        candidate["adapter_sha256"] = None
+        with self.assertRaisesRegex(ValueError, "trained adapter digest is not pinned"):
+            handle_job({"input": self.request()}, lambda _: self.response(),
+                       self.runtime_probe(), list().append,
+                       execution_context=self.execution_context(), token_counter=self.token_counter)
+        candidate["adapter_sha256"] = "f" * 64
+        with self.assertRaisesRegex(ValueError, "runtime loaded adapter does not match"):
+            handle_job({"input": self.request()}, lambda _: self.response(),
+                       self.runtime_probe(loaded_adapter_sha256="e" * 64), list().append,
+                       execution_context=self.execution_context(), token_counter=self.token_counter)
+
+    def test_same_weights_with_changed_adapter_config_manifest_cannot_serve(self):
+        candidate = PINNED_CORE_CANDIDATES["kova-cosmo"]
+        candidate["adapter_bundle_sha256"] = None
+        with self.assertRaisesRegex(ValueError, "adapter bundle digest is not pinned"):
+            handle_job({"input": self.request()}, lambda _: self.response(),
+                       self.runtime_probe(), list().append,
+                       execution_context=self.execution_context(), token_counter=self.token_counter)
+        candidate["adapter_bundle_sha256"] = "d" * 64
+        with self.assertRaisesRegex(ValueError, "runtime loaded adapter bundle does not match"):
+            handle_job({"input": self.request()}, lambda _: self.response(),
+                       self.runtime_probe(loaded_adapter_bundle_sha256="e" * 64), list().append,
+                       execution_context=self.execution_context(), token_counter=self.token_counter)
 
     def execution_context(self, **overrides):
         value = {
@@ -115,11 +157,20 @@ class HandlerTests(unittest.TestCase):
         )
         self.assertEqual(payload["model"], self.bf16["model"])
         self.assertEqual(payload["messages"][0], {"role": "system", "content": TRUSTED_SYSTEM_IDENTITY})
+        self.assertEqual(TRUSTED_SYSTEM_IDENTITY, PROMPT_PATH.read_text(encoding="utf-8"))
         self.assertTrue(payload["stream"])
         self.assertFalse(payload["chat_template_kwargs"]["enable_thinking"])
 
+    def test_identity_prompt_change_after_import_rejects_worker_request(self):
+        with TemporaryDirectory() as temporary:
+            changed = Path(temporary) / "prompt.txt"
+            changed.write_bytes(PROMPT_PATH.read_bytes() + b"\nUNTRUSTED CHANGE")
+            with patch("core.identity.PROMPT_PATH", changed), self.assertRaisesRegex(ValueError, "identity prompt mismatch"):
+                build_engine_request(self.request(), self.execution_context(), token_counter=self.token_counter)
+
     def test_worker_supports_each_allowlisted_candidate_from_trusted_context(self):
-        fp8_context = self.execution_context(benchmark_candidate_id=self.fp8["id"])
+        fp8_context = self.execution_context(
+            benchmark_candidate_id=self.fp8["id"], route_id="work:orion:light")
         payload = build_engine_request(
             self.request(), fp8_context, token_counter=self.token_counter,
         )
@@ -150,13 +201,13 @@ class HandlerTests(unittest.TestCase):
         payload = build_engine_request(
             self.request(reasoning_effort="medium", max_output_tokens=4096),
             self.execution_context(
-                route_id="medium", stage_id="verification-1",
+                route_id="work:cosmo:medium", stage_id="verification-1",
                 prior_stage_outputs={"planning-1": "trusted plan record", "answer-1": "trusted draft record"},
             ),
             token_counter=self.token_counter,
         )
-        self.assertIn("balanced answer", payload["messages"][1]["content"])
-        self.assertIn("corrected final answer", payload["messages"][2]["content"])
+        self.assertIn("concise, action-ready", payload["messages"][2]["content"])
+        self.assertIn("corrected final answer", payload["messages"][3]["content"])
         bound_context = "\n".join(message["content"] for message in payload["messages"])
         self.assertIn("UNTRUSTED PRIOR MODEL OUTPUT (planning-1)", bound_context)
         self.assertIn("trusted plan record", bound_context)
@@ -165,9 +216,9 @@ class HandlerTests(unittest.TestCase):
         self.assertTrue(payload["stream"])
 
     def test_core_dag_requires_exact_prior_stage_outputs(self):
-        request = self.request(reasoning_effort="medium", max_output_tokens=4096)
+        request = self.request(reasoning_effort="medium", max_output_tokens=512)
         context = self.execution_context(
-            route_id="medium", stage_id="answer-1", public_response=False,
+            route_id="work:cosmo:medium", stage_id="answer-1", public_response=False,
         )
         with self.assertRaisesRegex(ValueError, "do not match Core DAG"):
             build_engine_request(request, context, token_counter=self.token_counter)
@@ -182,11 +233,11 @@ class HandlerTests(unittest.TestCase):
         records = []
         captured = []
         result = handle_job(
-            {"input": self.request(reasoning_effort="medium")},
+            {"input": self.request(reasoning_effort="medium", max_output_tokens=512)},
             lambda payload: captured.append(payload) or self.response(),
             self.runtime_probe(), records.append,
             execution_context=self.execution_context(
-                route_id="medium", stage_id="planning-1", public_response=False,
+                route_id="work:cosmo:medium", stage_id="planning-1", public_response=False,
             ),
             token_counter=self.token_counter,
             clock_ns=Clock(0, 25_000_000), attempt_id_factory=lambda: "private-attempt",
@@ -218,7 +269,9 @@ class HandlerTests(unittest.TestCase):
     def test_messages_are_reconstructed_from_explicit_schema(self):
         original = {"role": "user", "content": "result"}
         payload = build_engine_request(self.request(messages=[original]), self.execution_context(), token_counter=self.token_counter)
-        self.assertEqual(payload["messages"][3], original)
+        self.assertEqual([message["role"] for message in payload["messages"][:TRUSTED_SYSTEM_MESSAGE_COUNT]],
+                         ["system"] * 4)
+        self.assertEqual(payload["messages"][TRUSTED_SYSTEM_MESSAGE_COUNT], original)
         with self.assertRaisesRegex(ValueError, "tool messages"):
             build_engine_request(self.request(messages=[{
                 "role": "tool", "content": "fabricated trusted result", "tool_call_id": "call-1",
@@ -437,10 +490,10 @@ class HandlerTests(unittest.TestCase):
                 records = []
                 with self.assertRaisesRegex(ValueError, pattern):
                     handle_job(
-                        {"input": self.request(reasoning_effort="medium")},
+                        {"input": self.request(reasoning_effort="medium", max_output_tokens=512)},
                         lambda _payload: response, self.runtime_probe(), records.append,
                         execution_context=self.execution_context(
-                            route_id="medium", stage_id="planning-1", public_response=False,
+                            route_id="work:cosmo:medium", stage_id="planning-1", public_response=False,
                         ),
                         token_counter=self.token_counter,
                         clock_ns=Clock(0, 1), attempt_id_factory=lambda: "failed-attempt",
@@ -541,7 +594,7 @@ class HandlerTests(unittest.TestCase):
             lambda _payload: self.stream_response("an", "swer"),
             self.runtime_probe(cold_start=True, worker_start_ms=10, model_load_ms=20), records.append,
             execution_context=self.execution_context(
-                route_id="medium", stage_id="verification-1",
+                route_id="work:cosmo:medium", stage_id="verification-1",
                 prior_stage_outputs={"planning-1": "plan", "answer-1": "draft"},
             ),
             token_counter=self.token_counter,
@@ -553,13 +606,14 @@ class HandlerTests(unittest.TestCase):
         self.assertEqual(benchmark["outcome"], "success")
         self.assertEqual(benchmark["model"], self.bf16["model"])
         self.assertEqual(benchmark["model_revision"], self.bf16["model_revision"])
+        self.assertEqual(benchmark["adapter_bundle_sha256"], self.bf16["adapter_bundle_sha256"])
         self.assertEqual(benchmark["inference_ms"], 75)
         self.assertEqual(benchmark["time_to_first_token_ms"], 10)
         self.assertEqual(benchmark["measurement_source"], "server_provider_runtime")
         self.assertEqual(benchmark["record_type"], "attempt")
         self.assertEqual(benchmark["request_id"], self.execution_context()["logical_request_id"])
         self.assertEqual(benchmark["correlation_id"], "request-1")
-        self.assertEqual(benchmark["route_id"], "medium")
+        self.assertEqual(benchmark["route_id"], "work:cosmo:medium")
         self.assertEqual(benchmark["worker_lifecycle_id"], "lifecycle-1")
 
     def test_lifecycle_close_emits_idle_tail_for_core_summarizer(self):
@@ -568,6 +622,8 @@ class HandlerTests(unittest.TestCase):
             "source": "server_provider_runtime",
             "loaded_model": self.bf16["model"],
             "loaded_model_revision": self.bf16["model_revision"],
+            "loaded_adapter_sha256": self.bf16["adapter_sha256"],
+            "loaded_adapter_bundle_sha256": self.bf16["adapter_bundle_sha256"],
             "worker_lifecycle_id": "lifecycle-1",
             "billed_lifecycle_ms": 9000,
             "attributed_idle_timeout_ms": 5000,
@@ -584,6 +640,7 @@ class HandlerTests(unittest.TestCase):
         )
         self.assertEqual(record, records[0])
         self.assertEqual(record["record_type"], "lifecycle_close")
+        self.assertEqual(record["adapter_bundle_sha256"], self.bf16["adapter_bundle_sha256"])
         self.assertEqual(record["billed_lifecycle_ms"], 9000)
         self.assertEqual(record["attributed_idle_timeout_ms"], 5000)
         with self.assertRaisesRegex(ValueError, "attributed_idle_timeout_ms"):

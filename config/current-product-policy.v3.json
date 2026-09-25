@@ -1,0 +1,36 @@
+{
+  "schema_version": 3,
+  "status": "owner_approved_three_family_source_policy",
+  "families": {
+    "cosmo": {"display_name":"Kova Cosmo","model_slot":"kova-cosmo"},
+    "orion": {"display_name":"Kova Orion","model_slot":"kova-orion"},
+    "nova": {"display_name":"Kova Nova","model_slot":"kova-nova"}
+  },
+  "processing_levels": ["light","medium","high","extra-high","max","ultra"],
+  "processing_levels_are_separate_models": false,
+  "entitlements": {
+    "chat": {
+      "free": {"cosmo":["light"],"orion":[],"nova":[]},
+      "plus": {"cosmo":["light","medium","high"],"orion":["light","medium","high"],"nova":[]},
+      "pro": {"cosmo":["light","medium","high","extra-high","max","ultra"],"orion":["light","medium","high","extra-high","max","ultra"],"nova":[]}
+    },
+    "work": {
+      "free": {"cosmo":[],"orion":[],"nova":[]},
+      "plus": {"cosmo":["light","medium","high","extra-high","max","ultra"],"orion":["light","medium","high","extra-high","max","ultra"],"nova":["light","medium","high","extra-high","max","ultra"]},
+      "pro": {"cosmo":["light","medium","high","extra-high","max","ultra"],"orion":["light","medium","high","extra-high","max","ultra"],"nova":["light","medium","high","extra-high","max","ultra"]}
+    }
+  },
+  "private_lineage_path": "config/kova-private-lineage.v1.json",
+  "ordinary_surfaces": {
+    "kova_only_names": true,
+    "upstream_identifiers_allowed": false,
+    "covered": ["responses","apis","logs","errors","selectors","activity_text"]
+  },
+  "runtime_integration_required": true,
+  "resource_creation_authorized": false,
+  "spending_authorized": false,
+  "model_download_authorized": false,
+  "training_authorized": false,
+  "deployment_authorized": false,
+  "production_routing_enabled": false
+}

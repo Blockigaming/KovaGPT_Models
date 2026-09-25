@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "status": "source_only_serving_blocked",
+  "verification_enabled": false,
+  "artifact": {
+    "root": null,
+    "manifest_path": null,
+    "expected_manifest_sha256": null,
+    "maximum_total_bytes": null,
+    "timeout_seconds": null
+  },
+  "safety": {
+    "model_loading_authorized": false,
+    "network_access_authorized": false,
+    "image_build_authorized": false,
+    "gpu_execution_authorized": false,
+    "deployment_authorized": false,
+    "production_routing_authorized": false
+  }
+}

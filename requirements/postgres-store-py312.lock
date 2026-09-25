@@ -1,0 +1,4 @@
+# Pure Python wheels only. Existing system libpq supplies the PostgreSQL client.
+# Maintainer PyPI file hashes checked September 16, 2026.
+psycopg==3.3.5 --hash=sha256:ce5aa5cdb4f9379f00f487590e5890bfa7df9a164648c969ffa628505e21af4e
+typing_extensions==4.16.0 --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8

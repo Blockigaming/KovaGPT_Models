@@ -1,0 +1,9 @@
+{
+  "schema_version":1,
+  "maximum_lifecycle_seconds":21600,
+  "watchdog":{"independent_control_plane":true,"recurrence_seconds":60,"health_must_be_proven_before_training":true,"fail_closed_if_unavailable":true,"actions":["deallocate_vm","delete_pilot_resource_group","delete_disks","delete_network_components","delete_temporary_storage","verify_zero_billable_residuals"]},
+  "remote_ledger":{"storage_outside_pilot_resource_group":true,"create_only_initialization":true,"exclusive_lease_seconds":60,"etag_conditional_writes":true,"monotonic_sequence_assigned_remotely":true,"gpu_runner_write_access":false,"terminal_export_required_before_control_cleanup":true},
+  "timestamps_required":["allocation_requested_at","allocation_completed_at","shutdown_requested_at","deallocated_at","deletion_requested_at","deletion_completed_at"],
+  "one_shared_t4_lifecycle":true,"sequential_family_order":["kova-cosmo","kova-orion","kova-nova"],"preserve_completed_adapters_outside_pilot_resource_group":true,"continue_after_safety_failure":false,
+  "watchdog_provisioned":false,"watchdog_health_proven":false,"resource_creation_authorized":false,"spending_authorized":false
+}

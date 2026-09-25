@@ -1,0 +1,9 @@
+# Source/API validation environment only. This does not authorize training.
+# PyTorch is explicit so the resolver cannot silently select a newer CUDA line.
+torch==2.8.0
+transformers==5.17.0
+peft==0.21.0
+trl==1.13.0
+accelerate==1.15.0
+datasets==5.0.1
+cryptography==50.0.1

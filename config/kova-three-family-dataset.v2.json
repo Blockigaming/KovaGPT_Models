@@ -1,0 +1,18 @@
+{
+  "schema_version":2,
+  "status":"exact_dataset_owner_approved_training_still_blocked",
+  "families":["kova-cosmo","kova-orion","kova-nova"],
+  "prompt_path":"prompts/kova-identity.v3.txt",
+  "prompt_sha256":"ed1b503f947cabc6a7c24a9395bd63b9eff2dd55d57570a0d5a8fd51df3c5bc8",
+  "dataset_path":"data/kova-identity-shared.v2.jsonl",
+  "dataset_sha256":"fa6406b2be2e607f8a40565bf9340db226a6fb8def4d5342d30dc38105696051",
+  "review_path":"data/kova-identity-shared-review.v2.json",
+  "provenance":{"source":"project_authored_synthetic_examples","license":"CC0-1.0","private_customer_data":false,"private_conversations":false,"secrets":false,"third_party_training_text":false},
+  "behavior_scope":["kova_identity","kovagpt_product_ownership_language","ordinary_upstream_name_suppression","truthful_provenance_from_trusted_runtime_evidence","concise_helpful_style","instruction_following","privacy_and_secret_safety"],
+  "split":{"strategy":"declared_split_and_strict_id_order","seed":20260920,"train_records":27,"validation_records":15,"provenance_fixtures_are_validation_only":true},
+  "deduplication":{"record_ids_unique":true,"normalized_user_prompts_unique":true,"exact_message_pairs_unique":true},
+  "approval":{"superseded_removed_revision_sha256":"81606487b18964a847d92da01b88b42fcd3cbd3e8d1bb647edb8c4d93ed0357d","approved_dataset_sha256":"fa6406b2be2e607f8a40565bf9340db226a6fb8def4d5342d30dc38105696051","current_exact_dataset_owner_approved":true,"reapproval_required":false,"approved_on":"2026-09-22"},
+  "compiled_train_sha256":"fdf664be3be065f39cdc1ac2a53fbda91872236c552b814e5124f76248deacbd",
+  "compiled_validation_sha256":"08df571ca0578ff8e4a97e681429d1235eedc991b08c6b0c7f6fb92b5f3cb62d",
+  "model_download_authorized":false,"training_authorized":false,"spending_authorized":false,"deployment_authorized":false,"production_routing_enabled":false
+}

@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "status": "source_only_reference_runtime",
+  "implementation": {
+    "contracts": "execution/contracts.py",
+    "journal": "execution/store.py",
+    "scheduler": "execution/runner.py",
+    "workers": "execution/workers.py",
+    "ultra_binding": "ultra/binding.py",
+    "activity": "execution/activity.py",
+    "reference_storage": "local_sqlite_synthetic_data_only",
+    "background_service_installed": false
+  },
+  "verified_source_contracts": {
+    "core_profiles": 20,
+    "core_stages": 113,
+    "ultra_profiles": 4,
+    "ultra_specialist_range": [2, 5],
+    "maximum_conditional_debate_rounds": 1,
+    "parallel_callbacks_exercised": true,
+    "safe_frontier_restart_exercised": true,
+    "owner_scoped_replay_exercised": true
+  },
+  "execution_rules": {
+    "server_owned_current_entitlement_required": true,
+    "explicit_work_route_entitlement_required": true,
+    "whole_route_input_output_reservation_required": true,
+    "cost_reservation_is_measured_billing": false,
+    "original_deadline_survives_pause_and_restart": true,
+    "deadline_includes_queue_and_pause_time": true,
+    "unknown_inflight_retry_allowed": false,
+    "automatic_runner_takeover_allowed": false,
+    "private_artifacts_in_public_events_allowed": false,
+    "unstarted_operation_activity_allowed": false,
+    "model_tool_calls_are_executed": false,
+    "unhandled_tool_calls_state": "waiting_tools",
+    "cancellation_model": "cooperative_workers_and_bounded_transport",
+    "remote_gpu_abort_proven": false
+  },
+  "unselected": {
+    "production_durable_store": null,
+    "production_job_queue": null,
+    "worker_supervisor": null,
+    "per_mode_response_timing_targets": null,
+    "per_mode_active_work_durations": null,
+    "production_job_deadlines": null,
+    "production_per_route_cost_caps": null,
+    "ultra_worker_model": null
+  },
+  "safety": {
+    "runtime_execution_authorized": false,
+    "paid_execution_authorized": false,
+    "deployment_authorized": false,
+    "production_routing_authorized": false,
+    "private_customer_data_persistence_authorized": false
+  },
+  "live_verification": {
+    "azure_job_durability_verified": false,
+    "real_specialist_gpu_parallelism_verified": false,
+    "browser_streaming_and_reconnect_verified": false,
+    "actual_model_quality_evaluated": false,
+    "actual_route_latency_measured": false,
+    "actual_route_cost_measured": false
+  }
+}

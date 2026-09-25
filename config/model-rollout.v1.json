@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "status": "disabled_source_only",
+  "implementation": "release/rollout.py",
+  "selection": {
+    "release_plan": null,
+    "canary_weights": null,
+    "observation_validity_ms": null
+  },
+  "safety": {
+    "apply_enabled": false,
+    "azure_access_authorized": false,
+    "production_routing_authorized": false,
+    "gpu_execution_authorized": false,
+    "phase_b_ready": false
+  }
+}
