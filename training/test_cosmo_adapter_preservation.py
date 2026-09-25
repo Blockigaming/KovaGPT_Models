@@ -119,6 +119,14 @@ class PreservationTests(unittest.TestCase):
         self.assertEqual(retry, result)
         self.assertEqual(self.storage.put_count, 1)
 
+    def test_unchanged_adapter_bundle_is_identical_across_zip_clock_changes(self):
+        with patch("zipfile.time.localtime", return_value=(2026, 9, 24, 12, 1, 0, 0, 0, 0)):
+            first = preservation.bundle_adapter(self.adapter)
+        with patch("zipfile.time.localtime", return_value=(2026, 9, 25, 15, 30, 0, 0, 0, 0)):
+            later = preservation.bundle_adapter(self.adapter)
+        self.assertEqual(first, later)
+        self.assertEqual(hashlib.sha256(first).hexdigest(), hashlib.sha256(later).hexdigest())
+
     def test_retry_after_uncertain_ledger_append_recovers_existing_blob(self):
         raw = preservation.bundle_adapter(self.adapter)
         request = {"schema_version": 1, "kind": "kova_cosmo_preserve_adapter_v1",

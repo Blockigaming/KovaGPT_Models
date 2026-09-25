@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import time
 
 from training import cosmo_lifecycle_authority as authority
 from training import cosmo_qlora_launch as launch
@@ -24,6 +25,7 @@ class GrantRejected(ValueError):
 
 MIN_GRANT_LEAD = timedelta(minutes=45)
 MAX_GRANT_RESPONSE_DELAY = timedelta(seconds=60)
+MAX_GRANT_RECOVERY_DELAY = timedelta(seconds=165)
 MAX_CLOCK_SKEW = timedelta(seconds=2)
 
 
@@ -160,7 +162,7 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
              "VM is in a different subscription")
         deadline = authority.timestamp(admission["allocation_deadline_utc"])
         cleanup_trigger = authority.timestamp(admission["watchdog_cleanup_trigger_utc"])
-        need(current + MIN_GRANT_LEAD + MAX_GRANT_RESPONSE_DELAY <=
+        need(current + MIN_GRANT_LEAD + MAX_GRANT_RECOVERY_DELAY <=
              cleanup_trigger <= deadline <=
              current + timedelta(seconds=launch.MAX_ALLOCATION_SECONDS),
              "insufficient time for one training grant before watchdog cleanup")
@@ -200,13 +202,35 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
         }
         token_path = Path(os.environ.get(authority.TOKEN_ENV, ""))
         token = authority._load_bearer_token(token_path, repository_root=root)
-        response = (transport or authority._https_transport)(trust["endpoint"], token, request)
+        def send(timeout):
+            if transport is None:
+                return authority._https_transport(
+                    trust["endpoint"], token, request, timeout=timeout)
+            return transport(trust["endpoint"], token, request)
+
+        recovered = False
+        try:
+            response = send(MAX_GRANT_RESPONSE_DELAY.total_seconds())
+        except authority.AuthorityError:
+            # Retry the exact nonce and signed request only. The controller
+            # can replay the original envelope but cannot grant a second run.
+            recovered = True
+            limit = time.monotonic() + (MAX_GRANT_RECOVERY_DELAY -
+                                        MAX_GRANT_RESPONSE_DELAY).total_seconds()
+            while True:
+                try:
+                    response = send(10)
+                    break
+                except authority.AuthorityError:
+                    if time.monotonic() + 5 >= limit:
+                        raise
+                    time.sleep(5)
         payload, digest = authority.verify_envelope(
             response, expected_kind="kova_cosmo_qlora_training_grant", root=root)
         received = response_now or (now if now is not None else datetime.now(timezone.utc))
         need(received.tzinfo is not None and
              current <= received.astimezone(timezone.utc) <=
-             current + MAX_GRANT_RESPONSE_DELAY,
+             current + (MAX_GRANT_RECOVERY_DELAY if recovered else MAX_GRANT_RESPONSE_DELAY),
              "grant response clock or elapsed time invalid")
         received = received.astimezone(timezone.utc)
         need(received + MIN_GRANT_LEAD <= cleanup_trigger,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from contextlib import redirect_stdout
 from importlib.metadata import PackageNotFoundError
@@ -21,9 +21,23 @@ class QloraTrainingTests(unittest.TestCase):
         self.assertEqual(job.require_before_cleanup(
             admission, now=datetime(2026, 9, 24, 13, 14, 59, tzinfo=timezone.utc)),
             datetime(2026, 9, 24, 13, 15, tzinfo=timezone.utc))
-        with self.assertRaisesRegex(job.TrainingRejected, "cleanup has started"):
+        with self.assertRaisesRegex(job.TrainingRejected, "insufficient time"):
             job.require_before_cleanup(
                 admission, now=datetime(2026, 9, 24, 13, 15, tzinfo=timezone.utc))
+
+    def test_training_needs_full_job_and_preservation_window(self):
+        admission = {"watchdog_cleanup_trigger_utc": "2026-09-24T13:15:00Z"}
+        earlier = datetime(2026, 9, 24, 12, 34, 59, tzinfo=timezone.utc)
+        lead = timedelta(minutes=40)
+        self.assertEqual(job.require_before_cleanup(admission, now=earlier,
+            minimum_remaining=lead), datetime(2026, 9, 24, 13, 15, tzinfo=timezone.utc))
+        for current, required in ((datetime(2026, 9, 24, 12, 35, tzinfo=timezone.utc), lead),
+                                  (datetime(2026, 9, 24, 13, 6, tzinfo=timezone.utc),
+                                   job.PRESERVATION_LEAD)):
+            with self.subTest(current=current), self.assertRaisesRegex(
+                    job.TrainingRejected, "insufficient time"):
+                job.require_before_cleanup(admission, now=current,
+                                           minimum_remaining=required)
 
     def test_output_cannot_overlap_verified_model_snapshot(self):
         with TemporaryDirectory() as folder:

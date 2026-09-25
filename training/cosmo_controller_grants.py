@@ -61,6 +61,27 @@ class GrantIssuer:
              request["lifecycle_id"] == lifecycle["lifecycle_id"], "request source/lifecycle mismatch")
         now = self.ledger._time()
         requested = authority.timestamp(request["requested_at_utc"])
+        # A lost HTTP or append response may have committed the one grant.
+        # Return only that replay-verified envelope for the identical request;
+        # never append another event or accept a changed nonce/VM/identity.
+        state = self.ledger.current_state()
+        committed = [event for event in state["events"] if
+                     event.get("kind") == "training_grant"]
+        need(len(committed) <= 1, "multiple training grants in the lifecycle")
+        if committed:
+            event = committed[0]
+            envelope = event["response_envelope"]
+            payload = envelope["payload"]
+            need(event["request_sha256"] == digest(request) and
+                 payload["request_nonce"] == request["request_nonce"] and
+                 payload["azure_identity_token_sha256"] == hashlib.sha256(
+                     request["azure_instance_identity_token"].encode("ascii")).hexdigest() and
+                 not any(item.get("kind") == "family_preserved" for item in state["events"]) and
+                 requested <= now <= requested + client.MAX_GRANT_RECOVERY_DELAY and
+                 now + client.MIN_GRANT_LEAD <= authority.timestamp(
+                     payload["watchdog_cleanup_trigger_utc"]),
+                 "committed grant cannot be recovered for this request")
+            return envelope
         need(requested <= now <= requested + client.MAX_GRANT_RESPONSE_DELAY,
              "stale or future grant request")
         admission = launch.assess_signed_quote(self.quote, source_commit=commit,

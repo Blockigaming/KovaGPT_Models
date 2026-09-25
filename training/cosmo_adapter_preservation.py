@@ -78,7 +78,13 @@ def bundle_adapter(adapter: Path) -> bytes:
     result = BytesIO()
     with zipfile.ZipFile(result, "w", compression=zipfile.ZIP_STORED) as archive:
         for name in FILES:
-            archive.writestr(name, data[name])
+            # ZIP's default writestr timestamp is local wall time, which would
+            # make a retry differ from the immutable Blob after a lost reply.
+            entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_STORED
+            entry.create_system = 3
+            entry.external_attr = 0o600 << 16
+            archive.writestr(entry, data[name])
     raw = result.getvalue()
     _inspect_bundle(raw)
     return raw
