@@ -211,6 +211,11 @@ resource nvidiaGpuDriver 'Microsoft.Compute/virtualMachines/extensions@2024-03-0
     typeHandlerVersion: '1.10'
     autoUpgradeMinorVersion: false
     enableAutomaticUpgrade: false
+    // The pinned PyTorch/NVIDIA wheels supply the runtime; no nvcc build is used.
+    settings: {
+      installCUDA: false
+      updateOS: false
+    }
   }
 }
 

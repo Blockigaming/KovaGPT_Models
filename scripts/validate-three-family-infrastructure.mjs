@@ -17,6 +17,8 @@ export function validateSource() {
   assert.match(vm, /type: 'NvidiaGpuDriverLinux'/);
   assert.match(vm, /typeHandlerVersion: '1\.10'/);
   assert.match(vm, /enableAutomaticUpgrade: false/);
+  assert.match(vm, /installCUDA: false/);
+  assert.match(vm, /updateOS: false/);
   assert.doesNotMatch(vm, /publicIPAddress\s*:/);
   assert.match(vm, /resource egressNat 'Microsoft\.Network\/natGateways@2024-05-01'/);
   assert.match(vm, /natGateway: \{ id: egressNat!\.id \}/);

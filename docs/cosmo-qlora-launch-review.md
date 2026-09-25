@@ -267,6 +267,13 @@ Unlike the former worksheet, the known mandatory download floor now fits its
 own category, leaving **1,611,559,831 bytes** for all remaining NAT traffic.
 The complete setup transfer budget must still fit that remaining allowance;
 this is not evidence that the GPU driver and all setup traffic actually fit.
+The VM extension now explicitly sets `installCUDA: false` and `updateOS: false`:
+the hash-pinned PyTorch/NVIDIA wheels supply this trainer's CUDA runtime, and
+the trainer does not build CUDA extensions with nvcc. This avoids downloading
+an additional system CUDA toolkit. Microsoft's [extension settings](https://learn.microsoft.com/en-us/azure/virtual-machines/extensions/hpccompute-gpu-linux#settings)
+document that toolkit installation otherwise defaults to true. Kernel/header
+changes required by the driver can still occur; driver bytes, installation time
+and compatibility must be verified and are not counted as proven savings here.
 A signed quote above any category limit remains rejected. The 90-minute minimum,
 two-hour maximum, dataset, model pins and training configuration are unchanged.
 
