@@ -69,7 +69,9 @@ class AzureVerifierTests(unittest.TestCase):
             sku={'name': 'StandardSSD_LRS'}, managedBy=self.instance['resource_id'])
         put(n['vm_nic_id'], '2024-05-01', {'ipConfigurations': [{'properties': {'subnet': {'id': n['subnet_id']}}}]})
         put(n['subnet_id'], '2024-05-01', {'defaultOutboundAccess': False,
-            'natGateway': {'id': n['nat_gateway_id']}, 'networkSecurityGroup': {'id': n['network_security_group_id']}})
+            'natGateway': {'id': n['nat_gateway_id']},
+            'ipConfigurations': [{'id': n['vm_nic_id'] + '/ipConfigurations/private'}],
+            'networkSecurityGroup': {'id': n['network_security_group_id']}})
         put(n['nat_gateway_id'], '2024-05-01', {'publicIpAddresses': [{'id': n['nat_gateway_public_ip_id']}]}, sku={'name': 'Standard'})
         put(n['nat_gateway_public_ip_id'], '2024-05-01', {'publicIPAllocationMethod': 'Static'}, sku={'name': 'Standard'})
         self.extension_id = self.instance['resource_id'] + '/extensions/NvidiaGpuDriverLinux'
@@ -183,6 +185,10 @@ class AzureVerifierTests(unittest.TestCase):
             (nic, lambda d: d['properties']['ipConfigurations'][0]['properties'].update(publicIPAddress={'id': 'foreign'})),
             (subnet, lambda d: d['properties'].update(defaultOutboundAccess=True)),
             (subnet, lambda d: d['properties'].update(routeTable={'id': 'foreign'})),
+            (subnet, lambda d: d['properties']['ipConfigurations'].append(
+                {'id': '/subscriptions/other/resourceGroups/other/providers/Microsoft.Network/networkInterfaces/foreign/ipConfigurations/private'})),
+            (subnet, lambda d: d['properties'].update(serviceAssociationLinks=[{'id': 'foreign'}])),
+            (subnet, lambda d: d['properties'].update(resourceNavigationLinks=[{'id': 'foreign'}])),
             (nsg, lambda d: d['properties']['securityRules'][0]['properties'].update(destinationPortRange='*')),
             (watchdog, lambda d: d['properties'].update(state='Disabled')),
             (watchdog, lambda d: d['properties']['parameters']['deadlineUtc'].update(value='2026-09-24T16:00:00Z')),

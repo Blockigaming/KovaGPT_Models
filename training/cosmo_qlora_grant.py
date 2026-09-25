@@ -200,7 +200,12 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
         }
         token_path = Path(os.environ.get(authority.TOKEN_ENV, ""))
         token = authority._load_bearer_token(token_path, repository_root=root)
-        response = (transport or authority._https_transport)(trust["endpoint"], token, request)
+        if transport is None:
+            response = authority._https_transport(
+                trust["endpoint"], token, request,
+                timeout=MAX_GRANT_RESPONSE_DELAY.total_seconds())
+        else:
+            response = transport(trust["endpoint"], token, request)
         payload, digest = authority.verify_envelope(
             response, expected_kind="kova_cosmo_qlora_training_grant", root=root)
         received = response_now or (now if now is not None else datetime.now(timezone.utc))

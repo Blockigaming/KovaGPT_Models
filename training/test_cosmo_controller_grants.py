@@ -105,13 +105,18 @@ class GrantIssuerTests(unittest.TestCase):
                     "sku": "server", "exactVersion": "24.04.202609040"}}}
         with patch.object(authority, "_executing_azure_identity", return_value=(
             self.token, self.token_digest, "2026-09-24T14:30:00Z")), \
-             patch.object(authority, "_load_bearer_token", return_value="synthetic"):
+             patch.object(authority, "_load_bearer_token", return_value="synthetic"), \
+             patch.object(authority, "_https_transport",
+                          side_effect=lambda endpoint, token, request, **kwargs:
+                          self.issuer.issue(request)) as http:
             received = client.acquire_training_grant(quote=self.quote,
                 source_commit=self.f.context["source_commit"], subscription_id=self.quote_fixture.subscription,
                 lifecycle_id=self.request["lifecycle_id"], preflight_ledger_sequence=2,
                 azure_instance=self.vm, runtime_evidence=self.runtime_path, now=self.f.now,
                 root=self.quote_fixture.root, instance_transport=lambda _: compute,
-                transport=lambda _endpoint, _bearer, request: self.issuer.issue(request))
+                transport=None)
+        self.assertEqual(http.call_args.kwargs["timeout"],
+                         client.MAX_GRANT_RESPONSE_DELAY.total_seconds())
         self.assertEqual(received["training_runs_consumed"], 1)
         self.assertNotIn(self.token.encode(), self.f.io.body)
         event = self.ledger.replay(self.f.io.body)[0]["events"][-1]

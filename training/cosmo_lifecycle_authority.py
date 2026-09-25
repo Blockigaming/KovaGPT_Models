@@ -328,7 +328,8 @@ def _executing_azure_identity(
         ) from None
 
 
-def _https_transport(endpoint: str, token: str, request_value: dict) -> dict:
+def _https_transport(endpoint: str, token: str, request_value: dict, *,
+                     timeout: float = 15) -> dict:
     raw = canonical(request_value)
     request = urllib.request.Request(
         endpoint, data=raw, method="POST",
@@ -347,7 +348,7 @@ def _https_transport(endpoint: str, token: str, request_value: dict) -> dict:
                 )
 
         opener = urllib.request.build_opener(NoRedirect)
-        with opener.open(request, timeout=15) as response:
+        with opener.open(request, timeout=timeout) as response:
             need(response.status == 200)
             need(response.geturl() == endpoint)
             body = response.read(MAX_BYTES + 1)

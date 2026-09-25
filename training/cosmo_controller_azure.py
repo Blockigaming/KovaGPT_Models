@@ -346,6 +346,16 @@ class AzureRequestVerifier:
              subnet["natGateway"]["id"] == network["nat_gateway_id"] and
              subnet["networkSecurityGroup"]["id"] == network["network_security_group_id"],
              "subnet networking changed")
+        expected_ip = network["vm_nic_id"] + "/ipConfigurations/private"
+        attachments = subnet.get("ipConfigurations")
+        need(type(attachments) is list and len(attachments) == 1 and
+             type(attachments[0]) is dict and
+             attachments[0].get("id", "").casefold() == expected_ip.casefold() and
+             all(not subnet.get(field) for field in (
+                 "serviceAssociationLinks", "resourceNavigationLinks", "delegations",
+                 "privateEndpoints", "applicationGatewayIPConfigurations",
+                 "serviceEndpoints")),
+             "pilot subnet has an unreviewed attachment")
         nat = self.resource(network["nat_gateway_id"], "2024-05-01")
         ip = self.resource(network["nat_gateway_public_ip_id"], "2024-05-01")
         need(nat["sku"]["name"] == ip["sku"]["name"] == "Standard" and
