@@ -173,6 +173,8 @@ class ControllerLedger:
             need(type(key) is bytes and len(key) == 32, "independent verifier key required")
             need(key != signer_public.public_bytes_raw(),
                  "ledger signer cannot verify its own cleanup or preservation")
+        need(preservation_public_key != cleanup_public_key,
+             "preservation and cleanup require distinct verifiers")
         self.signing_key = signing_key
         self.public_key = signer_public
         self.preservation_key, self.cleanup_key = preservation_public_key, cleanup_public_key

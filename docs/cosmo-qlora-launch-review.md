@@ -11,6 +11,10 @@ acceptable costs, not a signed new ceiling or approval to create resources.
 Before launch, replace the old source-bound ceiling with one concrete,
 independently priced reservation and obtain the separate paid-run approval.
 The existing model revision, 42 records and training steps are unchanged.
+The intended Azure subscription was checked read-only on 2026-09-25 and
+reported **zero storage accounts**. A new isolated, protected adapter and
+ledger destination must be selected and priced before paid training. This
+check created no resources.
 
 ## Exact source selection
 
@@ -96,6 +100,10 @@ The VM guest identity must have no direct ARM assignments, including roles
 above or below the subscription, and no effective group assignments. Exact
 inventories of the dedicated pilot and watchdog groups reject extra resources
 or incomplete listings before the only training grant can commit.
+The verifier also rejects unexpected VM boot diagnostics that could store data
+outside those groups. Preservation and cleanup receipts require distinct
+verifier keys. Private controller files are read through protected directories
+using pinned descriptors to prevent pathname replacement.
 Unexpected public networking, rule changes, another VM/image, a disabled or
 retimed watchdog, incomplete role evidence and stale reads reject the request.
 

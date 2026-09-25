@@ -7,8 +7,10 @@ Request bodies cannot select controller keys, quotes, Azure scopes or files.
 import hashlib
 import hmac
 from importlib import metadata
+import os
 from pathlib import Path
 import re
+import stat
 import sys
 from urllib.parse import urlsplit
 
@@ -69,12 +71,41 @@ class GrantApplication:
 
 def private_file(path, root, maximum=65536):
     path = Path(path)
-    need(path.is_absolute() and path.is_file() and not path.is_symlink(), "private control file missing")
-    resolved, repository = path.resolve(strict=True), root.resolve(strict=True)
-    need(repository not in resolved.parents and repository != resolved and
-         resolved.stat().st_mode & 0o077 == 0 and resolved.stat().st_size <= maximum,
-         "control files must be protected and outside the repository")
-    return resolved.read_bytes()
+    repository = root.resolve(strict=True)
+    need(path.is_absolute() and ".." not in path.parts and
+         repository not in path.parents and path != repository,
+         "private control file missing")
+    directory_fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        # Pin every ancestor by descriptor. A symlink or writable ancestor
+        # cannot redirect the final open after its protection was checked.
+        for name in path.parts[1:-1]:
+            child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY |
+                               os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = child_fd
+            directory = os.fstat(directory_fd)
+            need(directory.st_uid in (0, os.geteuid()) and
+                 (directory.st_mode & 0o022 == 0 or
+                  (directory.st_uid == 0 and directory.st_mode & stat.S_ISVTX)),
+                 "private control directory is writable by another principal")
+        file_fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW |
+                          os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=directory_fd)
+        try:
+            identity = os.fstat(file_fd)
+            need(stat.S_ISREG(identity.st_mode) and identity.st_uid == os.geteuid() and
+                 identity.st_nlink == 1 and identity.st_mode & 0o077 == 0 and
+                 0 < identity.st_size <= maximum,
+                 "control file must be protected and outside the repository")
+            with os.fdopen(file_fd, "rb", closefd=False) as stream:
+                raw = stream.read(maximum + 1)
+            need(len(raw) == identity.st_size and os.fstat(file_fd).st_size == identity.st_size,
+                 "control file changed during read")
+            return raw
+        finally:
+            os.close(file_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def verify_auth_runtime(root):
@@ -127,7 +158,11 @@ def build_application(config_path, *, root=launch.ROOT):
     trust = authority.load_trust_policy(root)
     need(trust["status"] == "authority_pinned", "controller trust not pinned")
     key = Ed25519PrivateKey.from_private_bytes(private_file(config["signing_key_file"], root, 32))
-    token = authority._load_bearer_token(Path(config["bearer_token_file"]), repository_root=root)
+    try:
+        token = private_file(config["bearer_token_file"], root, 16384).decode("ascii").strip()
+    except UnicodeError:
+        raise LedgerRejected("controller bearer token invalid") from None
+    need(authority.TOKEN.fullmatch(token) is not None, "controller bearer token invalid")
     for name in ("quote_file", "runtime_evidence_file"):
         private_file(config[name], root)
     context = config["ledger_context"]

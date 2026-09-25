@@ -98,6 +98,7 @@ class ControllerLedgerTests(unittest.TestCase):
         self.now = datetime(2026, 9, 24, 12, 1, tzinfo=timezone.utc)
         self.key = Ed25519PrivateKey.generate()
         self.verifier = Ed25519PrivateKey.generate()
+        self.cleanup_verifier = Ed25519PrivateKey.generate()
         self.io = BlobModel()
         self.subject = self.make()
         self.health = {"kind": "watchdog_health", "family": "kova-cosmo", "healthy": True,
@@ -132,7 +133,15 @@ class ControllerLedgerTests(unittest.TestCase):
     def make(self, context=None):
         return ledger.ControllerLedger(context=context or self.context, signing_key=self.key,
             transport=self.io, preservation_public_key=self.verifier.public_key().public_bytes_raw(),
-            cleanup_public_key=self.verifier.public_key().public_bytes_raw(), clock=lambda: self.now)
+            cleanup_public_key=self.cleanup_verifier.public_key().public_bytes_raw(), clock=lambda: self.now)
+
+    def test_cleanup_and_preservation_verifiers_must_be_distinct(self):
+        with self.assertRaisesRegex(ledger.LedgerRejected, "distinct verifiers"):
+            ledger.ControllerLedger(context=self.context, signing_key=self.key,
+                transport=self.io,
+                preservation_public_key=self.verifier.public_key().public_bytes_raw(),
+                cleanup_public_key=self.verifier.public_key().public_bytes_raw(),
+                clock=lambda: self.now)
 
     def prepared(self):
         self.subject.initialize()
@@ -269,9 +278,9 @@ class ControllerLedgerTests(unittest.TestCase):
             "observed_at_utc": export_stamp,
             "immutable_archive_uri": "https://evidence.example.test/archived-ledger",
             "immutable_archive_version": "verified-v1"}
-        def signed(value):
+        def signed(value, signing_key=None):
             return {"payload": value, "signature_ed25519_hex":
-                    self.verifier.sign(authority.canonical(value)).hex()}
+                    (signing_key or self.cleanup_verifier).sign(authority.canonical(value)).hex()}
         export = signed(export_payload)
         payload = {"schema_version": 1, "ledger_sequence": 0, **self.context["lifecycle"],
             "pilot_remaining_resources": [], "watchdog_remaining_resources": [],
@@ -281,7 +290,7 @@ class ControllerLedgerTests(unittest.TestCase):
             "cost_evidence_sha256": "b" * 64, "evidence_uri": "https://evidence.example.test/terminal",
             "immutable_evidence_version": "version-one", "outside_both_groups": True,
             "verification_succeeded": True, "unpreserved_grants": []}
-        receipt = signed(payload)
+        receipt = signed(payload, self.cleanup_verifier)
         event = {"kind": "cleanup_terminal", "cleanup_receipt": receipt}
         with self.assertRaisesRegex(ledger.LedgerRejected, 'after deleting'):
             self.subject.append(event, expected_sequence=0)
@@ -300,9 +309,11 @@ class ControllerLedgerTests(unittest.TestCase):
         verifier = ledger.ControllerLedger(context=self.context, transport=None,
             signing_public_key=self.key.public_key().public_bytes_raw(),
             preservation_public_key=self.verifier.public_key().public_bytes_raw(),
-            cleanup_public_key=self.verifier.public_key().public_bytes_raw(),
+            cleanup_public_key=self.cleanup_verifier.public_key().public_bytes_raw(),
             clock=lambda: self.now)
         self.assertTrue(verifier.verify_external_terminal(archive, export, final)["terminal"])
+        with self.assertRaisesRegex(ledger.LedgerRejected, "untrusted external cleanup"):
+            verifier.verify_external_terminal(archive, signed(export_payload, self.verifier), final)
         premature_export = signed({**export_payload,
             "observed_at_utc": last_time.strftime("%Y-%m-%dT%H:%M:%SZ")})
         premature_final = signed({**final_payload,
@@ -310,7 +321,7 @@ class ControllerLedgerTests(unittest.TestCase):
             "ledger_deleted_at_utc": (last_time + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")})
         with self.assertRaisesRegex(ledger.LedgerRejected, "retention has not expired"):
             verifier.verify_external_terminal(archive, premature_export, premature_final)
-        premature_cost_receipt = signed({**payload, "verified_at_utc": deleted_stamp})
+        premature_cost_receipt = signed({**payload, "verified_at_utc": deleted_stamp}, self.cleanup_verifier)
         premature_cost_final = signed({**final_payload,
             "ledger_deleted_at_utc": stamp,
             "cleanup_event": {"kind": "cleanup_terminal", "cleanup_receipt": premature_cost_receipt}})
@@ -333,7 +344,7 @@ class ControllerLedgerTests(unittest.TestCase):
             (archive, export, signed({**final_payload, 'export_sha256': '0' * 64})),
             (archive, export, signed({**final_payload, 'conditional_delete_etag': '"changed"'})),
             (archive, export, signed({**final_payload, 'cleanup_event': {
-                'kind': 'cleanup_terminal', 'cleanup_receipt': signed({**payload, 'cost_posting_complete': False})}})),
+                'kind': 'cleanup_terminal', 'cleanup_receipt': signed({**payload, 'cost_posting_complete': False}, self.cleanup_verifier)}})),
         ):
             with (self.subTest(archived=archived[:8], attestation=attestation, termination=termination),
                   self.assertRaises((ledger.LedgerRejected, contract.ContractError))):

@@ -160,6 +160,9 @@ class AzureVerifierTests(unittest.TestCase):
             (vm, lambda d: d['properties']['hardwareProfile'].update(vmSize='Standard_D4s_v3')),
             (vm, lambda d: d['properties']['storageProfile']['imageReference'].update(version='latest')),
             (vm, lambda d: d['identity'].update(principalId=self.watchdog_principal)),
+            (vm, lambda d: d['properties'].update(diagnosticsProfile={
+                'bootDiagnostics': {'enabled': True,
+                                    'storageUri': 'https://untracked.blob.core.windows.net/'}})),
             (nic, lambda d: d['properties']['ipConfigurations'][0]['properties'].update(publicIPAddress={'id': 'foreign'})),
             (subnet, lambda d: d['properties'].update(defaultOutboundAccess=True)),
             (subnet, lambda d: d['properties'].update(routeTable={'id': 'foreign'})),

@@ -48,7 +48,7 @@ class HttpControllerTests(unittest.TestCase):
                     "/providers/Microsoft.Logic/workflows/kova-pilot-watchdog-test01",
                 "signing_key_file": private('signer', self.f.f.key.private_bytes_raw()),
                 "preservation_public_key_hex": self.f.f.verifier.public_key().public_bytes_raw().hex(),
-                "cleanup_public_key_hex": self.f.f.verifier.public_key().public_bytes_raw().hex(),
+                "cleanup_public_key_hex": self.f.f.cleanup_verifier.public_key().public_bytes_raw().hex(),
                 "bearer_token_file": private('bearer', self.secret.encode()),
                 "quote_file": private('quote', self.f.quote.read_bytes()),
                 "runtime_evidence_file": private('runtime', self.f.runtime_path.read_bytes()),
@@ -76,6 +76,26 @@ class HttpControllerTests(unittest.TestCase):
             Path(config['signing_key_file']).chmod(0o644)
             with self.assertRaises(ValueError):
                 build_application(path, root=self.f.quote_fixture.root)
+
+    def test_private_file_pins_protected_ancestors_and_final_file(self):
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            protected = base / 'protected'
+            protected.mkdir(mode=0o700)
+            secret = protected / 'secret'
+            secret.write_bytes(b'secret-data')
+            secret.chmod(0o600)
+            self.assertEqual(http.private_file(secret, self.f.quote_fixture.root), b'secret-data')
+            protected.chmod(0o770)
+            with self.assertRaises(ValueError):
+                http.private_file(secret, self.f.quote_fixture.root)
+            protected.chmod(0o700)
+            (base / 'redirect').symlink_to(protected, target_is_directory=True)
+            with self.assertRaises((ValueError, OSError)):
+                http.private_file(base / 'redirect' / 'secret', self.f.quote_fixture.root)
+            (protected / 'alias').symlink_to(secret)
+            with self.assertRaises((ValueError, OSError)):
+                http.private_file(protected / 'alias', self.f.quote_fixture.root)
 
     def test_https_post_returns_committed_envelope_then_rejects_retry(self):
         result, raw = self.call()

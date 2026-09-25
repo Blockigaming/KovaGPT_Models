@@ -257,6 +257,11 @@ class AzureRequestVerifier:
              image.get("sku") == "server" and image.get("version") == "24.04.202609040" and
              image.get("exactVersion", "24.04.202609040") == "24.04.202609040",
              "live VM identity, SKU or image mismatch")
+        # The reviewed VM has no boot-diagnostics store outside the two
+        # disposable groups. A drifted storage URI would survive group cleanup.
+        need(not props.get("diagnosticsProfile") or
+             props["diagnosticsProfile"].get("bootDiagnostics") in (None, {"enabled": False}),
+             "VM boot diagnostics may leave storage outside cleanup scope")
         # The VM's IMDS token is used only to prove its identity to the issuer.
         # No ARM role is needed by the guest. Check direct assignments at,
         # above and below the subscription, then effective group assignments.
