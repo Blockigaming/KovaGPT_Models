@@ -213,7 +213,7 @@ az group exists --name "$WATCHDOG_RESOURCE_GROUP"
 
 | Reservation | USD |
 | --- | ---: |
-| Maximum two-hour VM compute reservation | 0.9000 |
+| Compute reservation within a signed window that passes the cost guard | 0.9000 |
 | Managed disk, including capped transactions | 0.1000 |
 | Storage capacity and transactions | 0.2000 |
 | Network transfer, outbound NAT IP/network, shutdown delay, failed allocation | 0.3250 |
@@ -222,6 +222,28 @@ az group exists --name "$WATCHDOG_RESOURCE_GROUP"
 | Snapshots | 0.0000 |
 | Emergency cleanup margin | 1.2500 |
 | **Conditional ceiling** | **3.3000** |
+
+### Launch-cost decision: no two-hour allocation at the verified rate
+
+At the account's $0.526/hour T4 rate, a 120-minute signed window costs
+**$1.0520** for VM compute. With the existing **$1.1500** ancillary bounds
+and **$1.2500** emergency cleanup margin, the reservation would be
+**$3.4520**, already **$0.1520 above** the $3.30 ceiling. This excludes the
+unpriced independent controller, external archive and terminal destination,
+their retention and cleanup, complete setup traffic, and any applicable tax.
+The source cost guard rejects that window; it also rejects 103 minutes at
+this rate. The 102-minute window costs $3.2942 before those missing items and
+leaves only $0.0058, so it is not a credible launch candidate.
+
+**Decision: no paid launch under the current worksheet.** Carry forward one
+**90-minute candidate** within the approved two-hour maximum. Its existing
+reservation is $3.1890, leaving $0.1110 for every cost omitted from the
+current categories. Even a 0.25-vCPU/0.5-GiB controller active for that whole
+window would cost $0.0405 at the recorded account rates, plus requests;
+hosting outside that window, logging, registry, export, external storage,
+retention, cleanup and tax still need bounds. A signed, independently verified
+all-in quote and evidence that setup, training and deletion finish inside the
+90-minute window are required before seeking separate paid-launch approval.
 
 ### Actual account meters, obtained 2026-09-25
 
