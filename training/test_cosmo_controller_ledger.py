@@ -257,6 +257,20 @@ class ControllerLedgerTests(unittest.TestCase):
         self.subject.initialize()
         self.now += timedelta(days=1)
         stamp = self.now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        archive = self.io.body
+        _, head, _ = self.subject.replay(archive)
+        export_payload = {"kind": "kova_cosmo_ledger_archive_v1",
+            "context_sha256": self.subject.context_sha256, "blob_url": self.subject.blob_url,
+            "archive_sha256": ledger.hashlib.sha256(archive).hexdigest(),
+            "archive_bytes": len(archive), "head_sha256": head, "ledger_sequence": 0,
+            "blob_etag": self.io.etag,
+            "observed_at_utc": stamp,
+            "immutable_archive_uri": "https://evidence.example.test/archived-ledger",
+            "immutable_archive_version": "verified-v1"}
+        def signed(value):
+            return {"payload": value, "signature_ed25519_hex":
+                    self.verifier.sign(authority.canonical(value)).hex()}
+        export = signed(export_payload)
         payload = {"schema_version": 1, "ledger_sequence": 0, **self.context["lifecycle"],
             "pilot_remaining_resources": [], "watchdog_remaining_resources": [],
             "subscription_scoped_residual_resources": [], "pilot_deleted_at_utc": stamp,
@@ -265,12 +279,50 @@ class ControllerLedgerTests(unittest.TestCase):
             "cost_evidence_sha256": "b" * 64, "evidence_uri": "https://evidence.example.test/terminal",
             "immutable_evidence_version": "version-one", "outside_both_groups": True,
             "verification_succeeded": True, "unpreserved_grants": []}
-        receipt = {"payload": payload, "signature_ed25519_hex":
-                   self.verifier.sign(authority.canonical(payload)).hex()}
-        self.subject.append({"kind": "cleanup_terminal", "cleanup_receipt": receipt}, expected_sequence=0)
-        self.assertIs(self.subject.replay(self.io.body)[0]["terminal"], True)
-        with self.assertRaises((ledger.LedgerRejected, contract.ContractError)):
-            self.subject.append(self.health, expected_sequence=1)
+        receipt = signed(payload)
+        event = {"kind": "cleanup_terminal", "cleanup_receipt": receipt}
+        with self.assertRaisesRegex(ledger.LedgerRejected, 'after deleting'):
+            self.subject.append(event, expected_sequence=0)
+        self.assertEqual(self.io.body, archive)
+        # The independently attested copy exists before Azure storage deletion;
+        # final cost and zero-resource evidence are signed only afterwards.
+        self.io.body = None
+        final_payload = {"kind": "kova_cosmo_external_terminal_v1",
+            "export_sha256": ledger.digest(export),
+            "context_sha256": self.subject.context_sha256,
+            "storage_resource_group_id": self.context["storage_resource_group_id"],
+            "ledger_deleted_at_utc": stamp, "conditional_delete_etag": self.io.etag,
+            "ledger_remaining_resources": [],
+            "cleanup_event": event}
+        final = signed(final_payload)
+        verifier = ledger.ControllerLedger(context=self.context, transport=None,
+            signing_public_key=self.key.public_key().public_bytes_raw(),
+            preservation_public_key=self.verifier.public_key().public_bytes_raw(),
+            cleanup_public_key=self.verifier.public_key().public_bytes_raw(),
+            clock=lambda: self.now)
+        self.assertTrue(verifier.verify_external_terminal(archive, export, final)["terminal"])
+        self.assertIsNone(self.io.body)
+        with self.assertRaisesRegex(ledger.LedgerRejected, 'archive verifier cannot append'):
+            verifier.append(self.health, expected_sequence=0)
+        with self.assertRaisesRegex(ledger.LedgerRejected, 'archive verifier cannot initialize'):
+            verifier.initialize()
+        bad_export = signed({**export_payload, 'archive_sha256': '0' * 64})
+        forged_export = deepcopy(export)
+        forged_export['signature_ed25519_hex'] = '0' * 128
+        for archived, attestation, termination in (
+            (archive[:-1], export, final),
+            (archive, bad_export, final),
+            (archive, forged_export, final),
+            (archive, export, signed({**final_payload, 'ledger_remaining_resources': ['storage']})),
+            (archive, export, signed({**final_payload, 'ledger_deleted_at_utc': '2026-09-24T12:00:00Z'})),
+            (archive, export, signed({**final_payload, 'export_sha256': '0' * 64})),
+            (archive, export, signed({**final_payload, 'conditional_delete_etag': '"changed"'})),
+            (archive, export, signed({**final_payload, 'cleanup_event': {
+                'kind': 'cleanup_terminal', 'cleanup_receipt': signed({**payload, 'cost_posting_complete': False})}})),
+        ):
+            with (self.subTest(archived=archived[:8], attestation=attestation, termination=termination),
+                  self.assertRaises((ledger.LedgerRejected, contract.ContractError))):
+                verifier.verify_external_terminal(archived, attestation, termination)
 
     def test_production_cli_remains_closed_without_network(self):
         with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as caught:

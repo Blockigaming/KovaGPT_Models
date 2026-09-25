@@ -110,12 +110,29 @@ An actual host, TLS configuration, protected files, exact RBAC and total
 hosting price are still prerequisites.
 
 The prior draft of a 30-day immutable Azure ledger template was withdrawn after
-review exposed an unavoidable lifecycle conflict: appending the terminal record
-extends retention, while the terminal receipt requires finalized charges and no
-remaining billable pilot resources. This controller cannot truthfully finish
-that lifecycle with a retained ledger. A reviewed external terminalization path
-that verifies an archived signed ledger after deletion, plus bounded retention
-and its cost, is still required before any storage deployment or paid grant.
+review exposed a lifecycle conflict: appending the terminal record extends
+retention, while its receipt requires finalized charges and zero residual
+billable pilot resources. The source now rejects such an append. Instead,
+`ControllerLedger.verify_external_terminal()` verifies a complete signed
+archive **offline**, using only a separately pinned ledger public key and
+independent preservation/cleanup keys. Before ledger deletion, an independent
+verifier must preserve the entire blob outside the Azure cleanup subscription
+and sign its digest, length, head record, sequence, context, ETag and immutable
+destination/version. After the pilot, watchdog, **and ledger storage** are
+deleted and all charges have posted, that verifier signs a distinct terminal
+record binding the archive attestation, ledger deletion evidence and the
+existing signed cleanup receipt. Offline verification replays the full ledger,
+checks both independent signatures, the archive hash/chain and sequence, the
+same ETag for the independently verified conditional blob deletion, the
+deletion chronology and the $3.30 cost/zero-residual receipt, and applies the
+terminal transition only in memory. The signed external terminal record must
+then be committed and read back from a separately approved durable protected
+destination; merely returning a verified state is not persistence. No Azure
+ledger append occurs after deletion. Synthetic tests cover truncation, false
+export hashes, residual resources, premature deletion and incomplete cost.
+The exporter, ETag-conditional delete with read-back evidence, exact durable
+destination, bounded retention cleanup and their
+full charges remain prerequisites before storage deployment or a paid grant.
 
 **Paid launch remains blocked.** Source integration is implemented, but the
 TLS host, live immutable storage, isolated credentials and measured all-in
@@ -176,7 +193,7 @@ az deployment group create --resource-group "$PILOT_RESOURCE_GROUP" \
 
 On any stop condition, an independent control identity must deallocate and
 remove only the exclusive pilot group, then verify deletion. Preserve the
-terminal ledger outside the watchdog group before removing that group.
+signed ledger archive outside the subscription before deleting its storage.
 These commands are also **disabled cleanup instructions**, not executed here:
 
 ```sh
@@ -184,13 +201,12 @@ az vm deallocate --resource-group "$PILOT_RESOURCE_GROUP" --name "kova-t4-$PILOT
 az group delete --name "$PILOT_RESOURCE_GROUP" --yes --no-wait
 az group exists --name "$PILOT_RESOURCE_GROUP"
 # Require false; inspect all residual disks, NICs and resources in the subscription.
-# Export the signed terminal evidence to a separately protected destination.
+# Independently attest/export the entire ledger to protected external storage.
 az group delete --name "$WATCHDOG_RESOURCE_GROUP" --yes --no-wait
 az group exists --name "$WATCHDOG_RESOURCE_GROUP"
-# Require false, then reconcile every delayed charge against the owner ceiling.
-# Terminal ledger entry requires an independent signed proof of both deletions,
-# zero residual resources and finalized all-in cost; if a grant has no preserved
-# adapter, the same verifier must attest immutable no-artifact failure evidence.
+# After retention expires, delete the ledger blob/account/group; require no residuals.
+# After all charges post, independently sign and persist external terminal evidence.
+# Do not claim terminal completion merely from a local offline verification.
 ```
 
 ## Cost arithmetic and what it proves
@@ -399,11 +415,14 @@ of this public source branch.
    once. No retry, automatic second family, or production deployment.
 5. Preserve immutable adapter and failure evidence outside the pilot group,
    then deallocate and delete the pilot group. Query the control plane for zero
-   remaining billable resources, shut down/delete watchdog resources after
-   preserving the ledger externally, and reconcile actual charges when Azure
-   posts them. An independent verifier signs zero-residual inventory for both
-   groups, subscription-scoped residuals and the final posted cost before the
-   ledger accepts `cleanup_terminal`. Each grant without a preserved adapter
+   remaining billable pilot resources, shut down/delete watchdog resources,
+   independently export the complete signed ledger to the external protected
+   destination, and delete its Azure storage after retention expires. Reconcile
+   actual charges when Azure posts them. Only then may an independent verifier
+   sign the external terminal and cleanup receipts with zero residual pilot,
+   watchdog and ledger resources; offline replay verifies them and the archive.
+   Persist the signed terminal record externally before claiming completion.
+   Each grant without a preserved adapter
    requires independently signed no-artifact failure evidence. Guest-process exit alone does not stop
    disk or network charges.
 

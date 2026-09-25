@@ -17,10 +17,11 @@ import json
 import re
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 import uuid
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 from training import cosmo_lifecycle_authority as authority
 from training import three_family_contract as contract
@@ -130,7 +131,8 @@ class ControllerLedger:
     never taken from a guest request. Missing history is never recreated by
     append(). initialize() is a distinct, create-only operation.
     """
-    def __init__(self, *, context: dict, signing_key: Ed25519PrivateKey,
+    def __init__(self, *, context: dict, signing_key: Ed25519PrivateKey | None = None,
+                 signing_public_key: bytes | None = None,
                  transport, preservation_public_key: bytes, cleanup_public_key: bytes,
                  clock=utc_now):
         self.context = deepcopy(context)
@@ -162,13 +164,17 @@ class ControllerLedger:
         self.deadline = authority.timestamp(context["grant_deadline_utc"])
         need(0 < (self.deadline - self.starts).total_seconds() <= 7200,
              "controller grant window exceeds two hours")
-        need(isinstance(signing_key, Ed25519PrivateKey), "controller signing key required")
+        need((isinstance(signing_key, Ed25519PrivateKey) and signing_public_key is None) or
+             (signing_key is None and type(signing_public_key) is bytes and
+              len(signing_public_key) == 32), "exactly one pinned ledger signer key required")
+        signer_public = (signing_key.public_key() if signing_key is not None else
+                         Ed25519PublicKey.from_public_bytes(signing_public_key))
         for key in (preservation_public_key, cleanup_public_key):
             need(type(key) is bytes and len(key) == 32, "independent verifier key required")
-            need(key != signing_key.public_key().public_bytes_raw(),
+            need(key != signer_public.public_bytes_raw(),
                  "ledger signer cannot verify its own cleanup or preservation")
         self.signing_key = signing_key
-        self.public_key = signing_key.public_key()
+        self.public_key = signer_public
         self.preservation_key, self.cleanup_key = preservation_public_key, cleanup_public_key
         self.transport, self.clock = transport, clock
         self.context_sha256 = digest(context)
@@ -299,6 +305,7 @@ class ControllerLedger:
             preservation_public_key=self.preservation_key, cleanup_public_key=self.cleanup_key)
 
     def _record(self, event, state, previous, now):
+        need(self.signing_key is not None, "public-key archive verifier cannot sign")
         payload = {"schema_version": 1, "kind": KIND,
             "context_sha256": self.context_sha256, "sequence": state["sequence"],
             "previous_sha256": previous, "committed_at_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -338,6 +345,8 @@ class ControllerLedger:
                 need(payload["event"] is None and when < self.deadline, "invalid ledger genesis")
             else:
                 need(type(payload["event"]) is dict, "invalid ledger event")
+                need(payload["event"].get("kind") != "cleanup_terminal",
+                     "terminal record belongs outside the protected ledger")
                 if payload["event"].get("kind") in ("watchdog_health", "cost_admission", "training_grant"):
                     need(when < self.deadline, "admission after grant deadline")
                 state = self._transition(state, payload["event"], when)
@@ -370,6 +379,8 @@ class ControllerLedger:
         return record
 
     def initialize(self):
+        need(self.signing_key is not None and self.transport is not None,
+             "archive verifier cannot initialize storage")
         now = self._time()
         need(self.starts <= now < self.deadline, "initialization outside the approved window")
         self._policy()
@@ -390,6 +401,10 @@ class ControllerLedger:
         event = parse_json(authority.canonical(event))
         need(type(event) is dict and type(expected_sequence) is int and
              0 <= expected_sequence < MAX_EVENTS, "invalid append request")
+        need(self.signing_key is not None and self.transport is not None,
+             "archive verifier cannot append to storage")
+        need(event.get("kind") != "cleanup_terminal",
+             "final cleanup must be verified after deleting the immutable ledger")
         need(event.get("family") in (None, "kova-cosmo"), "only Cosmo events are allowed")
         self._policy()
         lease = self._lease()
@@ -405,6 +420,82 @@ class ControllerLedger:
             return self._append_record(current, lease, event, updated, previous, now)
         finally:
             self._release(lease)
+
+    def verify_external_terminal(self, archive: bytes, export: dict, terminal: dict):
+        """Verify an independently attested archive and post-deletion terminal.
+
+        Pure offline verification: the external record must still be committed
+        to an independently protected, versioned destination before it counts.
+        No write can extend the deleted Azure ledger's retention period here.
+        """
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        need(self.signing_key is None and self.transport is None,
+             "external finalization requires the public-only offline verifier")
+        state, head_sha, last_time = self.replay(archive)
+        need(state["terminal"] is False, "archive is already terminal")
+        now = self._time()
+
+        def signed_payload(record, keys, kind):
+            need(type(record) is dict and set(record) == {"payload", "signature_ed25519_hex"},
+                 "signed external record required")
+            payload = record["payload"]
+            need(type(payload) is dict and set(payload) == keys and payload["kind"] == kind and
+                 type(record["signature_ed25519_hex"]) is str and
+                 re.fullmatch(r"[0-9a-f]{128}", record["signature_ed25519_hex"]),
+                 "external record shape mismatch")
+            try:
+                Ed25519PublicKey.from_public_bytes(self.cleanup_key).verify(
+                    bytes.fromhex(record["signature_ed25519_hex"]), authority.canonical(payload))
+            except (InvalidSignature, ValueError, TypeError):
+                raise LedgerRejected("untrusted external cleanup record") from None
+            return payload
+
+        observed = signed_payload(export, {"kind", "context_sha256", "blob_url",
+            "archive_sha256", "archive_bytes", "head_sha256", "ledger_sequence", "blob_etag",
+            "observed_at_utc", "immutable_archive_uri", "immutable_archive_version"},
+            "kova_cosmo_ledger_archive_v1")
+        export_time = authority.timestamp(observed["observed_at_utc"])
+        archive_uri = observed["immutable_archive_uri"]
+        need(type(archive_uri) is str, "independent protected archive URI required")
+        archive_endpoint = urlsplit(archive_uri)
+        need(observed["context_sha256"] == self.context_sha256 and
+             observed["blob_url"] == self.blob_url and
+             observed["archive_sha256"] == hashlib.sha256(archive).hexdigest() and
+             type(observed["archive_bytes"]) is int and observed["archive_bytes"] == len(archive) and
+             observed["head_sha256"] == head_sha and
+             type(observed["ledger_sequence"]) is int and observed["ledger_sequence"] == state["sequence"] and
+             type(observed["blob_etag"]) is str and
+             re.fullmatch(r'"[^"\r\n]{1,120}"', observed["blob_etag"]) and
+             archive_endpoint.scheme == "https" and archive_endpoint.hostname and
+             archive_endpoint.hostname != self.context["storage_account"] + ".blob.core.windows.net" and
+             archive_endpoint.path and not archive_endpoint.query and
+             not archive_endpoint.fragment and not archive_endpoint.username and
+             not archive_endpoint.password and
+             type(observed["immutable_archive_version"]) is str and
+             bool(observed["immutable_archive_version"]) and
+             last_time <= export_time <= now,
+             "independent complete ledger export required")
+
+        final = signed_payload(terminal, {"kind", "export_sha256", "context_sha256",
+            "storage_resource_group_id", "ledger_deleted_at_utc", "conditional_delete_etag",
+            "ledger_remaining_resources", "cleanup_event"}, "kova_cosmo_external_terminal_v1")
+        deleted = authority.timestamp(final["ledger_deleted_at_utc"])
+        need(final["export_sha256"] == digest(export) and
+             final["context_sha256"] == self.context_sha256 and
+             type(final["storage_resource_group_id"]) is str and
+             final["storage_resource_group_id"].casefold() ==
+             self.context["storage_resource_group_id"].casefold() and
+             final["conditional_delete_etag"] == observed["blob_etag"] and
+             final["ledger_remaining_resources"] == [] and
+             export_time <= deleted <= now and
+             type(final["cleanup_event"]) is dict and
+             final["cleanup_event"].get("kind") == "cleanup_terminal",
+             "ledger deletion or external terminal evidence mismatch")
+        return contract.append_ledger_event(state, final["cleanup_event"],
+            expected_sequence=state["sequence"], now=now,
+            trusted_lifecycle=self.context["lifecycle"],
+            preservation_public_key=self.preservation_key,
+            cleanup_public_key=self.cleanup_key)
 
 
 def main(argv=None):
