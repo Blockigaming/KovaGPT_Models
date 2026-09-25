@@ -195,11 +195,10 @@ class AdapterPreserver:
         _inspect_bundle(bundle)
         digest = hashlib.sha256(bundle).hexdigest()
         need(digest == request["artifact_sha256"], "adapter transfer digest mismatch")
-        state = self.ledger.current_state()
+        state, last_record = self.ledger.current_state_with_last_record()
         grants = [event for event in state["events"] if event.get("kind") == "training_grant"
                   and event.get("family") == "kova-cosmo"]
-        need(len(grants) == 1 and not any(event.get("kind") == "family_preserved"
-             for event in state["events"]), "one unpreserved Cosmo grant required")
+        need(len(grants) == 1, "one Cosmo grant required")
         grant = grants[0]
         envelope = grant["response_envelope"]
         issued = envelope["payload"]
@@ -209,8 +208,6 @@ class AdapterPreserver:
              context["lifecycle"]["pilot_resource_group_id"] == state["pilot_resource_group_id"],
              "artifact transfer belongs to another grant")
         now = self.ledger._time()
-        need(now < authority.timestamp(issued["watchdog_cleanup_trigger_utc"]),
-             "adapter upload after watchdog trigger")
         group = context["storage_resource_group_id"]
         base = ("https://management.azure.com" + group +
                 "/providers/Microsoft.Storage/storageAccounts/" + context["storage_account"] +
@@ -223,6 +220,7 @@ class AdapterPreserver:
         locked = parse_json(policy.body)["properties"]
         need(properties.get("publicAccess", "None") == "None" and
              properties.get("hasImmutabilityPolicy") is True and
+             properties.get("hasLegalHold", False) is False and
              properties.get("immutableStorageWithVersioning", {}).get("enabled", False) is False and
              locked.get("state") == "Locked" and
              type(locked.get("immutabilityPeriodSinceCreationInDays")) is int and
@@ -230,19 +228,58 @@ class AdapterPreserver:
              "protected bounded adapter storage required")
         url = ("https://" + context["storage_account"] + ".blob.core.windows.net/" +
                self.container + "/cosmo-" + issued["grant_id"] + ".zip")
-        created = self.io("PUT", url, {"If-None-Match": "*", "x-ms-blob-type": "BlockBlob",
-                                       "Content-Type": "application/zip"}, bundle)
-        need(created.status == 201 and created.headers.get("etag"),
-             "protected adapter creation uncertain; do not overwrite")
-        observed = self.io("GET", url, {"If-Match": created.headers["etag"]})
-        need(observed.status == 200 and observed.headers.get("etag") == created.headers["etag"] and
+        metadata = {"x-ms-meta-artifact-sha256": digest,
+                    "x-ms-meta-grant-id": issued["grant_id"],
+                    "x-ms-meta-lifecycle-sha256": hashlib.sha256(
+                        state["lifecycle_id"].encode("utf-8")).hexdigest(),
+                    "x-ms-meta-ledger-sha256": hashlib.sha256(
+                        state["ledger_id"].encode("utf-8")).hexdigest(),
+                    "x-ms-meta-source-commit": issued["source_commit"]}
+        preserved = [event for event in state["events"] if event.get("kind") == "family_preserved"]
+        need(len(preserved) <= 1 and (not preserved or
+             last_record["payload"]["event"] ==
+             {key: value for key, value in preserved[0].items() if key != "sequence"}),
+             "preservation state cannot be recovered")
+        need(bool(preserved) or now < authority.timestamp(issued["watchdog_cleanup_trigger_utc"]),
+             "adapter upload after watchdog trigger")
+        if preserved:
+            existing = self.io("GET", url, {})
+            need(existing.status == 200 and existing.headers.get("etag"),
+                 "committed adapter missing")
+            etag = existing.headers["etag"]
+        else:
+            created = self.io("PUT", url, {"If-None-Match": "*", "x-ms-blob-type": "BlockBlob",
+                                           "Content-Type": "application/zip", **metadata}, bundle)
+            need(created.status in (201, 409, 412),
+                 "protected adapter creation uncertain; do not overwrite")
+            if created.status == 201:
+                etag = created.headers.get("etag")
+            else:
+                existing = self.io("GET", url, {})
+                need(existing.status == 200, "existing adapter unavailable")
+                etag = existing.headers.get("etag")
+            need(etag, "protected adapter ETag required")
+        observed = self.io("GET", url, {"If-Match": etag})
+        need(observed.status == 200 and observed.headers.get("etag") == etag and
              observed.headers.get("x-ms-blob-type") == "BlockBlob" and
-             hashlib.sha256(observed.body).hexdigest() == digest,
+             all(observed.headers.get(key) == value for key, value in metadata.items()) and
+             observed.body == bundle and hashlib.sha256(observed.body).hexdigest() == digest,
              "independent adapter read-back differs")
+        if preserved:
+            receipt = preserved[0]["preservation_receipt"]["payload"]
+            need(preserved[0]["artifact_sha256"] == digest and
+                 receipt["destination_uri"] == url and
+                 receipt["immutable_version"] == "etag:" + etag and
+                 receipt["grant_id"] == issued["grant_id"] and
+                 receipt["lifecycle_id"] == state["lifecycle_id"] and
+                 receipt["ledger_id"] == state["ledger_id"] and
+                 receipt["source_commit"] == issued["source_commit"],
+                 "committed preservation differs from this adapter")
+            return last_record
         receipt = {"schema_version": 1, "family": "kova-cosmo",
                    "grant_sequence": grant["sequence"], "artifact_sha256": digest,
                    "verified_sha256": digest, "destination_uri": url,
-                   "immutable_version": "etag:" + created.headers["etag"],
+                   "immutable_version": "etag:" + etag,
                    "protected_destination": True, "outside_pilot_group": True,
                    "verification_succeeded": True,
                    "verified_at_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),

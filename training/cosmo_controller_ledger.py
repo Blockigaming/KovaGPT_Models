@@ -438,6 +438,17 @@ class ControllerLedger:
         finally:
             self._release(lease)
 
+    def current_state_with_last_record(self):
+        """Return a replay-verified signed record for an uncertain preservation reply."""
+        self._policy()
+        lease = self._lease()
+        try:
+            raw = self._read(lease).body
+            state, _, _ = self.replay(raw)
+            return state, parse_json(raw.splitlines()[-1])
+        finally:
+            self._release(lease)
+
     def verify_external_terminal(self, archive: bytes, export: dict, terminal: dict):
         """Verify an independently attested archive and post-deletion terminal.
 

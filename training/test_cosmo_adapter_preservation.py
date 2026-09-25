@@ -1,6 +1,7 @@
 """Exercise the trainer-to-controller durable adapter boundary without Azure calls."""
 import base64
 from copy import deepcopy
+from datetime import timedelta
 import hashlib
 from io import BytesIO
 import json
@@ -11,6 +12,8 @@ from unittest.mock import patch
 
 from training import cosmo_adapter_preservation as preservation
 from training import cosmo_lifecycle_authority as authority
+from training import cosmo_qlora_grant as grant_client
+from training import cosmo_qlora_launch as launch
 from training import test_cosmo_controller_grants as fixtures
 from training.cosmo_controller_http import GrantApplication
 from training.cosmo_controller_ledger import LedgerRejected, Response
@@ -21,23 +24,30 @@ class ProtectedAdapterBlob:
         self.body = None
         self.corrupt_readback = False
         self.put_count = 0
+        self.metadata = {}
+        self.etag = '"object-1"'
+        self.legal_hold = False
 
     def __call__(self, method, url, headers, body=b""):
         if "management.azure.com" in url:
             value = ({"state": "Locked", "immutabilityPeriodSinceCreationInDays": 1}
                      if "immutabilityPolicies" in url else
                      {"publicAccess": "None", "hasImmutabilityPolicy": True,
+                      "hasLegalHold": self.legal_hold,
                       "immutableStorageWithVersioning": {"enabled": False}})
             return Response(200, {}, json.dumps({"properties": value}).encode())
         if method == "PUT":
             if headers.get("If-None-Match") != "*" or self.body is not None:
                 return Response(412, {})
             self.body = body
+            self.metadata = {k: v for k, v in headers.items() if k.startswith("x-ms-meta-")}
             self.put_count += 1
-            return Response(201, {"etag": '"object-1"'})
+            return Response(201, {"etag": self.etag})
         if self.body is None:
             return Response(404, {})
-        return Response(200, {"etag": '"object-1"', "x-ms-blob-type": "BlockBlob"},
+        if headers.get("If-Match") not in (None, self.etag):
+            return Response(412, {})
+        return Response(200, {"etag": self.etag, "x-ms-blob-type": "BlockBlob", **self.metadata},
                         self.body + (b"corrupt" if self.corrupt_readback else b""))
 
 
@@ -46,7 +56,23 @@ class PreservationTests(unittest.TestCase):
         self.f = fixtures.GrantIssuerTests("runTest")
         self.f.setUp()
         self.addCleanup(self.f.doCleanups)
-        self.issued = self.f.issuer.issue(self.f.request)["payload"]
+        compute = {"resourceId": self.f.vm["resource_id"], "vmId": self.f.vm["vm_id"],
+            "location": "eastus", "vmSize": launch.SKU, "storageProfile": {
+                "imageReference": {"publisher": "Canonical", "offer": "ubuntu-24_04-lts",
+                    "sku": "server", "exactVersion": "24.04.202609040"}}}
+        with patch.object(authority, "_executing_azure_identity", return_value=(
+                self.f.token, self.f.token_digest, "2026-09-24T14:30:00Z")), \
+             patch.object(authority, "_load_bearer_token", return_value="synthetic"):
+            self.committed_grant = grant_client.acquire_training_grant(
+                quote=self.f.quote, source_commit=self.f.f.context["source_commit"],
+                subscription_id=self.f.quote_fixture.subscription,
+                lifecycle_id=self.f.request["lifecycle_id"], preflight_ledger_sequence=2,
+                azure_instance=self.f.vm, runtime_evidence=self.f.runtime_path,
+                now=self.f.f.now, root=self.f.quote_fixture.root,
+                instance_transport=lambda _: compute,
+                transport=lambda _endpoint, _bearer, request: self.f.issuer.issue(request))
+        self.issued = self.f.ledger.current_state()["events"][-1]["response_envelope"]["payload"]
+        self.assertEqual(self.committed_grant["lifecycle_id"], self.issued["lifecycle_id"])
         self.secret = "a" * 64
         self.storage = ProtectedAdapterBlob()
         self.preserver = preservation.AdapterPreserver(ledger=self.f.ledger,
@@ -78,7 +104,7 @@ class PreservationTests(unittest.TestCase):
         (self.adapter / "adapter_model.safetensors").write_bytes(b"w" * (1024 * 1024 + 1))
         with patch.object(authority, "_load_bearer_token", return_value=self.secret):
             result = preservation.preserve_adapter(adapter=self.adapter,
-                grant_payload=self.issued, root=self.f.quote_fixture.root,
+                grant_payload=self.committed_grant, root=self.f.quote_fixture.root,
                 transport=lambda _, token, request: self.submit_http(request)[1])
         self.assertEqual(result["status"], "adapter_preserved_and_committed")
         self.assertEqual(result["artifact_sha256"], hashlib.sha256(self.storage.body).hexdigest())
@@ -87,11 +113,51 @@ class PreservationTests(unittest.TestCase):
         self.assertEqual(state["sequence"], 4)
         self.assertEqual(state["events"][-1]["kind"], "family_preserved")
         with patch.object(authority, "_load_bearer_token", return_value=self.secret):
-            with self.assertRaises(LedgerRejected):
-                preservation.preserve_adapter(adapter=self.adapter,
-                    grant_payload=self.issued, root=self.f.quote_fixture.root,
-                    transport=lambda _, token, request: self.submit_http(request)[1])
+            retry = preservation.preserve_adapter(adapter=self.adapter,
+                grant_payload=self.committed_grant, root=self.f.quote_fixture.root,
+                transport=lambda _, token, request: self.submit_http(request)[1])
+        self.assertEqual(retry, result)
         self.assertEqual(self.storage.put_count, 1)
+
+    def test_retry_after_uncertain_ledger_append_recovers_existing_blob(self):
+        raw = preservation.bundle_adapter(self.adapter)
+        request = {"schema_version": 1, "kind": "kova_cosmo_preserve_adapter_v1",
+                   "lifecycle_id": self.issued["lifecycle_id"],
+                   "grant_id": self.issued["grant_id"],
+                   "artifact_sha256": hashlib.sha256(raw).hexdigest(),
+                   "bundle_b64": base64.b64encode(raw).decode()}
+        self.f.f.io.lose_append_response = True
+        self.assertEqual(self.submit_http(request)[0], "403 Forbidden")
+        self.assertEqual(self.f.ledger.current_state()["sequence"], 4)
+        # A committed read-back can be confirmed even after new uploads close.
+        self.f.f.now += timedelta(minutes=75)
+        status, recovered = self.submit_http(request)
+        self.assertEqual(status, "200 OK")
+        self.assertEqual(recovered["payload"]["event"]["artifact_sha256"], request["artifact_sha256"])
+        self.assertEqual(self.storage.put_count, 1)
+
+    def test_retry_after_uncommitted_append_checks_exact_existing_blob(self):
+        raw = preservation.bundle_adapter(self.adapter)
+        request = {"schema_version": 1, "kind": "kova_cosmo_preserve_adapter_v1",
+                   "lifecycle_id": self.issued["lifecycle_id"],
+                   "grant_id": self.issued["grant_id"],
+                   "artifact_sha256": hashlib.sha256(raw).hexdigest(),
+                   "bundle_b64": base64.b64encode(raw).decode()}
+        with patch.object(self.f.ledger, "append", side_effect=LedgerRejected("temporary")):
+            self.assertEqual(self.submit_http(request)[0], "403 Forbidden")
+        self.assertEqual(self.f.ledger.current_state()["sequence"], 3)
+        self.assertEqual(self.submit_http(request)[0], "200 OK")
+        self.assertEqual(self.storage.put_count, 1)
+
+        # Another bundle, altered metadata, or legal hold cannot reuse this commit.
+        self.storage.metadata["x-ms-meta-grant-id"] = "different"
+        self.assertEqual(self.submit_http(request)[0], "403 Forbidden")
+        self.storage.metadata["x-ms-meta-grant-id"] = self.issued["grant_id"]
+        self.storage.body += b"changed"
+        self.assertEqual(self.submit_http(request)[0], "403 Forbidden")
+        self.storage.body = raw
+        self.storage.legal_hold = True
+        self.assertEqual(self.submit_http(request)[0], "403 Forbidden")
 
     def test_corrupt_readback_cannot_report_success_or_commit_preservation(self):
         self.storage.corrupt_readback = True

@@ -256,6 +256,7 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
              authority.timestamp(token_expiry) >= expires,
              "training grant is stale or exceeds the deadline")
         return {"status": "one_training_run_committed", "grant_id": payload["grant_id"],
+                "lifecycle_id": payload["lifecycle_id"],
                 "ledger_sequence": payload["ledger_sequence"], "grant_sha256": digest,
                 "allocation_deadline_utc": payload["allocation_deadline_utc"],
                 "watchdog_cleanup_trigger_utc": payload["watchdog_cleanup_trigger_utc"],
