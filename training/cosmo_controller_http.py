@@ -16,7 +16,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from training import cosmo_lifecycle_authority as authority
 from training import cosmo_qlora_launch as launch
-from training.cosmo_controller_azure import AzureReadIO, AzureRequestVerifier, cli_token
+from training.cosmo_controller_azure import (AzureReadIO, AzureRequestVerifier, cli_token,
+                                              managed_identity_token)
 from training.cosmo_controller_grants import GrantIssuer
 from training.cosmo_controller_ledger import AzureBlobIO, ControllerLedger, LedgerRejected, need, parse_json
 
@@ -106,8 +107,21 @@ def build_application(config_path, *, root=launch.ROOT):
     config = parse_json(private_file(config_path, root))
     need(type(config) is dict and set(config) == {"ledger_context", "tenant_id", "token_version",
         "watchdog_resource_id", "signing_key_file", "preservation_public_key_hex",
-        "cleanup_public_key_hex", "bearer_token_file", "quote_file", "runtime_evidence_file"},
+        "cleanup_public_key_hex", "bearer_token_file", "quote_file", "runtime_evidence_file",
+        "token_source"},
         "controller configuration shape mismatch")
+    token_source = config["token_source"]
+    need(type(token_source) is dict, "explicit controller credential source required")
+    if token_source == {"kind": "azure_cli"}:
+        token_for = cli_token
+    else:
+        need(set(token_source) == {"kind", "client_id"} and
+             token_source["kind"] == "container_app_managed_identity",
+             "unsupported controller credential source")
+        client_id = token_source["client_id"]
+        need(type(client_id) is str and launch.UUID.fullmatch(client_id),
+             "pinned controller managed identity required")
+        token_for = lambda audience: managed_identity_token(audience, client_id=client_id)
     source = launch.clean_source_commit(root)
     need(config["ledger_context"]["source_commit"] == source, "controller source pin mismatch")
     trust = authority.load_trust_policy(root)
@@ -117,11 +131,12 @@ def build_application(config_path, *, root=launch.ROOT):
     for name in ("quote_file", "runtime_evidence_file"):
         private_file(config[name], root)
     context = config["ledger_context"]
-    io = AzureBlobIO(account=context["storage_account"], token_for=cli_token)
+    io = AzureBlobIO(account=context["storage_account"], token_for=token_for)
     ledger = ControllerLedger(context=context, signing_key=key, transport=io,
         preservation_public_key=bytes.fromhex(config["preservation_public_key_hex"]),
         cleanup_public_key=bytes.fromhex(config["cleanup_public_key_hex"]))
-    reader = AzureReadIO(account=context["storage_account"], tenant_id=config["tenant_id"])
+    reader = AzureReadIO(account=context["storage_account"], tenant_id=config["tenant_id"],
+                         token_for=token_for)
     verifier = AzureRequestVerifier(tenant_id=config["tenant_id"], token_version=config["token_version"],
         lifecycle=context["lifecycle"], watchdog_id=config["watchdog_resource_id"], read_json=reader)
     issuer = GrantIssuer(ledger=ledger, quote=Path(config["quote_file"]),

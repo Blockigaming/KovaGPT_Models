@@ -7,10 +7,11 @@ No resource creation, registration, role writes or training is implemented here.
 from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
+import os
 import re
 import subprocess
 import urllib.request
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import jwt
 
@@ -34,6 +35,47 @@ def cli_token(resource):
         return parse_json(result.stdout)["accessToken"]
     except (OSError, subprocess.SubprocessError, KeyError, ValueError):
         raise LedgerRejected("controller Azure credential unavailable") from None
+
+
+def managed_identity_token(resource, *, client_id, environ=None):
+    """Container Apps' local token endpoint, bound to one controller identity.
+
+    The host supplies the rotating endpoint/header. Never use the guest token,
+    an arbitrary URL, a proxy, redirects or a default identity selection.
+    """
+    need(resource in (ARM + "/", "https://storage.azure.com/"), "invalid credential audience")
+    need(type(client_id) is str and launch.UUID.fullmatch(client_id), "pinned controller client ID required")
+    env = os.environ if environ is None else environ
+    endpoint, secret = env.get("IDENTITY_ENDPOINT"), env.get("IDENTITY_HEADER")
+    try:
+        parts = urlsplit(endpoint)
+        need(parts.scheme == "http" and parts.hostname in ("localhost", "127.0.0.1", "::1") and
+             parts.port is not None and parts.path.startswith("/") and
+             not parts.query and not parts.fragment and not parts.username and not parts.password and
+             type(secret) is str and re.fullmatch(r"[a-zA-Z0-9-]{16,256}", secret),
+             "trusted local managed identity endpoint required")
+        query = urlencode({"resource": resource, "api-version": "2019-08-01", "client_id": client_id})
+        request = urllib.request.Request(endpoint + "?" + query, headers={"X-IDENTITY-HEADER": secret})
+
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *args):
+                return None
+
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+        with opener.open(request, timeout=5) as response:
+            raw = response.read(65537)
+            need(response.status == 200 and len(raw) <= 65536, "identity response invalid")
+        value = parse_json(raw)
+        token, expires = value["access_token"], value["expires_on"]
+        need(value["token_type"] == "Bearer" and value["resource"] == resource and
+             value["client_id"].casefold() == client_id.casefold() and
+             type(expires) is str and re.fullmatch(r"[0-9]{10,12}", expires) and
+             int(expires) > int(utc_now().timestamp()) + 60 and
+             type(token) is str and re.fullmatch(r"[A-Za-z0-9._~+/=-]{32,16384}", token),
+             "managed identity token response mismatch")
+        return token
+    except (OSError, KeyError, TypeError, AttributeError, ValueError, OverflowError):
+        raise LedgerRejected("controller managed identity unavailable") from None
 
 
 class AzureReadIO:

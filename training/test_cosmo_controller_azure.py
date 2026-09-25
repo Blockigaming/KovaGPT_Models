@@ -2,8 +2,11 @@
 from copy import deepcopy
 from datetime import datetime, timedelta
 import hashlib
+from io import BytesIO
+import json
 import unittest
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric.rsa import generate_private_key
@@ -210,6 +213,47 @@ class AzureVerifierTests(unittest.TestCase):
         self.documents[self.locks_url] = {'value': [{'id': pilot + '-unrelated/providers/Microsoft.Authorization/locks/keep',
             'properties': {'level': 'ReadOnly'}}]}
         self.assertTrue(self.observe()['cleanup_scope_verified'])
+
+
+class ManagedIdentityTokenTests(unittest.TestCase):
+    def test_local_managed_identity_is_pinned_to_client_and_audience(self):
+        class Response(BytesIO):
+            status = 200
+        client = '12345678-1234-1234-1234-123456789abc'
+        secret = '12345678-1234-1234-1234-123456789abd'
+        env = {'IDENTITY_ENDPOINT': 'http://127.0.0.1:42314/msi/token',
+               'IDENTITY_HEADER': secret}
+        result = {'access_token': 'x' * 64, 'expires_on': str(int(azure.utc_now().timestamp()) + 180),
+                  'token_type': 'Bearer', 'client_id': client, 'resource': azure.ARM + '/'}
+        requests = []
+        class Opener:
+            def open(self, request, timeout):
+                requests.append(request)
+                assert timeout == 5
+                return Response(json.dumps(result).encode())
+        with patch.object(azure.urllib.request, 'build_opener', return_value=Opener()):
+            self.assertEqual(azure.managed_identity_token(azure.ARM + '/', client_id=client, environ=env), 'x' * 64)
+            self.assertEqual(requests[0].get_header('X-identity-header'), secret)
+            self.assertEqual(parse_qs(urlsplit(requests[0].full_url).query),
+                {'resource': [azure.ARM + '/'], 'api-version': ['2019-08-01'], 'client_id': [client]})
+            for drift in ({'resource': 'https://storage.azure.com/'}, {'client_id': '0' * 36},
+                          {'token_type': 'Basic'}, {'expires_on': '0'}, {'access_token': ''}):
+                result.update(drift)
+                with self.subTest(drift=drift), self.assertRaises(LedgerRejected):
+                    azure.managed_identity_token(azure.ARM + '/', client_id=client, environ=env)
+                result = {'access_token': 'x' * 64, 'expires_on': str(int(azure.utc_now().timestamp()) + 180),
+                          'token_type': 'Bearer', 'client_id': client, 'resource': azure.ARM + '/'}
+
+    def test_remote_or_missing_identity_endpoint_is_rejected_before_http(self):
+        env = {'IDENTITY_ENDPOINT': 'http://attacker.invalid/msi/token',
+               'IDENTITY_HEADER': '12345678-1234-1234-1234-123456789abd'}
+        with patch.object(azure.urllib.request, 'build_opener', side_effect=AssertionError('HTTP accessed')):
+            for endpoint in (env['IDENTITY_ENDPOINT'], 'https://127.0.0.1:42314/msi/token',
+                             'http://127.0.0.1:42314/msi/token?extra=1', None):
+                with self.subTest(endpoint=endpoint), self.assertRaises(LedgerRejected):
+                    azure.managed_identity_token(azure.ARM + '/',
+                        client_id='12345678-1234-1234-1234-123456789abc',
+                        environ={**env, 'IDENTITY_ENDPOINT': endpoint})
 
 
 if __name__ == '__main__':

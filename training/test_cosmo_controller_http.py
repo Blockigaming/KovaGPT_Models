@@ -51,13 +51,28 @@ class HttpControllerTests(unittest.TestCase):
                 "cleanup_public_key_hex": self.f.f.verifier.public_key().public_bytes_raw().hex(),
                 "bearer_token_file": private('bearer', self.secret.encode()),
                 "quote_file": private('quote', self.f.quote.read_bytes()),
-                "runtime_evidence_file": private('runtime', self.f.runtime_path.read_bytes())}
+                "runtime_evidence_file": private('runtime', self.f.runtime_path.read_bytes()),
+                "token_source": {"kind": "azure_cli"}}
             path = private('config', json.dumps(config).encode())
             with patch('training.cosmo_controller_azure.cli_token', side_effect=AssertionError('unexpected credential read')):
                 app = build_application(path, root=self.f.quote_fixture.root)
             self.assertIsInstance(app, GrantApplication)
             self.assertEqual(app.issuer.ledger.context, self.f.f.context)
             self.assertEqual(app.issuer.verify_live_request.watchdog, config['watchdog_resource_id'])
+            config['token_source'] = {"kind": "container_app_managed_identity",
+                                      "client_id": "12345678-1234-1234-1234-123456789abc"}
+            Path(path).write_text(json.dumps(config))
+            with patch.object(http, 'managed_identity_token', return_value='x' * 64) as token:
+                managed_app = build_application(path, root=self.f.quote_fixture.root)
+                self.assertEqual(managed_app.issuer.ledger.transport.token_for("https://storage.azure.com/"), 'x' * 64)
+                self.assertEqual(managed_app.issuer.verify_live_request.read.arm.token_for("https://management.azure.com/"), 'x' * 64)
+                self.assertEqual(token.call_count, 2)
+            config['token_source'] = {"kind": "container_app_managed_identity", "client_id": "invalid"}
+            Path(path).write_text(json.dumps(config))
+            with self.assertRaisesRegex(ValueError, 'pinned controller managed identity'):
+                build_application(path, root=self.f.quote_fixture.root)
+            config['token_source'] = {"kind": "azure_cli"}
+            Path(path).write_text(json.dumps(config))
             Path(config['signing_key_file']).chmod(0o644)
             with self.assertRaises(ValueError):
                 build_application(path, root=self.f.quote_fixture.root)

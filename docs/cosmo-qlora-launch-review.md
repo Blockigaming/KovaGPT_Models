@@ -98,6 +98,18 @@ sanitized rejection and never retry a possibly committed grant. Durable grant
 transitions require the complete signed issuer envelope; a bare event cannot
 consume the only run. The release fingerprint includes every controller source.
 
+The private factory configuration now also requires an explicit `token_source`:
+`{"kind":"container_app_managed_identity","client_id":"<controller-client-uuid>"}`
+for a future independent Azure Container App, or `{"kind":"azure_cli"}` for a
+separately reviewed host with an interactive Azure CLI session. The managed
+identity mode uses the platform's **local** `IDENTITY_ENDPOINT` and rotating
+`IDENTITY_HEADER` to request only ARM or Azure Storage tokens for the pinned
+client ID. It rejects a remote endpoint, redirect, proxy, wrong audience,
+different identity or expiring response. It has no silent fallback to Azure
+CLI or the VM's guest identity. This closes the source credential path; a
+running host, TLS configuration, protected files, exact RBAC and full hosting
+price still require concrete selection and approval.
+
 **Paid launch remains blocked.** Source integration is implemented, but the
 TLS host, live immutable storage, isolated credentials and measured all-in
 cost/deletion bound remain unprovisioned or unverified. The watchdog template
