@@ -251,6 +251,43 @@ class GrantIssuerTests(unittest.TestCase):
         self.assertEqual(received["training_runs_consumed"], 1)
         self.assertEqual(self.ledger.current_state()["sequence"], 3)
 
+    def test_request_timestamp_is_refreshed_after_slow_presend_verification(self):
+        initial = self.f.now
+        delayed = initial + timedelta(seconds=12)
+        compute = {"resourceId": self.vm["resource_id"], "vmId": self.vm["vm_id"],
+            "location": "eastus", "vmSize": launch.SKU, "storageProfile": {
+                "imageReference": {"publisher": "Canonical", "offer": "ubuntu-24_04-lts",
+                    "sku": "server", "exactVersion": "24.04.202609040"}}}
+        def slow_imds(_):
+            self.f.now = delayed
+            return compute
+        requests = []
+        self.f.io.lose_append_response = True
+        def uncertain(_endpoint, _token, request):
+            requests.append(request)
+            if len(requests) == 1:
+                with self.assertRaises(LedgerRejected):
+                    self.issuer.issue(request)
+                raise authority.AuthorityError("synthetic lost response")
+            return self.issuer.issue(request)
+        with patch.object(client, "datetime") as fake_datetime, \
+             patch.object(launch, "assess_signed_quote", return_value=self.admission), \
+             patch.object(authority, "_executing_azure_identity", return_value=(
+                 self.token, self.token_digest, "2026-09-24T14:30:00Z")), \
+             patch.object(authority, "_load_bearer_token", return_value="synthetic"):
+            fake_datetime.now.side_effect = [initial, delayed]
+            received = client.acquire_training_grant(quote=self.quote,
+                source_commit=self.f.context["source_commit"],
+                subscription_id=self.quote_fixture.subscription,
+                lifecycle_id=self.request["lifecycle_id"], preflight_ledger_sequence=2,
+                azure_instance=self.vm, runtime_evidence=self.runtime_path,
+                response_now=delayed, root=self.quote_fixture.root,
+                instance_transport=slow_imds, transport=uncertain)
+        self.assertEqual(fake_datetime.now.call_count, 2)
+        self.assertEqual(requests[0]["requested_at_utc"], delayed.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        self.assertEqual(requests[0], requests[1])
+        self.assertEqual(received["training_runs_consumed"], 1)
+
     def test_recovery_retries_in_last_five_seconds(self):
         self.f.io.lose_append_response = True
         compute = {"resourceId": self.vm["resource_id"], "vmId": self.vm["vm_id"],
