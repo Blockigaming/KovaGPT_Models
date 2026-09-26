@@ -94,6 +94,9 @@ class ControllerLedgerTests(unittest.TestCase):
                 "watchdog_resource_group_id": prefix + "watchdog"},
             "storage_resource_group_id": prefix + "evidence", "storage_account": "kovatestledger",
             "container": "cosmo42", "blob": "pilot.jsonl", "retention_days": 1,
+            "artifact_container": "cosmo-adapters",
+            "external_archive": {"uri": "https://evidence.example.test/archived-ledger",
+                "retention_days": 30, "maximum_bytes": 1048576},
             "not_before_utc": "2026-09-24T12:00:00Z", "grant_deadline_utc": "2026-09-24T13:15:00Z"}
         self.now = datetime(2026, 9, 24, 12, 1, tzinfo=timezone.utc)
         self.key = Ed25519PrivateKey.generate()
@@ -277,7 +280,7 @@ class ControllerLedgerTests(unittest.TestCase):
             "blob_etag": self.io.etag,
             "observed_at_utc": export_stamp,
             "immutable_archive_uri": "https://evidence.example.test/archived-ledger",
-            "immutable_archive_version": "verified-v1"}
+            "immutable_archive_version": "verified-v1", "archive_retention_days": 30}
         def signed(value, signing_key=None):
             return {"payload": value, "signature_ed25519_hex":
                     (signing_key or self.cleanup_verifier).sign(authority.canonical(value)).hex()}
@@ -333,11 +336,16 @@ class ControllerLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerRejected, 'archive verifier cannot initialize'):
             verifier.initialize()
         bad_export = signed({**export_payload, 'archive_sha256': '0' * 64})
+        wrong_archive = signed({**export_payload,
+            'immutable_archive_uri': 'https://other.example.test/archived-ledger'})
+        short_archive = signed({**export_payload, 'archive_retention_days': 1})
         forged_export = deepcopy(export)
         forged_export['signature_ed25519_hex'] = '0' * 128
         for archived, attestation, termination in (
             (archive[:-1], export, final),
             (archive, bad_export, final),
+            (archive, wrong_archive, final),
+            (archive, short_archive, final),
             (archive, forged_export, final),
             (archive, export, signed({**final_payload, 'ledger_remaining_resources': ['storage']})),
             (archive, export, signed({**final_payload, 'ledger_deleted_at_utc': '2026-09-24T12:00:00Z'})),

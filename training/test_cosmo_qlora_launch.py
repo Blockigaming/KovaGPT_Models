@@ -64,6 +64,11 @@ class LaunchTests(unittest.TestCase):
                 "external_archive_and_receipts": "0.0010",
                 "tax_and_other_fees": "0.0000",
             },
+            "evidence_scope": {
+                "ledger_context_sha256": "a" * 64, "ledger_retention_days": 1,
+                "artifact_container": "cosmo-adapters",
+                "external_archive": {"uri": "https://evidence.example.test/archived-ledger",
+                    "retention_days": 30, "maximum_bytes": 1048576}},
             "all_category_rates_checked": True, "watchdog_health_tested": True,
             "watchdog_can_deallocate_and_delete": True,
             "exclusive_pilot_group_empty": True, "no_public_ip": True,
@@ -164,6 +169,24 @@ class LaunchTests(unittest.TestCase):
             else:
                 extras["controller_registry_and_logs"] = "0.2000"
             with self.subTest(change=change), self.assertRaises(launch.LaunchRejected):
+                self.check(payload)
+
+    def test_signed_evidence_scope_requires_bounded_storage_and_retention(self):
+        for field, value in (("ledger_retention_days", 0),
+                             ("ledger_context_sha256", "broken"),
+                             ("artifact_container", "Invalid")):
+            payload = deepcopy(self.payload)
+            payload["evidence_scope"][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(
+                    launch.LaunchRejected, "evidence scope"):
+                self.check(payload)
+        for field, value in (("uri", "http://example.test/archive"),
+                             ("retention_days", 0), ("maximum_bytes", 1024),
+                             ("maximum_bytes", 1048577)):
+            payload = deepcopy(self.payload)
+            payload["evidence_scope"]["external_archive"][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(
+                    launch.LaunchRejected, "evidence scope"):
                 self.check(payload)
 
     def test_unsigned_tampered_and_unpinned_authorities_fail(self):

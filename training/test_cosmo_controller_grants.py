@@ -27,6 +27,7 @@ class GrantIssuerTests(unittest.TestCase):
         self.f.setUp()
         self.f.key = self.quote_fixture.key
         self.ledger = self.f.make()
+        self.quote_fixture.payload["evidence_scope"]["ledger_context_sha256"] = self.ledger.context_sha256
         self.quote = self.quote_fixture.signed()
         self.admission = self.quote_fixture.check()
         self.f.cost["quote_sha256"] = self.admission["quote_sha256"]
@@ -128,6 +129,28 @@ class GrantIssuerTests(unittest.TestCase):
                          {"azure_control_plane_verified": False}, {"token_sha256": "e" * 64}):
             self.observation_override = override
             with self.subTest(override=override), self.assertRaises(LedgerRejected):
+                self.issuer.issue(self.request)
+        self.assertEqual(self.f.io.body, before)
+
+    def test_quote_for_shorter_retention_or_other_archive_never_consumes_grant(self):
+        before = self.f.io.body
+        for change in ("retention_days", "archive_uri", "archive_retention_days",
+                       "artifact_container", "ledger_context_sha256"):
+            scoped = deepcopy(self.quote_fixture.payload)
+            scope = scoped["evidence_scope"]
+            if change == "retention_days":
+                scope["ledger_retention_days"] = 2
+            elif change == "archive_uri":
+                scope["external_archive"]["uri"] = "https://other.example.test/ledger"
+            elif change == "archive_retention_days":
+                scope["external_archive"]["retention_days"] = 1
+            elif change == "artifact_container":
+                scope["artifact_container"] = "other-adapters"
+            else:
+                scope["ledger_context_sha256"] = "b" * 64
+            self.quote_fixture.signed(scoped)
+            with self.subTest(change=change), self.assertRaisesRegex(
+                    LedgerRejected, "pricing scope"):
                 self.issuer.issue(self.request)
         self.assertEqual(self.f.io.body, before)
 

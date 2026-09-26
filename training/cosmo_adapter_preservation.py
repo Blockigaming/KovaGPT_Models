@@ -180,7 +180,8 @@ class AdapterPreserver:
         need(isinstance(signing_key, Ed25519PrivateKey) and
              signing_key.public_key().public_bytes_raw() == ledger.preservation_key,
              "independent preservation signing key mismatch")
-        need(artifact_container != ledger.context["container"],
+        need(artifact_container == ledger.context["artifact_container"] and
+             artifact_container != ledger.context["container"],
              "adapter and append ledger require distinct containers")
         self.ledger, self.container, self.key = ledger, artifact_container, signing_key
         self.io = AzureBlobIO(account=ledger.context["storage_account"], token_for=token_for,

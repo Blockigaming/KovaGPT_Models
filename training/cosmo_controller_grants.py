@@ -86,6 +86,12 @@ class GrantIssuer:
              "stale or future grant request")
         admission = launch.assess_signed_quote(self.quote, source_commit=commit,
             subscription_id=subscription, now=now, root=self.root)
+        need(admission["evidence_scope"] == {
+            "ledger_context_sha256": self.ledger.context_sha256,
+            "ledger_retention_days": context["retention_days"],
+            "artifact_container": context["artifact_container"],
+            "external_archive": context["external_archive"]},
+            "signed retention and archive pricing scope differs from controller context")
         preflight = client.read_runtime_preflight(self.runtime_evidence,
             quote_sha256=admission["quote_sha256"], source_commit=commit,
             subscription_id=subscription, deadline_utc=admission["allocation_deadline_utc"],

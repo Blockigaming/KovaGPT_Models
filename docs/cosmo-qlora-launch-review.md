@@ -379,6 +379,15 @@ durable evidence destinations require positive reserves; their sum is added
 to the conditional worksheet and rejected above $3.30. The synthetic test
 values are not account prices. No complete live quote exists yet, and the
 $0.1110 gap must cover every additional category for a 90-minute window.
+The signed quote now carries the exact ledger context hash, ledger retention
+days, adapter container, and external archive URI, retention days and 1 MiB
+maximum. The protected controller context fixes these values; the grant issuer
+rejects a quote for a shorter or different storage scope before consuming the
+single training grant. The preserver checks the adapter container against that
+context, and the offline terminal verifier checks the signed archive URI,
+retention assertion and size. The archive operator must still provide a real
+independently verified storage lock, destination and account-specific price;
+the signed assertion alone does not establish that a destination is provisioned.
 The four changed category reserves have the same combined total as before.
 Unlike the former worksheet, the known mandatory download floor now fits its
 own category, leaving **1,611,559,831 bytes** for all remaining NAT traffic.
