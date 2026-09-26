@@ -7,6 +7,9 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 ARCHIVED = (
@@ -75,13 +78,33 @@ def _runtime_entitlements(root: Path):
         raise ValueError("runtime_policy_loader_unavailable") from error
     if hashlib.sha256(policy_loader).hexdigest() != CURRENT_POLICY_LOADER_SHA256:
         raise ValueError("runtime_policy_loader_drift")
-    path = root / "router/entitlements.py"
-    spec = importlib.util.spec_from_file_location("_kova_source_policy_runtime_entitlements", path)
-    if spec is None or spec.loader is None:
-        raise ValueError("runtime_entitlements_unloadable")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.CHAT_ALLOWED_BY_TIER, module.WORK_ALLOWED_BY_TIER
+    # Inspect the entire import graph from the target checkout, not modules
+    # already cached by the calling process. -I ignores ambient PYTHONPATH;
+    # a fresh bytecode cache path avoids stale .pyc files in a copied tree.
+    code = (
+        "import json, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from router.entitlements import CHAT_ALLOWED_BY_TIER, WORK_ALLOWED_BY_TIER\n"
+        "print(json.dumps({'chat': {k: sorted(v) for k, v in CHAT_ALLOWED_BY_TIER.items()}, "
+        "'work': {k: sorted(v) for k, v in WORK_ALLOWED_BY_TIER.items()}}))\n"
+    )
+    try:
+        with tempfile.TemporaryDirectory(prefix="kova-policy-check-") as cache:
+            result = subprocess.run(
+                [sys.executable, "-I", "-B", "-X", f"pycache_prefix={cache}",
+                 "-c", code, str(root.resolve())],
+                capture_output=True, text=True, check=True, timeout=10,
+            )
+        value = json.loads(result.stdout, object_pairs_hook=_unique)
+        if set(value) != {"chat", "work"}:
+            raise ValueError("invalid runtime entitlement result")
+        return value["chat"], value["work"]
+    except subprocess.CalledProcessError as error:
+        if "current product policy rejected" in error.stderr:
+            raise ValueError("current product policy rejected") from None
+        raise ValueError("runtime_entitlements_unloadable") from None
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, KeyError):
+        raise ValueError("runtime_entitlements_unloadable") from None
 
 
 def _runtime_identity(root: Path) -> None:
