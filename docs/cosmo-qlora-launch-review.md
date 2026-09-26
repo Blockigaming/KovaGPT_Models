@@ -190,9 +190,17 @@ full charges remain prerequisites before storage deployment or a paid grant.
 **Paid launch remains blocked.** Source integration is implemented, but the
 TLS host, live immutable storage, isolated credentials and measured all-in
 cost/deletion bound remain unprovisioned or unverified. The watchdog template
-now deletes its own dedicated group after successful pilot-group deletion,
-with Contributor scoped only to those two groups. The verifier checks that
-exact sequence and both roles. Self-deletion has not been rehearsed in Azure.
+serializes its minute-triggered runs. After requesting pilot-group deletion,
+it makes a synchronous GET for the exact pilot group and requests its own
+dedicated group's deletion only if that GET returns HTTP 404. An HTTP 202
+acceptance, a still-present group, a timeout, or an unrelated GET failure
+cannot by itself start watchdog self-deletion. The verifier checks this exact
+action graph and both group-scoped Contributor roles. Azure documents that
+[HTTP 202 can precede completion](https://learn.microsoft.com/en-us/azure/connectors/connectors-native-http)
+and [resource deletion can be asynchronous](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/async-operations).
+The extra probe and any queued/retried runs belong in the complete signed cost
+quote. Self-deletion, 404 handling, absence of residual resources, and cleanup
+inside the priced window have not been rehearsed in Azure.
 Tests use real RSA/Ed25519 signatures and the real guest/issuer/HTTP logic with
 synthetic ARM resources; they do not prove Azure deployment or cleanup.
 The default ledger CLI makes zero provider calls and rejects `--execute`.

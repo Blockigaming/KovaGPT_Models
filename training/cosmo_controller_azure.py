@@ -115,15 +115,24 @@ def watchdog_definition(vm_id, pilot_group_id, watchdog_group_id):
     deallocate["runAfter"] = {}
     delete = action("DELETE", pilot_group_id + "?api-version=2022-09-01")
     delete["runAfter"] = {"deallocate_after_deadline": ["Succeeded", "Failed", "TimedOut"]}
+    check = action("GET", pilot_group_id + "?api-version=2022-09-01")
+    check["operationOptions"] = "DisableAsyncPattern"
+    check["runAfter"] = {"delete_pilot_group": ["Succeeded", "Failed", "TimedOut"]}
     self_delete = action("DELETE", watchdog_group_id + "?api-version=2022-09-01")
-    self_delete["runAfter"] = {"delete_pilot_group": ["Succeeded"]}
+    self_delete["runAfter"] = {}
+    gated_self_delete = {"type": "If",
+        "expression": "@equals(actions('check_pilot_absent')?['outputs']?['statusCode'], 404)",
+        "actions": {"delete_watchdog_group": self_delete}, "else": {"actions": {}},
+        "runAfter": {"check_pilot_absent": ["Succeeded", "Failed"]}}
     return {"$schema": "https://schema.management.azure.com/schemas/2016-06-01/Microsoft.Logic.json#",
         "contentVersion": "1.0.0.0", "parameters": {"deadlineUtc": {"type": "String"}},
         "triggers": {"every_minute": {"type": "Recurrence",
             "recurrence": {"frequency": "Minute", "interval": 1},
+            "runtimeConfiguration": {"concurrency": {"runs": 1}},
             "conditions": ["@greaterOrEquals(ticks(utcNow()), ticks(parameters('deadlineUtc')))" ]}},
         "actions": {"deallocate_after_deadline": deallocate, "delete_pilot_group": delete,
-                    "delete_watchdog_group": self_delete},
+                    "check_pilot_absent": check,
+                    "delete_watchdog_if_pilot_absent": gated_self_delete},
         "outputs": {}}
 
 
