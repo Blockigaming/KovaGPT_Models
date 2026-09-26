@@ -1,5 +1,27 @@
 # Versioned KovaGPT mode selection bridge
 
+## Current v2 source contract (2026-09-26)
+
+The active selection schema is `kova-models.v2`; the v1 design notes below are
+historical. Current Chat selects `chat:{cosmo|orion}:{light|medium|high|extra-high|max|ultra}`;
+current Work selects the same six efforts for Cosmo, Orion and Nova. Free has
+Cosmo Light Chat and no Work, Plus has six Chat and all 18 Work choices, and
+Pro has 12 Chat and all 18 Work choices. Free Thinking is superseded. Auto is
+a classifier over entitled Chat routes, never a separately deployed model.
+
+`router.entitlements` now loads the same hash-pinned v3 policy accepted by
+`release.current_product_policy`; a changed entitlement file fails on runtime
+import. The existing exact server grant remains necessary at selection, local
+job creation and every worker stage. Synthetic integration tests check every
+canonical route and tier through selection and local job admission, plus
+representative Free Chat, Plus Work Ultra and Pro Chat Ultra execution. These
+checks use local fixtures, not an authenticated application request, browser,
+durable production job store, customer usage balance or live model. A36 and
+the broader A24/A26/A30/A31/A39/A40 gates remain open. This source change
+does not enable deployment, billing, GPU work or Phase B.
+
+## Historical v1 design record
+
 `router/application.py` translates the new, explicitly versioned selection contract
 into the existing Kova route policy. This is not application startup wiring or a
 production cutover; no application files, stored chats or subscriptions are changed.

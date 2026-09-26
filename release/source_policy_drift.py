@@ -7,6 +7,9 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 ARCHIVED = (
@@ -32,6 +35,10 @@ CURRENT_BENCHMARK_ASSERTION = (
 )
 APPROVED_RUNTIME_IDENTITY_PATH = "prompts/kova-identity.v3.txt"
 APPROVED_RUNTIME_IDENTITY_SHA256 = "ed1b503f947cabc6a7c24a9395bd63b9eff2dd55d57570a0d5a8fd51df3c5bc8"
+# The runtime entitlement import can resolve a module cached from the calling
+# checkout. Pin the inspected loader's complete source independently so an
+# alternate root cannot pass with a broken or disabled policy digest check.
+CURRENT_POLICY_LOADER_SHA256 = "d94da7ebe4bc355ee25235c793d4f3f13ea7f934db9d3f879c88253f6dd47b40"
 IDENTITY_RUNTIME_CALLERS = {
     "core/adapter.py": ("IDENTITY", "build_core_plan"),
     "ultra/orchestrator.py": ("IDENTITY", "build_ultra_plan"),
@@ -65,13 +72,39 @@ def _policy_routes(policy: dict, surface: str, tier: str) -> frozenset[str]:
 
 
 def _runtime_entitlements(root: Path):
-    path = root / "router/entitlements.py"
-    spec = importlib.util.spec_from_file_location("_kova_source_policy_runtime_entitlements", path)
-    if spec is None or spec.loader is None:
-        raise ValueError("runtime_entitlements_unloadable")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.CHAT_ALLOWED_BY_TIER, module.WORK_ALLOWED_BY_TIER
+    try:
+        policy_loader = (root / "release/current_product_policy.py").read_bytes()
+    except OSError as error:
+        raise ValueError("runtime_policy_loader_unavailable") from error
+    if hashlib.sha256(policy_loader).hexdigest() != CURRENT_POLICY_LOADER_SHA256:
+        raise ValueError("runtime_policy_loader_drift")
+    # Inspect the entire import graph from the target checkout, not modules
+    # already cached by the calling process. -I ignores ambient PYTHONPATH;
+    # a fresh bytecode cache path avoids stale .pyc files in a copied tree.
+    code = (
+        "import json, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from router.entitlements import CHAT_ALLOWED_BY_TIER, WORK_ALLOWED_BY_TIER\n"
+        "print(json.dumps({'chat': {k: sorted(v) for k, v in CHAT_ALLOWED_BY_TIER.items()}, "
+        "'work': {k: sorted(v) for k, v in WORK_ALLOWED_BY_TIER.items()}}))\n"
+    )
+    try:
+        with tempfile.TemporaryDirectory(prefix="kova-policy-check-") as cache:
+            result = subprocess.run(
+                [sys.executable, "-I", "-B", "-X", f"pycache_prefix={cache}",
+                 "-c", code, str(root.resolve())],
+                capture_output=True, text=True, check=True, timeout=10,
+            )
+        value = json.loads(result.stdout, object_pairs_hook=_unique)
+        if set(value) != {"chat", "work"}:
+            raise ValueError("invalid runtime entitlement result")
+        return value["chat"], value["work"]
+    except subprocess.CalledProcessError as error:
+        if "current product policy rejected" in error.stderr:
+            raise ValueError("current product policy rejected") from None
+        raise ValueError("runtime_entitlements_unloadable") from None
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, KeyError):
+        raise ValueError("runtime_entitlements_unloadable") from None
 
 
 def _runtime_identity(root: Path) -> None:

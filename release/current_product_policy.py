@@ -27,9 +27,10 @@ def _canonical_digest(value) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def load_policy():
+def load_policy(path: Path | None = None):
     try:
-        value = load_json(POLICY_PATH, maximum_bytes=MAX_POLICY_BYTES)
+        value = load_json(POLICY_PATH if path is None else path,
+                          maximum_bytes=MAX_POLICY_BYTES)
         if _canonical_digest(value) != CANONICAL_POLICY_SHA256:
             raise CurrentPolicyError("current product policy rejected")
         return value
