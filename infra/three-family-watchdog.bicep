@@ -49,6 +49,11 @@ resource workflow 'Microsoft.Logic/workflows@2019-05-01' = if (provisionWatchdog
             frequency: 'Minute'
             interval: 1
           }
+          runtimeConfiguration: {
+            concurrency: {
+              runs: 1
+            }
+          }
           conditions: [
             '@greaterOrEquals(ticks(utcNow()), ticks(parameters(\'deadlineUtc\')))'
           ]
@@ -85,18 +90,52 @@ resource workflow 'Microsoft.Logic/workflows@2019-05-01' = if (provisionWatchdog
             ]
           }
         }
-        delete_watchdog_group: {
+        check_pilot_absent: {
+          // ARM may accept DELETE with HTTP 202 while resources still exist.
+          // A 404 on this exact group is the only self-cleanup gate.
           type: 'Http'
+          operationOptions: 'DisableAsyncPattern'
           inputs: {
-            method: 'DELETE'
-            uri: '${managementEndpoint}${substring(resourceGroup().id, 1)}?api-version=2022-09-01'
+            method: 'GET'
+            uri: '${managementEndpoint}subscriptions/${subscriptionId}/resourceGroups/${pilotResourceGroupName}?api-version=2022-09-01'
             authentication: {
               type: 'ManagedServiceIdentity'
               audience: managementEndpoint
             }
           }
           runAfter: {
-            delete_pilot_group: ['Succeeded']
+            delete_pilot_group: [
+              'Succeeded'
+              'Failed'
+              'TimedOut'
+            ]
+          }
+        }
+        delete_watchdog_if_pilot_absent: {
+          type: 'If'
+          expression: '@equals(actions(\'check_pilot_absent\')?[\'outputs\']?[\'statusCode\'], 404)'
+          actions: {
+            delete_watchdog_group: {
+              type: 'Http'
+              inputs: {
+                method: 'DELETE'
+                uri: '${managementEndpoint}${substring(resourceGroup().id, 1)}?api-version=2022-09-01'
+                authentication: {
+                  type: 'ManagedServiceIdentity'
+                  audience: managementEndpoint
+                }
+              }
+              runAfter: {}
+            }
+          }
+          else: {
+            actions: {}
+          }
+          runAfter: {
+            check_pilot_absent: [
+              'Succeeded'
+              'Failed'
+            ]
           }
         }
       }

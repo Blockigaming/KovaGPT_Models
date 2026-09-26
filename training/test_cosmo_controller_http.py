@@ -102,7 +102,7 @@ class HttpControllerTests(unittest.TestCase):
             with self.assertRaises((ValueError, OSError)):
                 http.private_file(protected / 'alias', self.f.quote_fixture.root)
 
-    def test_https_post_returns_committed_envelope_then_rejects_retry(self):
+    def test_https_post_returns_same_committed_envelope_on_exact_retry(self):
         result, raw = self.call()
         self.assertEqual(result[0], '200 OK')
         self.assertEqual(result[1]['Cache-Control'], 'no-store')
@@ -110,7 +110,10 @@ class HttpControllerTests(unittest.TestCase):
         self.f.ledger.public_key.verify(bytes.fromhex(envelope['signature']),
                                        authority.canonical(envelope['payload']))
         self.assertEqual(self.f.ledger.replay(self.f.f.io.body)[0]['sequence'], 3)
-        self.assertEqual(self.call()[0][0], '403 Forbidden')
+        status, retried = self.call()
+        self.assertEqual(status[0], '200 OK')
+        self.assertEqual(retried, raw)
+        self.assertEqual(self.f.ledger.current_state()['sequence'], 3)
         self.assertNotIn(self.f.token.encode(), raw)
 
     def test_startup_rejects_interpreter_missing_or_changed_auth_packages_before_keys(self):
@@ -154,13 +157,14 @@ class HttpControllerTests(unittest.TestCase):
                 self.assertEqual(result[0], '403 Forbidden')
         self.app.issuer.issue.assert_not_called()
 
-    def test_uncertain_commit_error_is_sanitized_and_not_retried(self):
+    def test_uncertain_commit_error_is_sanitized_and_exact_retry_recovers(self):
         self.f.f.io.lose_append_response = True
         result, raw = self.call()
         self.assertEqual(result[0], '403 Forbidden')
         self.assertEqual(raw, b'{"error":"grant_request_rejected"}')
         self.assertEqual(self.f.ledger.replay(self.f.f.io.body)[0]['sequence'], 3)
-        self.assertEqual(self.call()[0][0], '403 Forbidden')
+        self.assertEqual(self.call()[0][0], '200 OK')
+        self.assertEqual(self.f.ledger.current_state()['sequence'], 3)
 
 
 if __name__ == '__main__':

@@ -115,15 +115,24 @@ def watchdog_definition(vm_id, pilot_group_id, watchdog_group_id):
     deallocate["runAfter"] = {}
     delete = action("DELETE", pilot_group_id + "?api-version=2022-09-01")
     delete["runAfter"] = {"deallocate_after_deadline": ["Succeeded", "Failed", "TimedOut"]}
+    check = action("GET", pilot_group_id + "?api-version=2022-09-01")
+    check["operationOptions"] = "DisableAsyncPattern"
+    check["runAfter"] = {"delete_pilot_group": ["Succeeded", "Failed", "TimedOut"]}
     self_delete = action("DELETE", watchdog_group_id + "?api-version=2022-09-01")
-    self_delete["runAfter"] = {"delete_pilot_group": ["Succeeded"]}
+    self_delete["runAfter"] = {}
+    gated_self_delete = {"type": "If",
+        "expression": "@equals(actions('check_pilot_absent')?['outputs']?['statusCode'], 404)",
+        "actions": {"delete_watchdog_group": self_delete}, "else": {"actions": {}},
+        "runAfter": {"check_pilot_absent": ["Succeeded", "Failed"]}}
     return {"$schema": "https://schema.management.azure.com/schemas/2016-06-01/Microsoft.Logic.json#",
         "contentVersion": "1.0.0.0", "parameters": {"deadlineUtc": {"type": "String"}},
         "triggers": {"every_minute": {"type": "Recurrence",
             "recurrence": {"frequency": "Minute", "interval": 1},
+            "runtimeConfiguration": {"concurrency": {"runs": 1}},
             "conditions": ["@greaterOrEquals(ticks(utcNow()), ticks(parameters('deadlineUtc')))" ]}},
         "actions": {"deallocate_after_deadline": deallocate, "delete_pilot_group": delete,
-                    "delete_watchdog_group": self_delete},
+                    "check_pilot_absent": check,
+                    "delete_watchdog_if_pilot_absent": gated_self_delete},
         "outputs": {}}
 
 
@@ -346,6 +355,34 @@ class AzureRequestVerifier:
              subnet["natGateway"]["id"] == network["nat_gateway_id"] and
              subnet["networkSecurityGroup"]["id"] == network["network_security_group_id"],
              "subnet networking changed")
+        expected_ip = network["vm_nic_id"] + "/ipConfigurations/private"
+        attachments = subnet.get("ipConfigurations")
+        # Accept only properties in the reviewed 2024-05-01 subnet graph.
+        # A new ARM field must fail closed until its deletion implications are
+        # reviewed; foreign resources can refer to this subnet from elsewhere.
+        empty_properties = {
+            "addressPrefixes", "applicationGatewayIPConfigurations", "delegations",
+            "ipAllocations", "ipamPoolPrefixAllocations", "ipConfigurationProfiles",
+            "privateEndpoints", "resourceNavigationLinks", "serviceAssociationLinks",
+            "serviceEndpointPolicies", "serviceEndpoints",
+        }
+        expected_properties = {
+            "addressPrefix", "defaultOutboundAccess", "natGateway",
+            "networkSecurityGroup", "ipConfigurations", "provisioningState",
+            "privateEndpointNetworkPolicies", "privateLinkServiceNetworkPolicies",
+            "routeTable", *empty_properties,
+        }
+        need(type(attachments) is list and len(attachments) == 1 and
+             type(attachments[0]) is dict and
+             attachments[0].get("id", "").casefold() == expected_ip.casefold() and
+             set(subnet) <= expected_properties and
+             subnet.get("addressPrefix") == "10.91.1.0/24" and
+             subnet.get("provisioningState") == "Succeeded" and
+             subnet.get("privateEndpointNetworkPolicies") == "Disabled" and
+             subnet.get("privateLinkServiceNetworkPolicies", "Enabled") == "Enabled" and
+             not subnet.get("routeTable") and
+             all(subnet.get(field) in (None, []) for field in empty_properties),
+             "pilot subnet has an unreviewed attachment")
         nat = self.resource(network["nat_gateway_id"], "2024-05-01")
         ip = self.resource(network["nat_gateway_public_ip_id"], "2024-05-01")
         need(nat["sku"]["name"] == ip["sku"]["name"] == "Standard" and

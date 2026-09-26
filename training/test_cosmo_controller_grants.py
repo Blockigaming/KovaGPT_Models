@@ -27,6 +27,7 @@ class GrantIssuerTests(unittest.TestCase):
         self.f.setUp()
         self.f.key = self.quote_fixture.key
         self.ledger = self.f.make()
+        self.quote_fixture.payload["evidence_scope"]["ledger_context_sha256"] = self.ledger.context_sha256
         self.quote = self.quote_fixture.signed()
         self.admission = self.quote_fixture.check()
         self.f.cost["quote_sha256"] = self.admission["quote_sha256"]
@@ -105,13 +106,18 @@ class GrantIssuerTests(unittest.TestCase):
                     "sku": "server", "exactVersion": "24.04.202609040"}}}
         with patch.object(authority, "_executing_azure_identity", return_value=(
             self.token, self.token_digest, "2026-09-24T14:30:00Z")), \
-             patch.object(authority, "_load_bearer_token", return_value="synthetic"):
+             patch.object(authority, "_load_bearer_token", return_value="synthetic"), \
+             patch.object(authority, "_https_transport",
+                          side_effect=lambda endpoint, token, request, **kwargs:
+                          self.issuer.issue(request)) as http:
             received = client.acquire_training_grant(quote=self.quote,
                 source_commit=self.f.context["source_commit"], subscription_id=self.quote_fixture.subscription,
                 lifecycle_id=self.request["lifecycle_id"], preflight_ledger_sequence=2,
                 azure_instance=self.vm, runtime_evidence=self.runtime_path, now=self.f.now,
                 root=self.quote_fixture.root, instance_transport=lambda _: compute,
-                transport=lambda _endpoint, _bearer, request: self.issuer.issue(request))
+                transport=None)
+        self.assertEqual(http.call_args.kwargs["timeout"],
+                         client.MAX_GRANT_RESPONSE_DELAY.total_seconds())
         self.assertEqual(received["training_runs_consumed"], 1)
         self.assertNotIn(self.token.encode(), self.f.io.body)
         event = self.ledger.replay(self.f.io.body)[0]["events"][-1]
@@ -126,6 +132,28 @@ class GrantIssuerTests(unittest.TestCase):
                 self.issuer.issue(self.request)
         self.assertEqual(self.f.io.body, before)
 
+    def test_quote_for_shorter_retention_or_other_archive_never_consumes_grant(self):
+        before = self.f.io.body
+        for change in ("retention_days", "archive_uri", "archive_retention_days",
+                       "artifact_container", "ledger_context_sha256"):
+            scoped = deepcopy(self.quote_fixture.payload)
+            scope = scoped["evidence_scope"]
+            if change == "retention_days":
+                scope["ledger_retention_days"] = 2
+            elif change == "archive_uri":
+                scope["external_archive"]["uri"] = "https://other.example.test/ledger"
+            elif change == "archive_retention_days":
+                scope["external_archive"]["retention_days"] = 1
+            elif change == "artifact_container":
+                scope["artifact_container"] = "other-adapters"
+            else:
+                scope["ledger_context_sha256"] = "b" * 64
+            self.quote_fixture.signed(scoped)
+            with self.subTest(change=change), self.assertRaisesRegex(
+                    LedgerRejected, "pricing scope"):
+                self.issuer.issue(self.request)
+        self.assertEqual(self.f.io.body, before)
+
     def test_guest_cannot_change_source_quote_vm_or_scope(self):
         before = self.f.io.body
         for key, value in (("source_commit", "e" * 40), ("quote_sha256", "e" * 64),
@@ -136,18 +164,167 @@ class GrantIssuerTests(unittest.TestCase):
         self.assertEqual(self.f.io.body, before)
 
     def test_duplicate_nonce_or_new_nonce_cannot_issue_second_grant(self):
-        self.issuer.issue(self.request)
-        for nonce in (self.request["request_nonce"], "b" * 64):
-            with self.assertRaises(LedgerRejected):
-                self.issuer.issue({**self.request, "request_nonce": nonce})
+        first = self.issuer.issue(self.request)
+        self.assertEqual(self.issuer.issue(self.request), first)
+        self.assertEqual(self.ledger.current_state()["sequence"], 3)
+        for key, value in (("request_nonce", "b" * 64),
+                           ("azure_instance_identity_token", "different.token.value")):
+            with self.subTest(key=key), self.assertRaises(LedgerRejected):
+                self.issuer.issue({**self.request, key: value})
 
     def test_lost_commit_response_leaves_slot_consumed(self):
         self.f.io.lose_append_response = True
         with self.assertRaises(LedgerRejected):
             self.issuer.issue(self.request)
+        self.assertEqual(self.ledger.current_state()["sequence"], 3)
+        recovered = self.issuer.issue(self.request)
+        self.assertEqual(recovered["payload"]["grant_id"],
+                         self.ledger.current_state()["events"][-1]["response_envelope"]["payload"]["grant_id"])
+        self.assertEqual(self.ledger.current_state()["sequence"], 3)
+
+    def test_guest_recovers_same_signed_grant_after_uncertain_commit(self):
+        self.f.io.lose_append_response = True
+        compute = {"resourceId": self.vm["resource_id"], "vmId": self.vm["vm_id"],
+            "location": "eastus", "vmSize": launch.SKU, "storageProfile": {
+                "imageReference": {"publisher": "Canonical", "offer": "ubuntu-24_04-lts",
+                    "sku": "server", "exactVersion": "24.04.202609040"}}}
+        calls = []
+        def uncertain(_endpoint, _token, request):
+            calls.append(request)
+            try:
+                return self.issuer.issue(request)
+            except LedgerRejected as exc:
+                raise authority.AuthorityError("synthetic lost response") from exc
+        with patch.object(authority, "_executing_azure_identity", return_value=(
+                self.token, self.token_digest, "2026-09-24T14:30:00Z")), \
+             patch.object(authority, "_load_bearer_token", return_value="synthetic"):
+            received = client.acquire_training_grant(quote=self.quote,
+                source_commit=self.f.context["source_commit"],
+                subscription_id=self.quote_fixture.subscription,
+                lifecycle_id=self.request["lifecycle_id"], preflight_ledger_sequence=2,
+                azure_instance=self.vm, runtime_evidence=self.runtime_path,
+                now=self.f.now, root=self.quote_fixture.root,
+                instance_transport=lambda _: compute, transport=uncertain)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0], calls[1])
+        self.assertEqual(received["training_runs_consumed"], 1)
+        self.assertEqual(self.ledger.current_state()["sequence"], 3)
         self.assertEqual(self.ledger.replay(self.f.io.body)[0]["sequence"], 3)
         with self.assertRaises(LedgerRejected):
             self.issuer.issue(self.request)
+
+    def test_fast_lost_response_keeps_full_recovery_window(self):
+        self.f.io.lose_append_response = True
+        compute = {"resourceId": self.vm["resource_id"], "vmId": self.vm["vm_id"],
+            "location": "eastus", "vmSize": launch.SKU, "storageProfile": {
+                "imageReference": {"publisher": "Canonical", "offer": "ubuntu-24_04-lts",
+                    "sku": "server", "exactVersion": "24.04.202609040"}}}
+        elapsed = [0.0]
+        calls = []
+        def advance(seconds):
+            elapsed[0] += seconds
+            self.f.now += timedelta(seconds=seconds)
+        def uncertain(_endpoint, _token, request):
+            calls.append(request)
+            if len(calls) == 1:
+                with self.assertRaises(LedgerRejected):
+                    self.issuer.issue(request)
+            if elapsed[0] < 120:
+                raise authority.AuthorityError("connection unavailable")
+            return self.issuer.issue(request)
+        with patch.object(authority, "_executing_azure_identity", return_value=(
+                self.token, self.token_digest, "2026-09-24T14:30:00Z")), \
+             patch.object(authority, "_load_bearer_token", return_value="synthetic"), \
+             patch.object(client.time, "monotonic", side_effect=lambda: elapsed[0]), \
+             patch.object(client.time, "sleep", side_effect=advance):
+            received = client.acquire_training_grant(quote=self.quote,
+                source_commit=self.f.context["source_commit"],
+                subscription_id=self.quote_fixture.subscription,
+                lifecycle_id=self.request["lifecycle_id"], preflight_ledger_sequence=2,
+                azure_instance=self.vm, runtime_evidence=self.runtime_path,
+                now=self.f.now, response_now=self.f.now + timedelta(seconds=120),
+                root=self.quote_fixture.root, instance_transport=lambda _: compute,
+                transport=uncertain)
+        self.assertEqual(elapsed[0], 120)
+        self.assertGreater(len(calls), 2)
+        self.assertTrue(all(request == calls[0] for request in calls))
+        self.assertEqual(received["training_runs_consumed"], 1)
+        self.assertEqual(self.ledger.current_state()["sequence"], 3)
+
+    def test_request_timestamp_is_refreshed_after_slow_presend_verification(self):
+        initial = self.f.now
+        delayed = initial + timedelta(seconds=12)
+        compute = {"resourceId": self.vm["resource_id"], "vmId": self.vm["vm_id"],
+            "location": "eastus", "vmSize": launch.SKU, "storageProfile": {
+                "imageReference": {"publisher": "Canonical", "offer": "ubuntu-24_04-lts",
+                    "sku": "server", "exactVersion": "24.04.202609040"}}}
+        def slow_imds(_):
+            self.f.now = delayed
+            return compute
+        requests = []
+        self.f.io.lose_append_response = True
+        def uncertain(_endpoint, _token, request):
+            requests.append(request)
+            if len(requests) == 1:
+                with self.assertRaises(LedgerRejected):
+                    self.issuer.issue(request)
+                raise authority.AuthorityError("synthetic lost response")
+            return self.issuer.issue(request)
+        with patch.object(client, "datetime") as fake_datetime, \
+             patch.object(launch, "assess_signed_quote", return_value=self.admission), \
+             patch.object(authority, "_executing_azure_identity", return_value=(
+                 self.token, self.token_digest, "2026-09-24T14:30:00Z")), \
+             patch.object(authority, "_load_bearer_token", return_value="synthetic"):
+            fake_datetime.now.side_effect = [initial, delayed]
+            received = client.acquire_training_grant(quote=self.quote,
+                source_commit=self.f.context["source_commit"],
+                subscription_id=self.quote_fixture.subscription,
+                lifecycle_id=self.request["lifecycle_id"], preflight_ledger_sequence=2,
+                azure_instance=self.vm, runtime_evidence=self.runtime_path,
+                response_now=delayed, root=self.quote_fixture.root,
+                instance_transport=slow_imds, transport=uncertain)
+        self.assertEqual(fake_datetime.now.call_count, 2)
+        self.assertEqual(requests[0]["requested_at_utc"], delayed.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        self.assertEqual(requests[0], requests[1])
+        self.assertEqual(received["training_runs_consumed"], 1)
+
+    def test_recovery_retries_in_last_five_seconds(self):
+        self.f.io.lose_append_response = True
+        compute = {"resourceId": self.vm["resource_id"], "vmId": self.vm["vm_id"],
+            "location": "eastus", "vmSize": launch.SKU, "storageProfile": {
+                "imageReference": {"publisher": "Canonical", "offer": "ubuntu-24_04-lts",
+                    "sku": "server", "exactVersion": "24.04.202609040"}}}
+        elapsed = [0.0]
+        calls = []
+        def advance(seconds):
+            elapsed[0] += seconds
+            self.f.now += timedelta(seconds=seconds)
+        def uncertain(_endpoint, _token, request):
+            calls.append((elapsed[0], request))
+            if len(calls) == 1:
+                with self.assertRaises(LedgerRejected):
+                    self.issuer.issue(request)
+            if elapsed[0] < 162:
+                raise authority.AuthorityError("connection unavailable")
+            return self.issuer.issue(request)
+        with patch.object(authority, "_executing_azure_identity", return_value=(
+                self.token, self.token_digest, "2026-09-24T14:30:00Z")), \
+             patch.object(authority, "_load_bearer_token", return_value="synthetic"), \
+             patch.object(client.time, "monotonic", side_effect=lambda: elapsed[0]), \
+             patch.object(client.time, "sleep", side_effect=advance):
+            received = client.acquire_training_grant(quote=self.quote,
+                source_commit=self.f.context["source_commit"],
+                subscription_id=self.quote_fixture.subscription,
+                lifecycle_id=self.request["lifecycle_id"], preflight_ledger_sequence=2,
+                azure_instance=self.vm, runtime_evidence=self.runtime_path,
+                now=self.f.now, response_now=self.f.now + timedelta(seconds=163),
+                root=self.quote_fixture.root, instance_transport=lambda _: compute,
+                transport=uncertain)
+        self.assertGreaterEqual(elapsed[0], 162)
+        self.assertLess(elapsed[0], client.MAX_GRANT_RECOVERY_DELAY.total_seconds())
+        self.assertTrue(all(request == calls[0][1] for _, request in calls))
+        self.assertEqual(received["training_runs_consumed"], 1)
+        self.assertEqual(self.ledger.current_state()["sequence"], 3)
 
     def test_slow_commit_returns_no_grant_and_still_consumes_slot(self):
         original = self.ledger.transport

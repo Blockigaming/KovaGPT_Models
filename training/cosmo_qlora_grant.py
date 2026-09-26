@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import time
 
 from training import cosmo_lifecycle_authority as authority
 from training import cosmo_qlora_launch as launch
@@ -24,6 +25,7 @@ class GrantRejected(ValueError):
 
 MIN_GRANT_LEAD = timedelta(minutes=45)
 MAX_GRANT_RESPONSE_DELAY = timedelta(seconds=60)
+MAX_GRANT_RECOVERY_DELAY = timedelta(seconds=165)
 MAX_CLOCK_SKEW = timedelta(seconds=2)
 
 
@@ -160,7 +162,7 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
              "VM is in a different subscription")
         deadline = authority.timestamp(admission["allocation_deadline_utc"])
         cleanup_trigger = authority.timestamp(admission["watchdog_cleanup_trigger_utc"])
-        need(current + MIN_GRANT_LEAD + MAX_GRANT_RESPONSE_DELAY <=
+        need(current + MIN_GRANT_LEAD + MAX_GRANT_RECOVERY_DELAY <=
              cleanup_trigger <= deadline <=
              current + timedelta(seconds=launch.MAX_ALLOCATION_SECONDS),
              "insufficient time for one training grant before watchdog cleanup")
@@ -179,6 +181,14 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
         identity_token, token_sha256, token_expiry = authority._executing_azure_identity(
             instance, trust["azure_managed_identity_token_audience"], current,
             transport=instance_transport)
+        token_path = Path(os.environ.get(authority.TOKEN_ENV, ""))
+        token = authority._load_bearer_token(token_path, repository_root=root)
+        # Start the retry clock before capturing the timestamp enforced by the
+        # controller. IMDS, quote and credential work must not eat recovery time.
+        started = time.monotonic()
+        request_time = current if now is not None else datetime.now(timezone.utc)
+        need(request_time + MIN_GRANT_LEAD + MAX_GRANT_RECOVERY_DELAY <= cleanup_trigger,
+             "insufficient time for one training grant before watchdog cleanup")
         nonce = secrets.token_hex(32)
         request = {
             "schema_version": 1, "kind": "kova_cosmo_qlora_training_grant_request",
@@ -196,17 +206,44 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
             "watchdog_cleanup_trigger_utc": admission["watchdog_cleanup_trigger_utc"],
             "training_runs_limit": 1, "all_in_ceiling_usd": "3.3000",
             "request_nonce": nonce,
-            "requested_at_utc": current.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "requested_at_utc": request_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
-        token_path = Path(os.environ.get(authority.TOKEN_ENV, ""))
-        token = authority._load_bearer_token(token_path, repository_root=root)
-        response = (transport or authority._https_transport)(trust["endpoint"], token, request)
+        def send(timeout):
+            if transport is None:
+                return authority._https_transport(
+                    trust["endpoint"], token, request, timeout=timeout)
+            return transport(trust["endpoint"], token, request)
+
+        recovered = False
+        try:
+            response = send(MAX_GRANT_RESPONSE_DELAY.total_seconds())
+        except authority.AuthorityError:
+            # Retry the exact nonce and signed request only. The controller
+            # can replay the original envelope but cannot grant a second run.
+            recovered = True
+            # The signed timestamp has whole-second precision. End retries
+            # before that second's server-side recovery window expires.
+            limit = (started + MAX_GRANT_RECOVERY_DELAY.total_seconds() -
+                     request_time.microsecond / 1_000_000)
+            while True:
+                remaining = limit - time.monotonic()
+                if remaining <= 0:
+                    raise
+                try:
+                    response = send(min(10, remaining))
+                    break
+                except authority.AuthorityError:
+                    remaining = limit - time.monotonic()
+                    if remaining > 0:
+                        # Leave time for another POST even in the final five
+                        # seconds of the controller's replay window.
+                        time.sleep(min(5, remaining / 2))
         payload, digest = authority.verify_envelope(
             response, expected_kind="kova_cosmo_qlora_training_grant", root=root)
         received = response_now or (now if now is not None else datetime.now(timezone.utc))
         need(received.tzinfo is not None and
-             current <= received.astimezone(timezone.utc) <=
-             current + MAX_GRANT_RESPONSE_DELAY,
+             request_time <= received.astimezone(timezone.utc) <=
+             request_time + (MAX_GRANT_RECOVERY_DELAY if recovered else MAX_GRANT_RESPONSE_DELAY),
              "grant response clock or elapsed time invalid")
         received = received.astimezone(timezone.utc)
         need(received + MIN_GRANT_LEAD <= cleanup_trigger,

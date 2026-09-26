@@ -143,6 +143,7 @@ class ControllerLedger:
         self.context = deepcopy(context)
         need(set(context) == {"source_commit", "lifecycle", "storage_resource_group_id",
             "storage_account", "container", "blob", "retention_days",
+            "artifact_container", "external_archive",
             "not_before_utc", "grant_deadline_utc"}, "controller context shape mismatch")
         need(type(context["source_commit"]) is str and
              re.fullmatch(r"[0-9a-f]{40}", context["source_commit"]), "source commit required")
@@ -163,8 +164,24 @@ class ControllerLedger:
             need(type(context[field]) is str and re.fullmatch(pattern, context[field]),
                  "invalid ledger " + field)
         need("--" not in context["container"], "invalid container name")
+        need(type(context["artifact_container"]) is str and
+             re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{1,61})[a-z0-9]", context["artifact_container"]) and
+             "--" not in context["artifact_container"] and
+             context["artifact_container"] != context["container"],
+             "invalid artifact container name")
         need(type(context["retention_days"]) is int and 1 <= context["retention_days"] <= 90,
              "explicit bounded ledger retention required")
+        archive = context["external_archive"]
+        need(type(archive) is dict and set(archive) == {"uri", "retention_days", "maximum_bytes"},
+             "external archive scope required")
+        endpoint = urlsplit(archive["uri"]) if type(archive["uri"]) is str else None
+        need(endpoint is not None and endpoint.scheme == "https" and endpoint.hostname and
+             endpoint.hostname != context["storage_account"] + ".blob.core.windows.net" and
+             endpoint.path and not endpoint.query and not endpoint.fragment and
+             not endpoint.username and not endpoint.password and
+             type(archive["retention_days"]) is int and 1 <= archive["retention_days"] <= 365 and
+             type(archive["maximum_bytes"]) is int and archive["maximum_bytes"] == MAX_BYTES,
+             "invalid external archive scope")
         self.starts = authority.timestamp(context["not_before_utc"])
         self.deadline = authority.timestamp(context["grant_deadline_utc"])
         need(0 < (self.deadline - self.starts).total_seconds() <= 7200,
@@ -480,7 +497,8 @@ class ControllerLedger:
 
         observed = signed_payload(export, {"kind", "context_sha256", "blob_url",
             "archive_sha256", "archive_bytes", "head_sha256", "ledger_sequence", "blob_etag",
-            "observed_at_utc", "immutable_archive_uri", "immutable_archive_version"},
+            "observed_at_utc", "immutable_archive_uri", "immutable_archive_version",
+            "archive_retention_days"},
             "kova_cosmo_ledger_archive_v1")
         export_time = authority.timestamp(observed["observed_at_utc"])
         archive_uri = observed["immutable_archive_uri"]
@@ -488,6 +506,9 @@ class ControllerLedger:
         archive_endpoint = urlsplit(archive_uri)
         need(observed["context_sha256"] == self.context_sha256 and
              observed["blob_url"] == self.blob_url and
+             archive_uri == self.context["external_archive"]["uri"] and
+             observed["archive_retention_days"] == self.context["external_archive"]["retention_days"] and
+             len(archive) <= self.context["external_archive"]["maximum_bytes"] and
              observed["archive_sha256"] == hashlib.sha256(archive).hexdigest() and
              type(observed["archive_bytes"]) is int and observed["archive_bytes"] == len(archive) and
              observed["head_sha256"] == head_sha and

@@ -190,9 +190,17 @@ full charges remain prerequisites before storage deployment or a paid grant.
 **Paid launch remains blocked.** Source integration is implemented, but the
 TLS host, live immutable storage, isolated credentials and measured all-in
 cost/deletion bound remain unprovisioned or unverified. The watchdog template
-now deletes its own dedicated group after successful pilot-group deletion,
-with Contributor scoped only to those two groups. The verifier checks that
-exact sequence and both roles. Self-deletion has not been rehearsed in Azure.
+serializes its minute-triggered runs. After requesting pilot-group deletion,
+it makes a synchronous GET for the exact pilot group and requests its own
+dedicated group's deletion only if that GET returns HTTP 404. An HTTP 202
+acceptance, a still-present group, a timeout, or an unrelated GET failure
+cannot by itself start watchdog self-deletion. The verifier checks this exact
+action graph and both group-scoped Contributor roles. Azure documents that
+[HTTP 202 can precede completion](https://learn.microsoft.com/en-us/azure/connectors/connectors-native-http)
+and [resource deletion can be asynchronous](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/async-operations).
+The extra probe and any queued/retried runs belong in the complete signed cost
+quote. Self-deletion, 404 handling, absence of residual resources, and cleanup
+inside the priced window have not been rehearsed in Azure.
 Tests use real RSA/Ed25519 signatures and the real guest/issuer/HTTP logic with
 synthetic ARM resources; they do not prove Azure deployment or cleanup.
 The default ledger CLI makes zero provider calls and rejects `--execute`.
@@ -372,6 +380,22 @@ so this worksheet deliberately covers three intersected billing hours.
 
 The corrected **conditional** 90-minute reservation is therefore still
 **$0.7890 + $1.1500 + $1.2500 = $3.1890**, with $0.1110 below the owner ceiling.
+The signed launch quote now also requires explicit nonnegative upper bounds
+for controller runtime, controller registry/logs, protected evidence retention,
+external archive/receipts, and tax/other fees. Controller runtime and both
+durable evidence destinations require positive reserves; their sum is added
+to the conditional worksheet and rejected above $3.30. The synthetic test
+values are not account prices. No complete live quote exists yet, and the
+$0.1110 gap must cover every additional category for a 90-minute window.
+The signed quote now carries the exact ledger context hash, ledger retention
+days, adapter container, and external archive URI, retention days and 1 MiB
+maximum. The protected controller context fixes these values; the grant issuer
+rejects a quote for a shorter or different storage scope before consuming the
+single training grant. The preserver checks the adapter container against that
+context, and the offline terminal verifier checks the signed archive URI,
+retention assertion and size. The archive operator must still provide a real
+independently verified storage lock, destination and account-specific price;
+the signed assertion alone does not establish that a destination is provisioned.
 The four changed category reserves have the same combined total as before.
 Unlike the former worksheet, the known mandatory download floor now fits its
 own category, leaving **1,611,559,831 bytes** for all remaining NAT traffic.
@@ -434,6 +458,15 @@ capacity, establish account prices, or prove that the image boots the pinned
 CUDA 12.8 / bitsandbytes stack. No provider registration has been changed. A read-only subscription-wide
 management-lock inventory on 2026-09-25 returned zero locks and no next page;
 this does not replace the fresh per-grant check after future provisioning.
+
+On 2026-09-26, a read-only Azure portal check in the same subscription again
+showed `Microsoft.Network` and `Microsoft.Logic` as **NotRegistered**. The
+Compute quota view showed East US Standard NCASv3_T4 Family vCPUs at `0 of 4`
+and Total Regional vCPUs at `0 of 14`. The subscription resource list returned
+zero matches with the filter `Storage account`. This portal view is a dated
+prerequisite observation, not live capacity, complete inventory, a price quote
+or permission to register a provider or create storage.
+
 `what-if` may validate the proposed
 resource graph, but it does not reserve a GPU. Capacity and exact hardware
 identity can be confirmed only after an approved allocation.

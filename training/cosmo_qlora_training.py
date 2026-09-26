@@ -8,7 +8,7 @@ authority must be reviewed and tested before any paid run.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from importlib.metadata import PackageNotFoundError, version
 import json
 import os
@@ -28,18 +28,22 @@ ROOT = Path(__file__).resolve().parents[1]
 class TrainingRejected(ValueError):
     pass
 
+PRESERVATION_LEAD = timedelta(minutes=10)
+
 
 def need(value: bool, message: str) -> None:
     if not value:
         raise TrainingRejected(message)
 
 
-def require_before_cleanup(admission: dict, *, now: datetime | None = None) -> datetime:
+def require_before_cleanup(admission: dict, *, now: datetime | None = None,
+                           minimum_remaining: timedelta = timedelta(0)) -> datetime:
     """Keep grants and model work out of the watchdog's deletion window."""
     trigger = launch.authority.timestamp(admission["watchdog_cleanup_trigger_utc"])
     current = now or datetime.now(timezone.utc)
-    need(current.tzinfo is not None and current.astimezone(timezone.utc) < trigger,
-         "watchdog cleanup has started")
+    need(current.tzinfo is not None and minimum_remaining >= timedelta(0) and
+         current.astimezone(timezone.utc) + minimum_remaining < trigger,
+         "insufficient time before watchdog cleanup")
     return trigger
 
 
@@ -233,13 +237,15 @@ def execute(*, snapshot: Path, output: Path, quote: Path, subscription_id: str,
     # The independent watchdog starts deletion before the priced deadline even
     # if the guest freezes. This callback stops between optimizer steps.
     from transformers import TrainerCallback
-    cleanup_trigger = require_before_cleanup(admission)
+    cleanup_trigger = require_before_cleanup(
+        admission, minimum_remaining=timedelta(seconds=training["maximum_elapsed_seconds"]) +
+        PRESERVATION_LEAD)
     start = time.monotonic()
 
     class DeadlineCallback(TrainerCallback):
         def on_step_end(self, args, state, control, **kwargs):
             if (time.monotonic() - start >= training["maximum_elapsed_seconds"] or
-                    datetime.now(timezone.utc) >= cleanup_trigger):
+                    datetime.now(timezone.utc) + PRESERVATION_LEAD >= cleanup_trigger):
                 control.should_training_stop = True
             return control
 
@@ -249,15 +255,15 @@ def execute(*, snapshot: Path, output: Path, quote: Path, subscription_id: str,
                          train_dataset=Dataset.from_list(train),
                          eval_dataset=Dataset.from_list(validation),
                          callbacks=[DeadlineCallback()])
-    require_before_cleanup(admission)
+    require_before_cleanup(admission, minimum_remaining=PRESERVATION_LEAD)
     result = trainer.train()
     need(result.global_step == 7 and time.monotonic() - start <
          training["maximum_elapsed_seconds"] and
-         datetime.now(timezone.utc) < cleanup_trigger,
+         datetime.now(timezone.utc) + PRESERVATION_LEAD < cleanup_trigger,
          "training did not complete inside the approved limit")
-    require_before_cleanup(admission)
+    require_before_cleanup(admission, minimum_remaining=PRESERVATION_LEAD)
     trainer.model.save_pretrained(output / "adapter", safe_serialization=True)
-    require_before_cleanup(admission)
+    require_before_cleanup(admission, minimum_remaining=PRESERVATION_LEAD)
     preserved = preservation.preserve_adapter(adapter=output / "adapter",
         grant_payload=committed, root=ROOT)
     return {"status": "candidate_preserved_not_released", "source_commit": source_commit,

@@ -68,8 +68,12 @@ class AzureVerifierTests(unittest.TestCase):
             'provisioningState': 'Succeeded', 'diskState': 'Attached'},
             sku={'name': 'StandardSSD_LRS'}, managedBy=self.instance['resource_id'])
         put(n['vm_nic_id'], '2024-05-01', {'ipConfigurations': [{'properties': {'subnet': {'id': n['subnet_id']}}}]})
-        put(n['subnet_id'], '2024-05-01', {'defaultOutboundAccess': False,
-            'natGateway': {'id': n['nat_gateway_id']}, 'networkSecurityGroup': {'id': n['network_security_group_id']}})
+        put(n['subnet_id'], '2024-05-01', {'addressPrefix': '10.91.1.0/24',
+            'provisioningState': 'Succeeded', 'privateEndpointNetworkPolicies': 'Disabled',
+            'defaultOutboundAccess': False,
+            'natGateway': {'id': n['nat_gateway_id']},
+            'ipConfigurations': [{'id': n['vm_nic_id'] + '/ipConfigurations/private'}],
+            'networkSecurityGroup': {'id': n['network_security_group_id']}})
         put(n['nat_gateway_id'], '2024-05-01', {'publicIpAddresses': [{'id': n['nat_gateway_public_ip_id']}]}, sku={'name': 'Standard'})
         put(n['nat_gateway_public_ip_id'], '2024-05-01', {'publicIPAllocationMethod': 'Static'}, sku={'name': 'Standard'})
         self.extension_id = self.instance['resource_id'] + '/extensions/NvidiaGpuDriverLinux'
@@ -183,13 +187,26 @@ class AzureVerifierTests(unittest.TestCase):
             (nic, lambda d: d['properties']['ipConfigurations'][0]['properties'].update(publicIPAddress={'id': 'foreign'})),
             (subnet, lambda d: d['properties'].update(defaultOutboundAccess=True)),
             (subnet, lambda d: d['properties'].update(routeTable={'id': 'foreign'})),
+            (subnet, lambda d: d['properties']['ipConfigurations'].append(
+                {'id': '/subscriptions/other/resourceGroups/other/providers/Microsoft.Network/networkInterfaces/foreign/ipConfigurations/private'})),
+            (subnet, lambda d: d['properties'].update(serviceAssociationLinks=[{'id': 'foreign'}])),
+            (subnet, lambda d: d['properties'].update(resourceNavigationLinks=[{'id': 'foreign'}])),
+            (subnet, lambda d: d['properties'].update(serviceEndpointPolicies=[{'id': 'foreign'}])),
+            (subnet, lambda d: d['properties'].update(ipConfigurationProfiles=[{'id': 'foreign'}])),
+            (subnet, lambda d: d['properties'].update(ipAllocations=[{'id': 'foreign'}])),
+            (subnet, lambda d: d['properties'].update(serviceGateway={'id': 'foreign'})),
+            (subnet, lambda d: d['properties'].update(sharingScope='Tenant')),
             (nsg, lambda d: d['properties']['securityRules'][0]['properties'].update(destinationPortRange='*')),
             (watchdog, lambda d: d['properties'].update(state='Disabled')),
             (watchdog, lambda d: d['properties']['parameters']['deadlineUtc'].update(value='2026-09-24T16:00:00Z')),
             (watchdog, lambda d: d['properties']['definition']['actions']['delete_pilot_group']['inputs'].update(uri='https://management.azure.com/foreign')),
             (self.roles_url, lambda d: d.update(value=[])),
             (self.self_roles_url, lambda d: d.update(value=[])),
-            (watchdog, lambda d: d['properties']['definition']['actions'].pop('delete_watchdog_group')),
+            (watchdog, lambda d: d['properties']['definition']['actions'].pop('check_pilot_absent')),
+            (watchdog, lambda d: d['properties']['definition']['actions']['check_pilot_absent']['inputs'].update(method='DELETE')),
+            (watchdog, lambda d: d['properties']['definition']['actions']['check_pilot_absent'].pop('operationOptions')),
+            (watchdog, lambda d: d['properties']['definition']['actions']['delete_watchdog_if_pilot_absent'].update(expression='@equals(202, 202)')),
+            (watchdog, lambda d: d['properties']['definition']['triggers']['every_minute']['runtimeConfiguration']['concurrency'].update(runs=2)),
             (self.roles_url, lambda d: d.update(nextLink='https://management.azure.com/more')),
             (azure.ARM + self.network['nat_gateway_public_ip_id'] + '?api-version=2024-05-01',
              lambda d: d['properties'].update(ddosSettings={'protectionMode': 'Enabled'})),
