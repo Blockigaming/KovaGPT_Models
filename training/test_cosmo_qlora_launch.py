@@ -174,7 +174,8 @@ class LaunchTests(unittest.TestCase):
     def test_signed_evidence_scope_requires_bounded_storage_and_retention(self):
         for field, value in (("ledger_retention_days", 0),
                              ("ledger_context_sha256", "broken"),
-                             ("artifact_container", "Invalid")):
+                             ("artifact_container", "Invalid"),
+                             ("artifact_container", "cosmo--adapters")):
             payload = deepcopy(self.payload)
             payload["evidence_scope"][field] = value
             with self.subTest(field=field), self.assertRaisesRegex(

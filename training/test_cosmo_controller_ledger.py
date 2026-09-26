@@ -146,6 +146,12 @@ class ControllerLedgerTests(unittest.TestCase):
                 cleanup_public_key=self.verifier.public_key().public_bytes_raw(),
                 clock=lambda: self.now)
 
+    def test_artifact_container_must_be_a_valid_distinct_blob_container(self):
+        for name in ("cosmo--adapters", "Invalid", "cosmo42"):
+            with self.subTest(name=name), self.assertRaisesRegex(
+                    ledger.LedgerRejected, "invalid artifact container"):
+                self.make({**self.context, "artifact_container": name})
+
     def prepared(self):
         self.subject.initialize()
         self.subject.append(self.health, expected_sequence=0)

@@ -228,6 +228,7 @@ def assess_signed_quote(path: Path, *, source_commit: str, subscription_id: str,
          1 <= scope["ledger_retention_days"] <= 90 and
          type(scope["artifact_container"]) is str and
          re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{1,61})[a-z0-9]", scope["artifact_container"]) and
+         "--" not in scope["artifact_container"] and
          type(archive) is dict and set(archive) == {"uri", "retention_days", "maximum_bytes"} and
          type(archive["uri"]) is str and archive["uri"].startswith("https://") and
          type(archive["retention_days"]) is int and 1 <= archive["retention_days"] <= 365 and

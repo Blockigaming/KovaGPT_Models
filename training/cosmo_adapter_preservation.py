@@ -175,7 +175,8 @@ class AdapterPreserver:
     def __init__(self, *, ledger, artifact_container: str, signing_key: Ed25519PrivateKey,
                  token_for):
         need(type(artifact_container) is str and
-             re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{1,61})[a-z0-9]", artifact_container),
+             re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{1,61})[a-z0-9]", artifact_container) and
+             "--" not in artifact_container,
              "private adapter container required")
         need(isinstance(signing_key, Ed25519PrivateKey) and
              signing_key.public_key().public_bytes_raw() == ledger.preservation_key,

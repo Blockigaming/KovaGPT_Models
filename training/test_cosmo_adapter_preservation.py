@@ -125,6 +125,10 @@ class PreservationTests(unittest.TestCase):
             preservation.AdapterPreserver(ledger=self.f.ledger,
                 artifact_container="other-adapters", signing_key=self.f.f.verifier,
                 token_for=lambda _: "x" * 64)
+        with self.assertRaisesRegex(LedgerRejected, "private adapter container"):
+            preservation.AdapterPreserver(ledger=self.f.ledger,
+                artifact_container="cosmo--adapters", signing_key=self.f.f.verifier,
+                token_for=lambda _: "x" * 64)
 
     def test_unchanged_adapter_bundle_is_identical_across_zip_clock_changes(self):
         with patch("zipfile.time.localtime", return_value=(2026, 9, 24, 12, 1, 0, 0, 0, 0)):

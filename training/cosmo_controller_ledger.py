@@ -164,6 +164,11 @@ class ControllerLedger:
             need(type(context[field]) is str and re.fullmatch(pattern, context[field]),
                  "invalid ledger " + field)
         need("--" not in context["container"], "invalid container name")
+        need(type(context["artifact_container"]) is str and
+             re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{1,61})[a-z0-9]", context["artifact_container"]) and
+             "--" not in context["artifact_container"] and
+             context["artifact_container"] != context["container"],
+             "invalid artifact container name")
         need(type(context["retention_days"]) is int and 1 <= context["retention_days"] <= 90,
              "explicit bounded ledger retention required")
         archive = context["external_archive"]
