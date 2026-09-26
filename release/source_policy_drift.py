@@ -32,6 +32,10 @@ CURRENT_BENCHMARK_ASSERTION = (
 )
 APPROVED_RUNTIME_IDENTITY_PATH = "prompts/kova-identity.v3.txt"
 APPROVED_RUNTIME_IDENTITY_SHA256 = "ed1b503f947cabc6a7c24a9395bd63b9eff2dd55d57570a0d5a8fd51df3c5bc8"
+# The runtime entitlement import can resolve a module cached from the calling
+# checkout. Pin the inspected loader's complete source independently so an
+# alternate root cannot pass with a broken or disabled policy digest check.
+CURRENT_POLICY_LOADER_SHA256 = "d94da7ebe4bc355ee25235c793d4f3f13ea7f934db9d3f879c88253f6dd47b40"
 IDENTITY_RUNTIME_CALLERS = {
     "core/adapter.py": ("IDENTITY", "build_core_plan"),
     "ultra/orchestrator.py": ("IDENTITY", "build_ultra_plan"),
@@ -65,6 +69,12 @@ def _policy_routes(policy: dict, surface: str, tier: str) -> frozenset[str]:
 
 
 def _runtime_entitlements(root: Path):
+    try:
+        policy_loader = (root / "release/current_product_policy.py").read_bytes()
+    except OSError as error:
+        raise ValueError("runtime_policy_loader_unavailable") from error
+    if hashlib.sha256(policy_loader).hexdigest() != CURRENT_POLICY_LOADER_SHA256:
+        raise ValueError("runtime_policy_loader_drift")
     path = root / "router/entitlements.py"
     spec = importlib.util.spec_from_file_location("_kova_source_policy_runtime_entitlements", path)
     if spec is None or spec.loader is None:

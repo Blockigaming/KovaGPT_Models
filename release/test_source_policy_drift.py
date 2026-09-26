@@ -38,6 +38,24 @@ class SourcePolicyDriftTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "current product policy rejected"):
             validate(self.root)
 
+    def test_inspected_runtime_policy_loader_cannot_be_replaced_by_cached_import(self):
+        path = self.root / "release/current_product_policy.py"
+        for replacement in (
+            "def load_policy(path=None):\n    raise RuntimeError('broken copied loader')\n",
+            path.read_text().replace(
+                'raise CurrentPolicyError("current product policy rejected")',
+                'return value', 1),
+        ):
+            with self.subTest(replacement=replacement[:40]):
+                path.write_text(replacement)
+                with self.assertRaisesRegex(ValueError, "runtime_policy_loader_drift"):
+                    validate(self.root)
+
+    def test_inspected_runtime_policy_loader_must_exist(self):
+        (self.root / "release/current_product_policy.py").unlink()
+        with self.assertRaisesRegex(ValueError, "runtime_policy_loader_unavailable"):
+            validate(self.root)
+
     def test_legacy_file_cannot_regain_authority(self):
         path = self.root / "config/product-surface.v1.json"
         value = json.loads(path.read_text())
