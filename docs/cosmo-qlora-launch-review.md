@@ -458,6 +458,15 @@ capacity, establish account prices, or prove that the image boots the pinned
 CUDA 12.8 / bitsandbytes stack. No provider registration has been changed. A read-only subscription-wide
 management-lock inventory on 2026-09-25 returned zero locks and no next page;
 this does not replace the fresh per-grant check after future provisioning.
+
+On 2026-09-26, a read-only Azure portal check in the same subscription again
+showed `Microsoft.Network` and `Microsoft.Logic` as **NotRegistered**. The
+Compute quota view showed East US Standard NCASv3_T4 Family vCPUs at `0 of 4`
+and Total Regional vCPUs at `0 of 14`. The subscription resource list returned
+zero matches with the filter `Storage account`. This portal view is a dated
+prerequisite observation, not live capacity, complete inventory, a price quote
+or permission to register a provider or create storage.
+
 `what-if` may validate the proposed
 resource graph, but it does not reserve a GPU. Capacity and exact hardware
 identity can be confirmed only after an approved allocation.
