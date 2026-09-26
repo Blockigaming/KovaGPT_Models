@@ -109,6 +109,7 @@ class PreservationTests(unittest.TestCase):
         self.assertEqual(result["status"], "adapter_preserved_and_committed")
         self.assertEqual(result["artifact_sha256"], hashlib.sha256(self.storage.body).hexdigest())
         self.assertEqual(self.storage.put_count, 1)
+
         state = self.f.ledger.replay(self.f.f.io.body)[0]
         self.assertEqual(state["sequence"], 4)
         self.assertEqual(state["events"][-1]["kind"], "family_preserved")
@@ -118,6 +119,24 @@ class PreservationTests(unittest.TestCase):
                 transport=lambda _, token, request: self.submit_http(request)[1])
         self.assertEqual(retry, result)
         self.assertEqual(self.storage.put_count, 1)
+
+    def test_preserver_requires_quoted_artifact_container(self):
+        with self.assertRaisesRegex(LedgerRejected, "distinct containers"):
+            preservation.AdapterPreserver(ledger=self.f.ledger,
+                artifact_container="other-adapters", signing_key=self.f.f.verifier,
+                token_for=lambda _: "x" * 64)
+        with self.assertRaisesRegex(LedgerRejected, "private adapter container"):
+            preservation.AdapterPreserver(ledger=self.f.ledger,
+                artifact_container="cosmo--adapters", signing_key=self.f.f.verifier,
+                token_for=lambda _: "x" * 64)
+
+    def test_unchanged_adapter_bundle_is_identical_across_zip_clock_changes(self):
+        with patch("zipfile.time.localtime", return_value=(2026, 9, 24, 12, 1, 0, 0, 0, 0)):
+            first = preservation.bundle_adapter(self.adapter)
+        with patch("zipfile.time.localtime", return_value=(2026, 9, 25, 15, 30, 0, 0, 0, 0)):
+            later = preservation.bundle_adapter(self.adapter)
+        self.assertEqual(first, later)
+        self.assertEqual(hashlib.sha256(first).hexdigest(), hashlib.sha256(later).hexdigest())
 
     def test_retry_after_uncertain_ledger_append_recovers_existing_blob(self):
         raw = preservation.bundle_adapter(self.adapter)

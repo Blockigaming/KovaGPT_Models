@@ -78,7 +78,13 @@ def bundle_adapter(adapter: Path) -> bytes:
     result = BytesIO()
     with zipfile.ZipFile(result, "w", compression=zipfile.ZIP_STORED) as archive:
         for name in FILES:
-            archive.writestr(name, data[name])
+            # ZIP's default writestr timestamp is local wall time, which would
+            # make a retry differ from the immutable Blob after a lost reply.
+            entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_STORED
+            entry.create_system = 3
+            entry.external_attr = 0o600 << 16
+            archive.writestr(entry, data[name])
     raw = result.getvalue()
     _inspect_bundle(raw)
     return raw
@@ -169,12 +175,14 @@ class AdapterPreserver:
     def __init__(self, *, ledger, artifact_container: str, signing_key: Ed25519PrivateKey,
                  token_for):
         need(type(artifact_container) is str and
-             re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{1,61})[a-z0-9]", artifact_container),
+             re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{1,61})[a-z0-9]", artifact_container) and
+             "--" not in artifact_container,
              "private adapter container required")
         need(isinstance(signing_key, Ed25519PrivateKey) and
              signing_key.public_key().public_bytes_raw() == ledger.preservation_key,
              "independent preservation signing key mismatch")
-        need(artifact_container != ledger.context["container"],
+        need(artifact_container == ledger.context["artifact_container"] and
+             artifact_container != ledger.context["container"],
              "adapter and append ledger require distinct containers")
         self.ledger, self.container, self.key = ledger, artifact_container, signing_key
         self.io = AzureBlobIO(account=ledger.context["storage_account"], token_for=token_for,

@@ -57,6 +57,18 @@ class LaunchTests(unittest.TestCase):
             "sku_restrictions": [], "account_compute_hourly_usd": "0.4000",
             "account_meter_source": "subscription_specific_billing_price_sheet",
             "category_upper_bounds_usd": dict(contract.COST_CATEGORY_BOUNDS),
+            "additional_cost_upper_bounds_usd": {
+                "controller_runtime": "0.0540",
+                "controller_registry_and_logs": "0.0004",
+                "protected_evidence_retention": "0.0010",
+                "external_archive_and_receipts": "0.0010",
+                "tax_and_other_fees": "0.0000",
+            },
+            "evidence_scope": {
+                "ledger_context_sha256": "a" * 64, "ledger_retention_days": 1,
+                "artifact_container": "cosmo-adapters",
+                "external_archive": {"uri": "https://evidence.example.test/archived-ledger",
+                    "retention_days": 30, "maximum_bytes": 1048576}},
             "all_category_rates_checked": True, "watchdog_health_tested": True,
             "watchdog_can_deallocate_and_delete": True,
             "exclusive_pilot_group_empty": True, "no_public_ip": True,
@@ -82,7 +94,7 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(planned["all_in_ceiling_usd"], "3.3000")
         self.assertEqual(planned["minimum_signed_allocation_seconds"], 5400)
         assessed = self.check()
-        self.assertEqual(assessed["worst_case_all_in_usd"], "3.1934")
+        self.assertEqual(assessed["worst_case_all_in_usd"], "3.2498")
         self.assertEqual(assessed["signed_allocation_seconds"], 7140)
         self.assertFalse(assessed["paid_actions_enabled"])
 
@@ -92,9 +104,10 @@ class LaunchTests(unittest.TestCase):
         payload["allocation_deadline_utc"] = "2026-09-24T13:30:00Z"
         result = self.check(payload)
         self.assertEqual(result["signed_allocation_seconds"], 5400)
-        self.assertEqual(result["worst_case_all_in_usd"], "3.1890")
+        self.assertEqual(result["worst_case_all_in_usd"], "3.2454")
         payload["allocation_deadline_utc"] = "2026-09-24T13:42:00Z"
-        self.assertEqual(self.check(payload)["worst_case_all_in_usd"], "3.2942")
+        with self.assertRaisesRegex(launch.LaunchRejected, "complete signed cost"):
+            self.check(payload)
         payload["allocation_deadline_utc"] = "2026-09-24T13:43:00Z"
         with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
             self.check(payload)
@@ -112,7 +125,7 @@ class LaunchTests(unittest.TestCase):
         payload['allocation_deadline_utc'] = '2026-09-24T13:30:00Z'
         payload['category_upper_bounds_usd']['nat_gateway_data_processed'] = '0.2525'
         result = self.check(payload)
-        self.assertEqual(result['worst_case_all_in_usd'], '3.1890')
+        self.assertEqual(result['worst_case_all_in_usd'], '3.2454')
         self.assertFalse(result['paid_actions_enabled'])
         for key, excess in (('nat_gateway_data_processed', '0.3251'), ('managed_disks', '0.1001'),
                             ('public_ip_and_network', '0.0251'), ('nat_gateway_hours', '0.1501')):
@@ -133,6 +146,49 @@ class LaunchTests(unittest.TestCase):
                 payload["watchdog_cleanup_trigger_utc"] = trigger
                 with self.assertRaisesRegex(launch.LaunchRejected, "insufficient deletion time"):
                     self.check(payload)
+
+    def test_controller_and_durable_evidence_costs_cannot_be_omitted(self):
+        for change in ("missing_field", "missing", "extra", "zero_controller", "zero_retention",
+                       "zero_archive", "negative", "over_ceiling"):
+            payload = deepcopy(self.payload)
+            extras = payload["additional_cost_upper_bounds_usd"]
+            if change == "missing_field":
+                del payload["additional_cost_upper_bounds_usd"]
+            elif change == "missing":
+                del extras["protected_evidence_retention"]
+            elif change == "extra":
+                extras["unreviewed"] = "0.0000"
+            elif change == "zero_controller":
+                extras["controller_runtime"] = "0.0000"
+            elif change == "zero_retention":
+                extras["protected_evidence_retention"] = "0.0000"
+            elif change == "zero_archive":
+                extras["external_archive_and_receipts"] = "0.0000"
+            elif change == "negative":
+                extras["tax_and_other_fees"] = "-0.0010"
+            else:
+                extras["controller_registry_and_logs"] = "0.2000"
+            with self.subTest(change=change), self.assertRaises(launch.LaunchRejected):
+                self.check(payload)
+
+    def test_signed_evidence_scope_requires_bounded_storage_and_retention(self):
+        for field, value in (("ledger_retention_days", 0),
+                             ("ledger_context_sha256", "broken"),
+                             ("artifact_container", "Invalid"),
+                             ("artifact_container", "cosmo--adapters")):
+            payload = deepcopy(self.payload)
+            payload["evidence_scope"][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(
+                    launch.LaunchRejected, "evidence scope"):
+                self.check(payload)
+        for field, value in (("uri", "http://example.test/archive"),
+                             ("retention_days", 0), ("maximum_bytes", 1024),
+                             ("maximum_bytes", 1048577)):
+            payload = deepcopy(self.payload)
+            payload["evidence_scope"]["external_archive"][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(
+                    launch.LaunchRejected, "evidence scope"):
+                self.check(payload)
 
     def test_unsigned_tampered_and_unpinned_authorities_fail(self):
         path = self.signed()
