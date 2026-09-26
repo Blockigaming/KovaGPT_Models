@@ -228,6 +228,44 @@ class GrantIssuerTests(unittest.TestCase):
         self.assertEqual(received["training_runs_consumed"], 1)
         self.assertEqual(self.ledger.current_state()["sequence"], 3)
 
+    def test_recovery_retries_in_last_five_seconds(self):
+        self.f.io.lose_append_response = True
+        compute = {"resourceId": self.vm["resource_id"], "vmId": self.vm["vm_id"],
+            "location": "eastus", "vmSize": launch.SKU, "storageProfile": {
+                "imageReference": {"publisher": "Canonical", "offer": "ubuntu-24_04-lts",
+                    "sku": "server", "exactVersion": "24.04.202609040"}}}
+        elapsed = [0.0]
+        calls = []
+        def advance(seconds):
+            elapsed[0] += seconds
+            self.f.now += timedelta(seconds=seconds)
+        def uncertain(_endpoint, _token, request):
+            calls.append((elapsed[0], request))
+            if len(calls) == 1:
+                with self.assertRaises(LedgerRejected):
+                    self.issuer.issue(request)
+            if elapsed[0] < 162:
+                raise authority.AuthorityError("connection unavailable")
+            return self.issuer.issue(request)
+        with patch.object(authority, "_executing_azure_identity", return_value=(
+                self.token, self.token_digest, "2026-09-24T14:30:00Z")), \
+             patch.object(authority, "_load_bearer_token", return_value="synthetic"), \
+             patch.object(client.time, "monotonic", side_effect=lambda: elapsed[0]), \
+             patch.object(client.time, "sleep", side_effect=advance):
+            received = client.acquire_training_grant(quote=self.quote,
+                source_commit=self.f.context["source_commit"],
+                subscription_id=self.quote_fixture.subscription,
+                lifecycle_id=self.request["lifecycle_id"], preflight_ledger_sequence=2,
+                azure_instance=self.vm, runtime_evidence=self.runtime_path,
+                now=self.f.now, response_now=self.f.now + timedelta(seconds=163),
+                root=self.quote_fixture.root, instance_transport=lambda _: compute,
+                transport=uncertain)
+        self.assertGreaterEqual(elapsed[0], 162)
+        self.assertLess(elapsed[0], client.MAX_GRANT_RECOVERY_DELAY.total_seconds())
+        self.assertTrue(all(request == calls[0][1] for _, request in calls))
+        self.assertEqual(received["training_runs_consumed"], 1)
+        self.assertEqual(self.ledger.current_state()["sequence"], 3)
+
     def test_slow_commit_returns_no_grant_and_still_consumes_slot(self):
         original = self.ledger.transport
         def delayed(method, url, headers, body=b""):

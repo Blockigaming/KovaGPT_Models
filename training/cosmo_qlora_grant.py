@@ -225,9 +225,11 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
                     response = send(min(10, remaining))
                     break
                 except authority.AuthorityError:
-                    if time.monotonic() + 5 >= limit:
-                        raise
-                    time.sleep(5)
+                    remaining = limit - time.monotonic()
+                    if remaining > 0:
+                        # Leave time for another POST even in the final five
+                        # seconds of the controller's replay window.
+                        time.sleep(min(5, remaining / 2))
         payload, digest = authority.verify_envelope(
             response, expected_kind="kova_cosmo_qlora_training_grant", root=root)
         received = response_now or (now if now is not None else datetime.now(timezone.utc))
