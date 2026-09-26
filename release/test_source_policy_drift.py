@@ -33,7 +33,9 @@ class SourcePolicyDriftTests(unittest.TestCase):
         value = json.loads(path.read_text())
         value["entitlements"]["chat"]["plus"]["cosmo"] = ["light", "medium", "max"]
         path.write_text(json.dumps(value))
-        with self.assertRaisesRegex(ValueError, "entitlement_runtime_drift:chat:plus"):
+        # Admission now reads the same hash-pinned file. A cell swap is rejected
+        # at load time, before a separately defined route set can diverge.
+        with self.assertRaisesRegex(ValueError, "current product policy rejected"):
             validate(self.root)
 
     def test_legacy_file_cannot_regain_authority(self):

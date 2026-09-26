@@ -80,8 +80,7 @@ ALL_ROUTES = frozenset(CHAT_POLICIES) | CANONICAL_CHAT_ROUTES | frozenset(
     f"work:{family}:{effort.lower().replace(' ', '-')}"
     for family in WORK_FAMILIES for effort in WORK_EFFORTS
 )
-# Direct Chat route entitlement. Free Thinking is a separately authorized app-mode
-# alias to medium/Orion; it intentionally does not make direct Free `medium` valid.
+# Legacy Chat aliases remain separate from the current v3 family/effort policy.
 CHAT_ALLOWED = COMPAT_CHAT_ALLOWED_BY_TIER
 
 
@@ -90,8 +89,7 @@ class ExecutionGrant:
     """Current authenticated owner/entitlement, supplied only by trusted server code.
 
     Plan policy is an upper bound; the exact route must also be present in the
-    server-built allowed_routes set. Free Thinking is the only approved alias that
-    may authorize a route above the direct Free Chat set.
+    server-built allowed_routes set. Superseded Free Thinking cannot elevate Free.
     """
 
     owner_id: str
