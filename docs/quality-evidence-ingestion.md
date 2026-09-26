@@ -64,14 +64,16 @@ safe integration and exact-head validation.
 bundle without calling models, retrying requests, browsing, executing tools,
 running generated programs, training, changing account state or invoking a judge.
 It uses the existing `build_route_manifest()` and response-contract evaluator,
-so all 25 actual route IDs and the Core/Ultra split remain controlling. Auto
-records the actual selected explicit route; it is not a seventh Chat engine.
+so all 37 route contracts (six legacy Chat, twelve current Chat, eighteen Work,
+and Auto) and the Core/Ultra split remain controlling. Auto records the actual
+selected explicit route; it is not a seventh Chat engine.
 
-Every supplied case remains in the expected denominator for all 25 selections and
-both cold/warm conditions, including missing outputs. This evaluation denominator
-is not the separate fixed 40-item engineering denominator. Uncertain/cancelled
-outcomes stay explicit. Multiple successes, ordinal gaps and attempts after an
-uncertain/cancelled result are rejected rather than picking the best response.
+Every supplied case remains in the expected denominator for all 37 route
+contracts and both cold/warm conditions, including missing outputs. This
+evaluation denominator is not the separate fixed 40-item engineering denominator.
+Uncertain/cancelled outcomes stay explicit. Multiple successes, ordinal gaps
+and attempts after an uncertain/cancelled result are rejected rather than
+picking the best response.
 Existing execution admission, cancellation and no-uncertain-replay semantics are
 unchanged. Accepting historical failed-then-success records does not authorize a
 retry or prove that a retry was safe when it happened.
