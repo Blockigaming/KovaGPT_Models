@@ -29,6 +29,11 @@ MAX_ALLOCATION_SECONDS = 7200
 MIN_ALLOCATION_SECONDS = 5400
 MIN_CLEANUP_LEAD = timedelta(minutes=15)
 CEILING = Decimal("3.3000")
+ADDITIONAL_COST_CATEGORIES = frozenset({
+    "controller_runtime", "controller_registry_and_logs",
+    "protected_evidence_retention", "external_archive_and_receipts",
+    "tax_and_other_fees",
+})
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 
@@ -133,6 +138,7 @@ def assess_signed_quote(path: Path, *, source_commit: str, subscription_id: str,
         "dataset_sha256", "train_records", "validation_records", "gpu_name",
         "quota", "sku_restrictions", "account_compute_hourly_usd",
         "account_meter_source", "category_upper_bounds_usd",
+        "additional_cost_upper_bounds_usd",
         "all_category_rates_checked", "watchdog_health_tested",
         "watchdog_can_deallocate_and_delete", "exclusive_pilot_group_empty",
         "no_public_ip",
@@ -199,13 +205,28 @@ def assess_signed_quote(path: Path, *, source_commit: str, subscription_id: str,
         raise LaunchRejected("invalid ancillary account rate") from exc
     need(all(bounds[k] <= Decimal(cost["category_upper_bounds"][k])
              for k in category), "ancillary cost exceeds category reservation")
-    total = contract.admit_conditional_cosmo_pilot(
+    additional = payload["additional_cost_upper_bounds_usd"]
+    need(type(additional) is dict and set(additional) == ADDITIONAL_COST_CATEGORIES,
+         "controller, retention, archive or fees omitted from signed quote")
+    try:
+        additional_bounds = {k: authority.money(v) for k, v in additional.items()}
+    except authority.AuthorityError as exc:
+        raise LaunchRejected("invalid additional account cost") from exc
+    need(all(value >= 0 for value in additional_bounds.values()) and
+         additional_bounds["controller_runtime"] > 0 and
+         additional_bounds["protected_evidence_retention"] > 0 and
+         additional_bounds["external_archive_and_receipts"] > 0,
+         "controller and durable evidence costs require positive reserves")
+    baseline = contract.admit_conditional_cosmo_pilot(
         rate, lifecycle_seconds=allocation_seconds)
+    total = baseline + sum(additional_bounds.values())
+    need(total <= CEILING, "complete signed cost reservation exceeds Cosmo ceiling")
     # Even when the signed quote passes, no paid operation is authorized here.
     return {
         "status": "signed_subscription_quote_checked_paid_execution_blocked",
         "quote_sha256": digest, "subscription_id": subscription_id,
         "account_hourly_compute_rate_usd": str(rate),
+        "additional_cost_reservation_usd": str(sum(additional_bounds.values())),
         "worst_case_all_in_usd": str(total),
         "all_in_ceiling_usd": str(CEILING),
         "allocation_deadline_utc": payload["allocation_deadline_utc"],

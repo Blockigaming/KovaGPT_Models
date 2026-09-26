@@ -372,6 +372,13 @@ so this worksheet deliberately covers three intersected billing hours.
 
 The corrected **conditional** 90-minute reservation is therefore still
 **$0.7890 + $1.1500 + $1.2500 = $3.1890**, with $0.1110 below the owner ceiling.
+The signed launch quote now also requires explicit nonnegative upper bounds
+for controller runtime, controller registry/logs, protected evidence retention,
+external archive/receipts, and tax/other fees. Controller runtime and both
+durable evidence destinations require positive reserves; their sum is added
+to the conditional worksheet and rejected above $3.30. The synthetic test
+values are not account prices. No complete live quote exists yet, and the
+$0.1110 gap must cover every additional category for a 90-minute window.
 The four changed category reserves have the same combined total as before.
 Unlike the former worksheet, the known mandatory download floor now fits its
 own category, leaving **1,611,559,831 bytes** for all remaining NAT traffic.
