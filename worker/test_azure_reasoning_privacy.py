@@ -135,6 +135,17 @@ class AzureReasoningPrivacyTests(unittest.TestCase):
                     with self.subTest(stream=stream, field=field, location=location):
                         self.assert_rejected(value, stream, "private token metadata")
 
+    def test_private_fields_inside_usage_are_rejected_without_losing_numeric_counts(self):
+        for stream in (False, True):
+            for field, value, error in (
+                ("prompt_logprobs", [PRIVATE], "private token metadata"),
+                ("reasoning_details", PRIVATE, "hidden reasoning"),
+            ):
+                response_value = response(stream)
+                response_value["usage"][field] = value
+                with self.subTest(stream=stream, field=field):
+                    self.assert_rejected(response_value, stream, error)
+
     def test_null_logprob_metadata_is_compatible(self):
         for stream in (False, True):
             value = response(stream)

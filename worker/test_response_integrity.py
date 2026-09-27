@@ -114,6 +114,26 @@ class ResponseIntegrityTests(unittest.TestCase):
                     sanitize_engine_response("fixture", value)
                 self.assertNotIn("private-marker", str(caught.exception))
 
+    def test_usage_metadata_does_not_turn_a_private_stream_into_success(self):
+        response_value = response()
+        response_value["usage"]["token_ids"] = ["private-marker"]
+        with self.assertRaises(ValueError) as caught:
+            sanitize_engine_response("fixture", response_value)
+        self.assertNotIn("private-marker", str(caught.exception))
+
+        emitted = []
+        chunks = [
+            {"choices": [{"delta": {"content": "public"}, "finish_reason": "stop"}]},
+            {"choices": [], "usage": {"prompt_tokens": 5, "completion_tokens": 3,
+                                       "token_ids": ["private-marker"]}},
+        ]
+        with self.assertRaises(ValueError) as caught:
+            consume_engine_response(iter(chunks), expect_stream=True, clock_ns=lambda: 0,
+                                    started_ns=0, timing_state={"time_to_first_token_ms": None},
+                                    on_public_delta=emitted.append)
+        self.assertNotIn("private-marker", str(caught.exception))
+        self.assertEqual(emitted, ["public"])
+
     def test_nonstream_consumer_rejects_private_response_before_returning(self):
         value = response()
         value["reasoning_details"] = "private-marker"
@@ -136,6 +156,29 @@ class ResponseIntegrityTests(unittest.TestCase):
         with self.assertRaises(ValueError) as caught:
             stream(chunks)
         self.assertNotIn("private-marker", str(caught.exception))
+
+    def test_stream_checks_provider_usage_object_after_mapping(self):
+        class ProviderUsage:
+            def model_dump(self):
+                return {"prompt_tokens": 5, "completion_tokens": 3,
+                        "prompt_logprobs": ["private-marker"]}
+
+        closed = []
+        def chunks():
+            try:
+                yield {"choices": [{"delta": {"content": "public"}, "finish_reason": "stop"}]}
+                yield {"choices": [], "usage": ProviderUsage()}
+            finally:
+                closed.append(True)
+
+        emitted = []
+        with self.assertRaises(ValueError) as caught:
+            consume_engine_response(chunks(), expect_stream=True, clock_ns=lambda: 0,
+                                    started_ns=0, timing_state={"time_to_first_token_ms": None},
+                                    on_public_delta=emitted.append)
+        self.assertNotIn("private-marker", str(caught.exception))
+        self.assertEqual(emitted, ["public"])
+        self.assertEqual(closed, [True])
 
     def test_duplicate_nonnull_usage_chunks_cannot_overwrite_cost_evidence(self):
         usage = {"prompt_tokens": 100, "completion_tokens": 30}
