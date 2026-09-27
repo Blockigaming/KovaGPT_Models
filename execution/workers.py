@@ -70,14 +70,16 @@ class ModelStageWorker:
     """
 
     def __init__(self, client_factory, runtime_probe, token_counter, telemetry_sink,
-                 *, clock_ns=perf_counter_ns):
+                 *, clock_ns=perf_counter_ns, public_delta_sink=None):
         require(all(callable(x) for x in (client_factory, runtime_probe, token_counter, telemetry_sink, clock_ns)),
                 "trusted worker dependencies required")
+        require(public_delta_sink is None or callable(public_delta_sink), "invalid public answer sink")
         self.client_factory = client_factory
         self.runtime_probe = runtime_probe
         self.token_counter = token_counter
         self.telemetry_sink = telemetry_sink
         self.clock_ns = clock_ns
+        self.public_delta_sink = public_delta_sink
 
     def __call__(self, spec, stage, artifacts, control, logical_id, attempt):
         control.check()
@@ -105,6 +107,11 @@ class ModelStageWorker:
         require(callable(client), "guarded inference client required")
         control.check()
         records = []
+        def publish_public_delta(fragment):
+            control.check()
+            self.public_delta_sink(fragment)
+            control.check()
+        public_delta = publish_public_delta if stage.public and self.public_delta_sink is not None else None
         try:
             if plan["engine"] == "kova-core":
                 operation = next(op for op in plan["operations"] if op["stage_id"] == stage.id)
@@ -123,10 +130,11 @@ class ModelStageWorker:
                         "public_response": stage.public,
                         "prior_stage_outputs": {key: value["content"] for key, value in artifacts.items()},
                     }, token_counter=self.token_counter, clock_ns=self.clock_ns, attempt_id_factory=lambda: attempt,
+                    public_delta_sink=public_delta,
                 )
             else:
                 result = self._ultra(plan, stage, artifacts, identity, candidate, client,
-                                     records, logical_id, attempt)
+                                     records, logical_id, attempt, public_delta)
             control.check()
             usage = result["usage"]
             require(0 < usage["prompt_tokens"] <= stage.maximum_input_tokens
@@ -160,7 +168,8 @@ class ModelStageWorker:
             for record in records:
                 self.telemetry_sink(record)
 
-    def _ultra(self, plan, stage, artifacts, identity, candidate, client, records, logical_id, attempt):
+    def _ultra(self, plan, stage, artifacts, identity, candidate, client, records, logical_id, attempt,
+               public_delta):
         before = validate_runtime_probe(lambda phase: self.runtime_probe(stage.id, phase), "before", candidate)
         request = bind_ultra_operation(
             plan, stage.id, {key: None if value is None else value["content"] for key, value in artifacts.items()},
@@ -176,7 +185,7 @@ class ModelStageWorker:
             response = client(request)
             normalized, finished_ns = consume_engine_response(
                 response, expect_stream=stage.public, clock_ns=self.clock_ns,
-                started_ns=started_ns, timing_state=timing,
+                started_ns=started_ns, timing_state=timing, on_public_delta=public_delta,
             )
             result = sanitize_engine_response(plan["request_id"], normalized)
         except BaseException as error:

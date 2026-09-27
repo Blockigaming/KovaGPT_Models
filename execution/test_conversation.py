@@ -90,6 +90,24 @@ class ConversationTests(SyntheticAdapterTestCase):
                 count += len(spec.stages)
         self.assertEqual(count, 171)
 
+    def test_core_and_ultra_emit_only_the_public_final_answer(self):
+        for route in ("work:cosmo:medium", "work:orion:ultra"):
+            with self.subTest(route=route):
+                spec = spec_for(route)
+                grant = grant_for(spec)
+                store = LocalJobStore()
+                self.addCleanup(store.close)
+                job = store.create(grant, "public-deltas", spec)
+                fixture = ModelFixture()
+                received = []
+                status = LocalRunner(
+                    store, lambda: grant, fixture.worker(public_delta_sink=received.append),
+                ).run(job)
+                self.assertEqual(status["state"], "succeeded")
+                self.assertEqual(received, ["Kova final response"])
+                self.assertEqual(store.result(OWNER, job)["content"], "".join(received))
+                self.assertTrue(any(not stage.public for stage in spec.stages))
+
     def test_all_ultra_routes_keep_conversation_through_both_debate_branches(self):
         for route in ("ultra", "work:cosmo:ultra", "work:orion:ultra", "work:nova:ultra"):
             for debate in (False, True):

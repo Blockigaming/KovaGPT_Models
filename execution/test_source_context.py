@@ -93,13 +93,15 @@ class SourceContextTests(SyntheticAdapterTestCase):
     def prepared(self, *refs):
         return self.f.context.prepare(self.f.scope, HISTORY, tuple(refs))
 
-    def execute(self, prepared, route="high", *, fixture=None):
+    def execute(self, prepared, route="high", *, fixture=None, public_delta_sink=None):
         spec = specification(prepared, route)
         fixture = fixture or ModelFixture()
         store = LocalJobStore()
         self.addCleanup(store.close)
         job = store.create(self.f.grant, "source-context", spec)
-        worker = self.f.context.bind_worker(prepared, spec, fixture.worker())
+        worker = self.f.context.bind_worker(
+            prepared, spec, fixture.worker(public_delta_sink=public_delta_sink),
+        )
         status = LocalRunner(store, lambda: self.f.grant, worker).run(job)
         return store, job, fixture, status
 
@@ -200,11 +202,25 @@ class SourceContextTests(SyntheticAdapterTestCase):
         prepared = self.prepared(self.f.add())
         def revoke(_stage, _control):
             self.f.allowed = False
-        store, job, model, status = self.execute(prepared, "instant", fixture=ModelFixture(hook=revoke))
+        fragments = []
+        store, job, model, status = self.execute(
+            prepared, "instant", fixture=ModelFixture(hook=revoke), public_delta_sink=fragments.append,
+        )
         self.assertEqual(status["state"], "failed")
+        self.assertEqual(fragments, [])
         self.assertEqual(model.closed, ["answer-1"])
         with self.assertRaises(ExecutionError):
             store.result(OWNER, job)
+
+    def test_scoped_stream_forwards_only_public_answer_while_authorized(self):
+        prepared = self.prepared(self.f.add())
+        fragments = []
+        store, job, _, status = self.execute(
+            prepared, "work:cosmo:medium", public_delta_sink=fragments.append,
+        )
+        self.assertEqual(status["state"], "succeeded")
+        self.assertEqual(fragments, ["Kova final response"])
+        self.assertEqual(store.result(OWNER, job)["content"], "".join(fragments))
 
     def test_plan_downgrade_still_blocks_max(self):
         prepared = self.prepared(self.f.add())

@@ -152,5 +152,6 @@ class ModelFixture:
             min(5, control.remaining_seconds()), True, True, True,
         ), transport, lambda: "synthetic.fixture.token", cancelled=control.cancelled)
 
-    def worker(self):
-        return ModelStageWorker(self.client_factory, self.probe, tokens, self.records.append)
+    def worker(self, *, public_delta_sink=None):
+        return ModelStageWorker(self.client_factory, self.probe, tokens, self.records.append,
+                                public_delta_sink=public_delta_sink)
