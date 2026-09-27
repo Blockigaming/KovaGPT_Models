@@ -228,6 +228,23 @@ class SourceContextTests(SyntheticAdapterTestCase):
                                            (job,)).fetchone()[0], 0)
         self.assertFalse(any(e["type"] == "answer_fragment" for e in store.replay(OWNER, job)["events"]))
 
+    def test_bound_source_checks_preserve_delegate_public_preflight(self):
+        prepared = self.prepared(self.f.add())
+        spec = specification(prepared, "instant")
+        store = LocalJobStore()
+        self.addCleanup(store.close)
+        job = store.create(self.f.grant, "source-preflight", spec)
+        seen = []
+        delegate = ModelFixture().worker(public_delta_sink=lambda fragment: seen.append(fragment))
+        delegate.public_delta_preflight = lambda: seen.append("delegate preflight")
+        worker = self.f.context.bind_worker(prepared, spec, delegate)
+        status = LocalRunner(store, lambda: self.f.grant, worker,
+                             persist_public_deltas=True).run(job)
+        self.assertEqual(status["state"], "succeeded")
+        self.assertEqual(seen, ["delegate preflight", "Kova final response"])
+        self.assertEqual([e["content"] for e in store.replay(OWNER, job)["events"]
+                          if e["type"] == "answer_fragment"], ["Kova final response"])
+
     def test_scoped_stream_forwards_only_public_answer_while_authorized(self):
         prepared = self.prepared(self.f.add())
         fragments = []

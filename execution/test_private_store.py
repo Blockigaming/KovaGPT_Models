@@ -234,6 +234,28 @@ class PrivateStoreTests(SyntheticAdapterTestCase):
         with self.assertRaisesRegex(ExecutionIntegrityError, "fragment integrity"):
             self.store.replay(OWNER, job, after=before)
 
+    def test_cancel_after_first_public_delta_keeps_provisional_replay_without_repeat(self):
+        spec = make_spec("instant")
+        grant = grant_for(spec)
+        job = self.store.create(grant, "cancel-after-delta", spec)
+        model = ModelFixture()
+        delivered = []
+        def cancel_on_delivery(fragment):
+            delivered.append(fragment)
+            self.store.request_cancel(OWNER, job)
+        runner = LocalRunner(self.store, lambda: grant,
+                             model.worker(public_delta_sink=cancel_on_delivery),
+                             persist_public_deltas=True)
+        status = runner.run(job)
+        self.assertEqual(status["state"], "cancelled")
+        self.assertEqual(delivered, ["Kova final response"])
+        fragments = [event for event in self.store.replay(OWNER, job)["events"]
+                     if event["type"] == "answer_fragment"]
+        self.assertEqual([(event["content"], event["provisional"]) for event in fragments],
+                         [("Kova final response", True)])
+        self.assertEqual(runner.run(job)["state"], "cancelled")
+        self.assertEqual(len(model.calls), 1)
+
     def test_public_fragment_rejects_private_stage_stale_fence_cancel_and_hidden_marker(self):
         spec = make_spec("high")
         grant = grant_for(spec)
