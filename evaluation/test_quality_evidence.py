@@ -229,6 +229,25 @@ class QualityEvidenceTests(unittest.TestCase):
         self.assertIsNone(timing["first_answer_token_ms"]["mean"])
         self.assertEqual(timing["first_answer_token_ms"]["missing"], 1)
 
+    def test_latency_events_must_follow_observed_chronology(self):
+        for invalid in (
+            {"acknowledgement_ms": 50, "first_answer_token_ms": 20, "completed_answer_ms": 100},
+            {"acknowledgement_ms": 110, "first_answer_token_ms": 20, "completed_answer_ms": 100},
+            {"acknowledgement_ms": 110, "first_answer_token_ms": None, "completed_answer_ms": 100},
+        ):
+            value = bundle()
+            value["attempts"] = [attempt(timings=invalid)]
+            with self.subTest(timings=invalid), self.assertRaises(EvidenceRejected):
+                self.run_bundle(value)
+        # Missing measurements remain explicitly missing, without imposing a
+        # chronology on timestamps that were never observed.
+        value = bundle()
+        value["attempts"] = [attempt(timings={
+            "acknowledgement_ms": None, "first_answer_token_ms": 20,
+            "completed_answer_ms": 100,
+        })]
+        self.assertEqual(self.run_bundle(value)["unit_counts"]["pass"], 1)
+
     def test_invalid_numeric_timings_costs_and_receipts_are_not_coerced(self):
         for bad in (True, -1, float("inf"), "100"):
             value = bundle()
