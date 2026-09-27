@@ -5,12 +5,14 @@ schema. It does not load the historical evaluator, collect outcomes, authenticat
 reviewers, approve an evaluation, or change release/training gates.
 """
 
+import argparse
 from collections import Counter
 import hashlib
 import json
+from pathlib import Path
 
 from evaluation.quality_evidence import (
-    MAX_BYTES, ROOT, EvidenceRejected, build_route_manifest, digest, keys,
+    MAX_BYTES, ROOT, EvidenceRejected, analyze, build_route_manifest, digest, keys,
     need, strict_json, text, validate_suite,
 )
 
@@ -104,8 +106,66 @@ def source_report():
     }
 
 
+def summarize_evidence(bundle, *, expected_source_commit):
+    """Group unverified results by original category without losing missing units.
+
+    The archived case bytes and the mapped schema are checked anew; this only
+    summarizes the current analyzer's result. It sets no acceptance thresholds,
+    authenticates no run/reviewer, and calls no model.
+    """
+    historical = load_archived_suite()
+    mapped = map_cases(historical)
+    report = analyze(mapped, bundle, expected_suite_sha256=MAPPED_SUITE_SHA256,
+                     expected_source_commit=expected_source_commit)
+    categories = {case["id"]: case["category"] for case in historical["cases"]}
+    need(len(categories) == len(mapped["cases"]))
+    counts = {name: Counter() for name in EXPECTED_CATEGORIES}
+    route_count = len(build_route_manifest())
+    for unit in report["units"]:
+        counts[categories[unit["case_id"]]][unit["result"]] += 1
+    coverage = {
+        name: {"case_count": case_count, "expected_units": case_count * route_count * 2,
+               "unit_counts": dict(counts[name])}
+        for name, case_count in EXPECTED_CATEGORIES.items()
+    }
+    need(all(sum(item["unit_counts"].values()) == item["expected_units"]
+             for item in coverage.values()))
+    need(sum((counter for counter in counts.values()), Counter()) == Counter(report["unit_counts"]))
+    return {
+        "schema_version": 1, "kind": report["kind"],
+        "source_commit": report["source_commit"],
+        "historical_file_sha256": HISTORICAL_FILE_SHA256,
+        "historical_suite_sha256": HISTORICAL_CONTENT_SHA256,
+        "mapped_suite_sha256": MAPPED_SUITE_SHA256,
+        "bundle_sha256": report["bundle_sha256"],
+        "expected_units": report["expected_units"], "unit_counts": report["unit_counts"],
+        "category_coverage": coverage, "attempts": report["attempts"],
+        "provided_reviews": report["provided_reviews"],
+        "reported_total_cost_microusd": report["reported_total_cost_microusd"],
+        "provenance_authenticated": report["provenance_authenticated"],
+        "human_reviewer_identity_verified": report["human_reviewer_identity_verified"],
+        "historical_suite_reconciled": report["historical_suite_reconciled"],
+        "phase_b_ready": report["phase_b_ready"],
+        "live_routes_verified": report["live_routes_verified"],
+        "model_calls_made": report["model_calls_made"],
+    }
+
+
 if __name__ == "__main__":
     try:
-        print(json.dumps(source_report(), sort_keys=True))
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument("--evidence", type=Path)
+        parser.add_argument("--source-commit")
+        args = parser.parse_args()
+        need((args.evidence is None) == (args.source_commit is None))
+        if args.evidence is None:
+            report = source_report()
+        else:
+            with args.evidence.open("rb") as stream:
+                raw = stream.read(MAX_BYTES + 1)
+            need(len(raw) <= MAX_BYTES)
+            report = summarize_evidence(strict_json(raw.decode("utf-8")),
+                                        expected_source_commit=args.source_commit)
+        print(json.dumps(report, sort_keys=True))
     except (EvidenceRejected, OSError, UnicodeError, ValueError):
         raise SystemExit("historical suite source rejected") from None
