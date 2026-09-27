@@ -23,7 +23,7 @@ import psycopg
 from execution.contracts import ALL_ROUTES, ExecutionBusy, ExecutionError
 from execution.postgres_store import (
     PostgresConnectionConfig, PostgresPrivateJobStore, PostgresStoreError,
-    connect_postgres, install_postgres_schema,
+    connect_postgres, install_postgres_schema, upgrade_postgres_schema,
 )
 from execution.record_cipher import KeyMaterial, RecordCipher
 from execution.runner import LocalRunner
@@ -249,6 +249,44 @@ class PostgresStoreTests(SyntheticAdapterTestCase):
                          "job_resumed")
         with self.assertRaisesRegex(ExecutionError, "future event cursor"):
             reopened.replay(OWNER, job, after=cursor + 2)
+
+    def test_encrypted_public_answer_fragments_replay_across_postgres_connections(self):
+        job, spec, grant = self.job("instant")
+        runner, epoch = self.store.begin(grant, job)
+        attempt, _ = self.store.claim(grant, job, runner, epoch, spec.stages[-1].id)
+        cursor = self.store.replay(OWNER, job)["next_sequence"]
+        receipt = self.store.append_public_delta(grant, job, runner, epoch, spec.stages[-1].id,
+                                                 attempt, "Kova answer")
+        with self.store._transaction() as db:
+            row = db.execute("SELECT payload FROM answer_fragments WHERE job=? AND sequence=?",
+                             (job, receipt["sequence"])).fetchone()
+            self.assertNotIn(b"Kova answer", bytes(row[0]))
+        second = self.open()
+        self.addCleanup(second.close)
+        events = second.replay(OWNER, job, after=cursor)["events"]
+        self.assertEqual([(event["type"], event["content"], event["sequence"])
+                          for event in events], [("answer_fragment", "Kova answer", receipt["sequence"])])
+        with self.assertRaises(ExecutionError):
+            second.replay("other-owner", job, after=cursor)
+
+    def test_v1_public_fragment_schema_upgrade_requires_explicit_admin_action(self):
+        from execution.postgres_store import _Connection, _apply_migration
+        old_schema = "kova_v1_" + uuid4().hex
+        with self.cluster.connect() as connection:
+            from psycopg import sql
+            with connection.transaction():
+                connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(old_schema)))
+                connection.execute(sql.SQL("REVOKE ALL ON SCHEMA {} FROM PUBLIC").format(sql.Identifier(old_schema)))
+                _apply_migration(_Connection(connection, old_schema), "001_private_execution_postgres.sql")
+            with self.assertRaises(ExecutionError):
+                self.open(schema=old_schema)
+            with self.assertRaises(ExecutionError):
+                upgrade_postgres_schema(connection, old_schema)
+            upgrade_postgres_schema(connection, old_schema, administration_authorized=True)
+        upgraded = self.open(schema=old_schema)
+        self.addCleanup(upgraded.close)
+        with upgraded._transaction() as db:
+            self.assertEqual(db.execute("SELECT version FROM model_store_version").fetchone()[0], 2)
 
     def test_retention_and_deletion_tombstones_survive_connection_reopen(self):
         job, spec, grant = self.job("instant", key="delete-once")

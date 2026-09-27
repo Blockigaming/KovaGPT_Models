@@ -93,7 +93,8 @@ class SourceContextTests(SyntheticAdapterTestCase):
     def prepared(self, *refs):
         return self.f.context.prepare(self.f.scope, HISTORY, tuple(refs))
 
-    def execute(self, prepared, route="high", *, fixture=None, public_delta_sink=None):
+    def execute(self, prepared, route="high", *, fixture=None, public_delta_sink=None,
+                persist_public_deltas=False):
         spec = specification(prepared, route)
         fixture = fixture or ModelFixture()
         store = LocalJobStore()
@@ -102,7 +103,8 @@ class SourceContextTests(SyntheticAdapterTestCase):
         worker = self.f.context.bind_worker(
             prepared, spec, fixture.worker(public_delta_sink=public_delta_sink),
         )
-        status = LocalRunner(store, lambda: self.f.grant, worker).run(job)
+        status = LocalRunner(store, lambda: self.f.grant, worker,
+                             persist_public_deltas=persist_public_deltas).run(job)
         return store, job, fixture, status
 
     def test_file_project_and_recorded_tool_evidence_reaches_every_explicit_route(self):
@@ -211,6 +213,20 @@ class SourceContextTests(SyntheticAdapterTestCase):
         self.assertEqual(model.closed, ["answer-1"])
         with self.assertRaises(ExecutionError):
             store.result(OWNER, job)
+
+    def test_revoked_source_acl_prevents_persisted_public_fragment(self):
+        prepared = self.prepared(self.f.add())
+        def revoke(_stage, _control):
+            self.f.allowed = False
+        store, job, model, status = self.execute(
+            prepared, "instant", fixture=ModelFixture(hook=revoke),
+            persist_public_deltas=True,
+        )
+        self.assertEqual(status["state"], "failed")
+        self.assertEqual(model.closed, ["answer-1"])
+        self.assertEqual(store._db.execute("SELECT COUNT(*) FROM answer_fragments WHERE job=?",
+                                           (job,)).fetchone()[0], 0)
+        self.assertFalse(any(e["type"] == "answer_fragment" for e in store.replay(OWNER, job)["events"]))
 
     def test_scoped_stream_forwards_only_public_answer_while_authorized(self):
         prepared = self.prepared(self.f.add())

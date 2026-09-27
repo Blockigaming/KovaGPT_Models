@@ -281,6 +281,7 @@ class SourceContext:
             checked_factory, delegate.runtime_probe, delegate.token_counter,
             delegate.telemetry_sink, clock_ns=delegate.clock_ns,
             public_delta_sink=checked_public_delta if delegate.public_delta_sink is not None else None,
+            public_delta_preflight=lambda: self.check(prepared, route_id=route),
         )
         def run(current_spec, stage, artifacts, control, job_id, attempt_id):
             _need(type(current_spec) is ExecutionSpec and current_spec.fingerprint == fingerprint)

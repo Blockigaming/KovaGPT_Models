@@ -87,6 +87,14 @@ class PrivateJobStore(LocalJobStore):
         decoded = self._cipher.open(owner[0], row["job"], row["id"], self._expiry(row["job"]), encrypted)
         return json.loads(decoded)
 
+    def _seal_fragment(self, owner, job_id, sequence, encoded):
+        return self._cipher.seal(owner, job_id, f"answer-fragment:{sequence}",
+                                 self._expiry(job_id), encoded)
+
+    def _open_fragment(self, owner, job_id, sequence, payload):
+        return self._cipher.open(owner, job_id, f"answer-fragment:{sequence}",
+                                 self._expiry(job_id), payload)
+
     def status(self, owner, job_id):
         try:
             return super().status(owner, job_id)
@@ -165,6 +173,12 @@ class PrivateJobStore(LocalJobStore):
                 value = self._cipher.seal(grant.owner_id, job_id, row["id"], expiry, canonical(result))
                 db.execute("UPDATE stages SET result=?,checksum=? WHERE job=? AND id=?",
                            (value, hashlib.sha256(value).hexdigest(), job_id, row["id"]))
+            for row in db.execute("SELECT sequence,payload FROM answer_fragments WHERE job=?", (job_id,)).fetchall():
+                plaintext = self._open_fragment(grant.owner_id, job_id, row["sequence"], bytes(row["payload"]))
+                value = self._cipher.seal(grant.owner_id, job_id, f"answer-fragment:{row['sequence']}",
+                                          expiry, plaintext)
+                db.execute("UPDATE answer_fragments SET payload=?,checksum=? WHERE job=? AND sequence=?",
+                           (value, hashlib.sha256(value).hexdigest(), job_id, row["sequence"]))
 
     def delete_job(self, grant, job_id, *, reason, quiescence_receipt=None):
         """Authenticated deletion requires terminal, unowned work and a server policy.

@@ -17,7 +17,7 @@ from execution.contracts import (
     ExecutionBlocked, ExecutionCancelled, ExecutionError, ExecutionExpired,
     ExecutionGrant, ExecutionIntegrityError, positive_integer, require,
 )
-from execution.store import TERMINAL, now_ms
+from execution.store import MAX_FRAGMENT_CHARS, TERMINAL, now_ms
 from worker.azure_container_apps import AzureCancelled, AzureDeadlineExceeded
 
 
@@ -30,17 +30,21 @@ class StageControl:
     check: object
     remaining_seconds: object
     cancelled: object
+    publish_public: object = None
 
 
 class LocalRunner:
-    def __init__(self, store, authorization, worker, *, clock=monotonic, clock_ms=now_ms):
+    def __init__(self, store, authorization, worker, *, clock=monotonic, clock_ms=now_ms,
+                 persist_public_deltas=False):
         require(all(callable(x) for x in (authorization, worker, clock, clock_ms)),
                 "trusted execution dependencies required")
+        require(type(persist_public_deltas) is bool, "invalid public answer persistence policy")
         self.store = store
         self.authorization = authorization
         self.worker = worker
         self.clock = clock
         self.clock_ms = clock_ms
+        self.persist_public_deltas = persist_public_deltas
 
     def _grant(self, owner=None, route=None):
         value = self.authorization()
@@ -122,7 +126,19 @@ class LocalRunner:
                         return False
                     except ExecutionError:
                         return True
-                control = StageControl(stage.id, attempt, check, remaining, cancelled)
+                def persist(fragment):
+                    check()
+                    require(type(fragment) is str and bool(fragment), "invalid public answer fragment")
+                    # Provider chunks need not respect the journal's per-row bound.
+                    # Every piece has its own committed sequence and fresh fence check.
+                    for offset in range(0, len(fragment), MAX_FRAGMENT_CHARS):
+                        check()
+                        self.store.append_public_delta(self._grant(owner, route), job_id,
+                                                       runner, epoch, stage.id, attempt,
+                                                       fragment[offset:offset + MAX_FRAGMENT_CHARS])
+                    check()
+                control = StageControl(stage.id, attempt, check, remaining, cancelled,
+                                       persist if self.persist_public_deltas and stage.public else None)
                 check()
                 result = self.worker(spec, stage, artifacts, control, job_id, attempt)
                 check()
