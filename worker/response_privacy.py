@@ -26,14 +26,16 @@ def _check_mapping(value):
 
 
 def require_private_reasoning_absent(value):
-    """Inspect known Chat Completions envelope/message/delta locations.
+    """Inspect known Chat Completions envelope, choice, message, delta and usage fields.
 
-    Do not recurse into user-visible text, serialized tool arguments, or numeric
-    usage details: a user can legitimately ask about the word 'reasoning'. This
+    Do not recurse into user-visible text, serialized tool arguments, or nested
+    numeric usage details: a user can legitimately ask about the word 'reasoning'. This
     check complements, and never substitutes for, the existing response sanitizer.
     No message, choice, tool call, usage count or completion marker is modified.
     """
     _check_mapping(value)
+    if isinstance(value, dict):
+        _check_mapping(value.get("usage"))
     choices = value.get("choices") if isinstance(value, dict) else None
     if not isinstance(choices, list):
         return

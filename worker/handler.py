@@ -350,6 +350,7 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
             if chunk.get("usage") is not None:
                 _require(usage is None, "stream returned duplicate usage evidence")
                 usage = _mapping(chunk["usage"], "stream usage must be an object")
+                require_private_reasoning_absent(usage)
             choices = chunk.get("choices", [])
             _require(isinstance(choices, list) and len(choices) <= 1, "stream must return at most one choice")
             for raw_choice in choices:
