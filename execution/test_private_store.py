@@ -11,7 +11,7 @@ from time import time_ns
 import unittest
 from unittest.mock import patch
 
-from execution.contracts import ALL_ROUTES, ExecutionError, ExecutionGrant
+from execution.contracts import ALL_ROUTES, ExecutionError, ExecutionGrant, ExecutionIntegrityError
 from execution.private_store import PrivateJobStore, RetentionExpired
 from execution.record_cipher import KeyMaterial, RecordCipher, RecordProtectionError
 from execution.runner import LocalRunner
@@ -142,6 +142,198 @@ class PrivateStoreTests(SyntheticAdapterTestCase):
             finally:
                 reopened.close()
             self.assertNotIn(b"Kova final response", path.read_bytes())
+
+    def test_public_answer_fragments_are_encrypted_and_replay_after_reopen(self):
+        spec = make_spec("instant")
+        grant = grant_for(spec)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "fragments.sqlite3"
+            store = self.new_store(path)
+            job = store.create(grant, "public-fragments", spec)
+            runner, epoch = store.begin(grant, job)
+            attempt, _ = store.claim(grant, job, runner, epoch, spec.stages[-1].id)
+            cursor = store.replay(OWNER, job)["next_sequence"]
+            first = store.append_public_delta(grant, job, runner, epoch, spec.stages[-1].id,
+                                              attempt, "Kova ")
+            second = store.append_public_delta(grant, job, runner, epoch, spec.stages[-1].id,
+                                               attempt, "answer")
+            self.assertLess(first["sequence"], second["sequence"])
+            events = store.replay(OWNER, job, after=cursor)["events"]
+            self.assertEqual([(event["type"], event["content"], event["provisional"])
+                              for event in events], [("answer_fragment", "Kova ", True),
+                                                    ("answer_fragment", "answer", True)])
+            self.assertNotIn(b"Kova answer", path.read_bytes())
+            store.close()
+            reopened = self.new_store(path)
+            try:
+                self.assertEqual(reopened.replay(OWNER, job, after=cursor)["events"], events)
+                with self.assertRaises(ExecutionError):
+                    reopened.replay("other-owner", job, after=cursor)
+            finally:
+                reopened.close()
+
+    def test_model_public_delta_is_durable_before_live_delivery(self):
+        for route in ("instant", "work:cosmo:medium", "work:orion:ultra"):
+            with self.subTest(route=route):
+                spec = make_spec(route)
+                grant = grant_for(spec)
+                job = self.store.create(grant, "model-deltas-" + route, spec)
+                fixture = ModelFixture()
+                observed = []
+                def delivered(fragment):
+                    events = self.store.replay(OWNER, job)["events"]
+                    observed.append((fragment, [e["content"] for e in events
+                                                if e["type"] == "answer_fragment"]))
+                status = LocalRunner(self.store, lambda: grant,
+                    fixture.worker(public_delta_sink=delivered),
+                    persist_public_deltas=True).run(job)
+                self.assertEqual(status["state"], "succeeded")
+                self.assertEqual(observed, [("Kova final response", ["Kova final response"])])
+                events = self.store.replay(OWNER, job)["events"]
+                answer = [e for e in events if e["type"] == "answer_fragment"]
+                self.assertEqual(len(answer), 1)
+                self.assertEqual(answer[0]["stage_id"], spec.stages[-1].id)
+                self.assertTrue(answer[0]["provisional"])
+                self.assertLess(answer[0]["sequence"], events[-1]["sequence"])
+
+    def test_large_provider_delta_is_split_into_bounded_replay_events(self):
+        spec = make_spec("instant")
+        grant = grant_for(spec)
+        job = self.store.create(grant, "long-provider-chunk", spec)
+        model = ModelFixture()
+        content = "Kova " + "x" * 9000
+        model.override[spec.stages[-1].id] = content
+        delivered = []
+        status = LocalRunner(self.store, lambda: grant,
+                             model.worker(public_delta_sink=delivered.append),
+                             persist_public_deltas=True).run(job)
+        self.assertEqual(status["state"], "succeeded")
+        events = [e for e in self.store.replay(OWNER, job)["events"]
+                  if e["type"] == "answer_fragment"]
+        self.assertEqual(len(events), 2)
+        self.assertEqual("".join(e["content"] for e in events), content)
+        self.assertEqual(delivered, [content])
+
+    def test_failed_fragment_encryption_rolls_back_event_and_tamper_blocks_replay(self):
+        spec = make_spec("instant")
+        grant = grant_for(spec)
+        job = self.store.create(grant, "fragment-atomicity", spec)
+        runner, epoch = self.store.begin(grant, job)
+        stage_id = spec.stages[-1].id
+        attempt, _ = self.store.claim(grant, job, runner, epoch, stage_id)
+        before = self.store.status(OWNER, job)["sequence"]
+        with patch.object(self.store, "_seal_fragment", side_effect=RecordProtectionError("key unavailable")):
+            with self.assertRaises(RecordProtectionError):
+                self.store.append_public_delta(grant, job, runner, epoch, stage_id, attempt, "private fragment")
+        self.assertEqual(self.store.status(OWNER, job)["sequence"], before)
+        self.assertEqual(self.store.replay(OWNER, job, after=before)["events"], [])
+        receipt = self.store.append_public_delta(grant, job, runner, epoch, stage_id,
+                                                 attempt, "visible fragment")
+        self.store._db.execute("UPDATE answer_fragments SET payload=? WHERE job=? AND sequence=?",
+                               (b"tampered", job, receipt["sequence"]))
+        with self.assertRaisesRegex(ExecutionIntegrityError, "fragment integrity"):
+            self.store.replay(OWNER, job, after=before)
+
+    def test_cancel_after_first_public_delta_keeps_provisional_replay_without_repeat(self):
+        spec = make_spec("instant")
+        grant = grant_for(spec)
+        job = self.store.create(grant, "cancel-after-delta", spec)
+        model = ModelFixture()
+        delivered = []
+        def cancel_on_delivery(fragment):
+            delivered.append(fragment)
+            self.store.request_cancel(OWNER, job)
+        runner = LocalRunner(self.store, lambda: grant,
+                             model.worker(public_delta_sink=cancel_on_delivery),
+                             persist_public_deltas=True)
+        status = runner.run(job)
+        self.assertEqual(status["state"], "cancelled")
+        self.assertEqual(delivered, ["Kova final response"])
+        fragments = [event for event in self.store.replay(OWNER, job)["events"]
+                     if event["type"] == "answer_fragment"]
+        self.assertEqual([(event["content"], event["provisional"]) for event in fragments],
+                         [("Kova final response", True)])
+        self.assertEqual(runner.run(job)["state"], "cancelled")
+        self.assertEqual(len(model.calls), 1)
+
+    def test_public_fragment_rejects_private_stage_stale_fence_cancel_and_hidden_marker(self):
+        spec = make_spec("high")
+        grant = grant_for(spec)
+        job = self.store.create(grant, "private-stage-fragment", spec)
+        runner, epoch = self.store.begin(grant, job)
+        stage_id = spec.stages[0].id
+        attempt, _ = self.store.claim(grant, job, runner, epoch, stage_id)
+        with self.assertRaisesRegex(ExecutionError, "private stage"):
+            self.store.append_public_delta(grant, job, runner, epoch, stage_id, attempt, "PRIVATE draft")
+
+        instant = make_spec("instant")
+        permitted = grant_for(instant)
+        public_job = self.store.create(permitted, "fenced-fragment", instant)
+        fence, generation = self.store.begin(permitted, public_job)
+        public_stage = instant.stages[-1].id
+        current_attempt, _ = self.store.claim(permitted, public_job, fence, generation, public_stage)
+        before = self.store.status(OWNER, public_job)["sequence"]
+        for wrong in (("wrong-runner", generation, current_attempt),
+                      (fence, generation + 1, current_attempt), (fence, generation, "wrong-attempt")):
+            with self.subTest(wrong=wrong), self.assertRaises(ExecutionError):
+                self.store.append_public_delta(permitted, public_job, wrong[0], wrong[1],
+                                               public_stage, wrong[2], "should not appear")
+        self.assertEqual(self.store.status(OWNER, public_job)["sequence"], before)
+        self.store.append_public_delta(permitted, public_job, fence, generation, public_stage,
+                                       current_attempt, "hello <")
+        with self.assertRaisesRegex(ExecutionError, "invalid public answer fragment"):
+            self.store.append_public_delta(permitted, public_job, fence, generation, public_stage,
+                                           current_attempt, "think>hidden")
+        self.store.append_public_delta(permitted, public_job, fence, generation, public_stage,
+                                       current_attempt, "</think")
+        with self.assertRaisesRegex(ExecutionError, "invalid public answer fragment"):
+            self.store.append_public_delta(permitted, public_job, fence, generation, public_stage,
+                                           current_attempt, ">hidden")
+        with self.assertRaises(ExecutionError):
+            self.store.append_public_delta(permitted, public_job, fence, generation, public_stage,
+                                           current_attempt, "\ud800")
+        self.store.request_cancel(OWNER, public_job)
+        with self.assertRaises(ExecutionError):
+            self.store.append_public_delta(permitted, public_job, fence, generation, public_stage,
+                                           current_attempt, "after cancel")
+        self.assertNotIn("hidden", json.dumps(self.store.replay(OWNER, public_job)))
+
+        split_job = self.store.create(permitted, "seven-fragment-marker", instant)
+        split_runner, split_epoch = self.store.begin(permitted, split_job)
+        split_attempt, _ = self.store.claim(permitted, split_job, split_runner, split_epoch, public_stage)
+        for char in "</think":
+            self.store.append_public_delta(permitted, split_job, split_runner, split_epoch,
+                                           public_stage, split_attempt, char)
+        with self.assertRaisesRegex(ExecutionError, "invalid public answer fragment"):
+            self.store.append_public_delta(permitted, split_job, split_runner, split_epoch,
+                                           public_stage, split_attempt, ">")
+
+    def test_public_fragment_key_rotation_retention_and_deletion(self):
+        spec = make_spec("instant")
+        grant = grant_for(spec)
+        job = self.store.create(grant, "rotate-fragment", spec)
+        runner, epoch = self.store.begin(grant, job)
+        stage_id = spec.stages[-1].id
+        attempt, _ = self.store.claim(grant, job, runner, epoch, stage_id)
+        receipt = self.store.append_public_delta(grant, job, runner, epoch, stage_id,
+                                                 attempt, "visible answer")
+        self.store.complete(OWNER, job, runner, epoch, stage_id, attempt,
+                            {"content": "visible answer", "tool_calls": [],
+                             "input_tokens": 10, "output_tokens": 3, "debate_required": None})
+        self.store.finish(OWNER, job, runner, epoch, "succeeded")
+        second = KeyMaterial("fragment-key-2", secrets.token_bytes(64))
+        self.keys[second.key_id] = second
+        self.active = second
+        self.store.rotate_job_key(grant, job, administration_authorized=True)
+        self.keys.pop("key-1")
+        event = self.store.replay(OWNER, job, after=receipt["sequence"] - 1)["events"][0]
+        self.assertEqual(event["content"], "visible answer")
+        self.now = self.expiry
+        with self.assertRaises(RetentionExpired):
+            self.store.replay(OWNER, job)
+        self.store.delete_job(grant, job, reason="retention_expired")
+        self.assertEqual(self.store._db.execute("SELECT COUNT(*) FROM answer_fragments WHERE job=?",
+                                                (job,)).fetchone()[0], 0)
 
     def test_current_key_rotation_is_atomic_and_preserves_spec_and_results(self):
         job, spec, grant, _, _ = self.run_job()

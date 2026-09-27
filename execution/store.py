@@ -28,8 +28,14 @@ TERMINAL = frozenset(("succeeded", "failed", "cancelled", "expired", "interrupte
 PUBLIC_EVENT_TYPES = frozenset((
     "job_created", "job_resumed", "job_paused", "job_succeeded", "job_failed",
     "job_cancel_requested", "job_cancelled", "job_expired", "job_interrupted", "job_waiting_tools",
-    "stage_started", "stage_completed", "stage_skipped", "stage_failed",
+    "stage_started", "stage_completed", "stage_skipped", "stage_failed", "answer_fragment",
 ))
+MAX_FRAGMENT_CHARS = 8192
+MAX_FRAGMENT_BYTES = 32768
+MAX_FRAGMENTS_PER_JOB = 4096
+MAX_PUBLIC_ANSWER_CHARS = 250_000
+FORBIDDEN_PUBLIC_MARKERS = ("<think", "</think>")
+PUBLIC_MARKER_TAIL_CHARS = max(map(len, FORBIDDEN_PUBLIC_MARKERS)) - 1
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
  id TEXT PRIMARY KEY, owner TEXT NOT NULL, idem TEXT NOT NULL,
@@ -47,6 +53,12 @@ CREATE TABLE IF NOT EXISTS events (
  job TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, sequence INTEGER NOT NULL,
  type TEXT NOT NULL, stage TEXT, occurred_ms INTEGER NOT NULL,
  PRIMARY KEY(job,sequence)
+);
+CREATE TABLE IF NOT EXISTS answer_fragments (
+ job TEXT NOT NULL, sequence INTEGER NOT NULL, stage TEXT NOT NULL,
+ attempt TEXT NOT NULL, payload BLOB NOT NULL, checksum TEXT NOT NULL,
+ chars INTEGER NOT NULL, PRIMARY KEY(job,sequence),
+ FOREIGN KEY(job,sequence) REFERENCES events(job,sequence) ON DELETE CASCADE
 );
 """
 
@@ -160,6 +172,75 @@ class LocalJobStore:
         db.execute("UPDATE jobs SET sequence=sequence+1 WHERE id=?", (job_id,))
         seq = db.execute("SELECT sequence FROM jobs WHERE id=?", (job_id,)).fetchone()[0]
         db.execute("INSERT INTO events VALUES (?,?,?,?,?)", (job_id, seq, kind, stage, self._time()))
+        return seq
+
+    def _seal_fragment(self, owner, job_id, sequence, encoded):
+        # Plaintext is permitted only by this synthetic, local reference store.
+        return encoded
+
+    def _open_fragment(self, owner, job_id, sequence, payload):
+        return payload
+
+    def append_public_delta(self, grant, job_id, runner, epoch, stage_id, attempt, fragment):
+        """Atomically persist one provisional final-stage fragment under its runner fence.
+
+        This internal method is not an authenticated web job endpoint. The
+        caller must obtain a fresh server grant and enforce source ACLs before
+        each call. The result sequence is stable across reconnects.
+        """
+        require(type(grant) is ExecutionGrant, "current grant required")
+        require(type(fragment) is str and 0 < len(fragment) <= MAX_FRAGMENT_CHARS,
+                "invalid public answer fragment")
+        try:
+            encoded = fragment.encode("utf-8", "strict")
+        except UnicodeError:
+            raise ExecutionError("invalid public answer fragment") from None
+        require(len(encoded) <= MAX_FRAGMENT_BYTES, "invalid public answer fragment")
+        with self._transaction() as db:
+            job = self._owned(db, grant.owner_id, job_id)
+            self._runner(job, runner, epoch)
+            spec = self._spec(job)
+            grant.authorize(grant.owner_id, spec.plan["route_id"])
+            require(job["state"] == "running" and not job["cancel_requested"]
+                    and self._time() < spec.limits.deadline_unix_ms,
+                    "public answer stage is not running")
+            stage = spec.stages[-1]
+            require(stage.public and stage.id == stage_id, "private stage cannot publish answer")
+            row = db.execute("SELECT state,attempt,epoch FROM stages WHERE job=? AND id=?",
+                             (job_id, stage_id)).fetchone()
+            require(row is not None and row["state"] == "running" and row["attempt"] == attempt
+                    and row["epoch"] == epoch, "public answer stage has a stale attempt")
+            count, characters = db.execute("SELECT COUNT(*),COALESCE(SUM(chars),0) FROM answer_fragments "
+                                           "WHERE job=?", (job_id,)).fetchone()
+            require(count < MAX_FRAGMENTS_PER_JOB and characters + len(fragment) <= MAX_PUBLIC_ANSWER_CHARS,
+                    "public answer fragment limit exceeded")
+            previous = db.execute("SELECT sequence,stage FROM answer_fragments WHERE job=? "
+                                  "ORDER BY sequence DESC LIMIT ?", (job_id, PUBLIC_MARKER_TAIL_CHARS)).fetchall()
+            tail = "".join(self._replay_fragment(db, grant.owner_id, job_id, row)
+                           for row in reversed(previous))[-PUBLIC_MARKER_TAIL_CHARS:]
+            require(not any(marker in (tail + fragment).lower() for marker in FORBIDDEN_PUBLIC_MARKERS),
+                    "invalid public answer fragment")
+            sequence = self._event(db, job_id, "answer_fragment", stage_id)
+            payload = self._seal_fragment(grant.owner_id, job_id, sequence, encoded)
+            db.execute("INSERT INTO answer_fragments VALUES (?,?,?,?,?,?,?)",
+                       (job_id, sequence, stage_id, attempt, payload,
+                        hashlib.sha256(payload).hexdigest(), len(fragment)))
+            return {"job_id": job_id, "sequence": sequence, "event_id": f"{job_id}:{sequence}"}
+
+    def _replay_fragment(self, db, owner, job_id, row):
+        fragment = db.execute("SELECT stage,attempt,payload,checksum,chars FROM answer_fragments "
+                              "WHERE job=? AND sequence=?", (job_id, row["sequence"])).fetchone()
+        if (fragment is None or fragment["stage"] != row["stage"] or not fragment["attempt"]
+                or hashlib.sha256(bytes(fragment["payload"])).hexdigest() != fragment["checksum"]):
+            raise ExecutionIntegrityError("public answer fragment integrity failed")
+        encoded = self._open_fragment(owner, job_id, row["sequence"], bytes(fragment["payload"]))
+        try:
+            content = encoded.decode("utf-8", "strict")
+        except UnicodeError:
+            raise ExecutionIntegrityError("public answer fragment integrity failed") from None
+        if type(fragment["chars"]) is not int or len(content) != fragment["chars"]:
+            raise ExecutionIntegrityError("public answer fragment integrity failed")
+        return content
 
     def create(self, grant, idempotency_key, spec):
         require(type(grant) is ExecutionGrant and type(spec) is ExecutionSpec, "trusted grant and spec required")
@@ -204,7 +285,7 @@ class LocalJobStore:
             }
 
     def replay(self, owner, job_id, *, after=0, limit=100):
-        """Owner-scoped ordered lifecycle events; never include model text/credentials.
+        """Owner-scoped ordered events; only final-stage fragments include text.
 
         Stage events are omitted for profiles that disallow activity updates.
         The returned cursor advances over inspected events, including filtered ones.
@@ -224,10 +305,19 @@ class LocalJobStore:
             if len(rows) != expected_count or any(row["sequence"] != after + index + 1
                                                   for index, row in enumerate(rows)):
                 raise ExecutionIntegrityError("event journal sequence gap")
+            events = []
+            for row in rows:
+                if row["type"] == "answer_fragment":
+                    require(row["stage"] == spec.stages[-1].id and spec.stages[-1].public,
+                            "invalid public answer stage")
+                    events.append({"job_id": job_id, "sequence": row["sequence"], "type": row["type"],
+                                   "stage_id": row["stage"], "occurred_ms": row["occurred_ms"],
+                                   "content": self._replay_fragment(db, owner, job_id, row), "provisional": True})
+                elif row["stage"] is None or activity[row["stage"]]:
+                    events.append({"job_id": job_id, "sequence": row["sequence"], "type": row["type"],
+                                   "stage_id": row["stage"], "occurred_ms": row["occurred_ms"]})
             return {
-                "events": [{"job_id": job_id, "sequence": r["sequence"], "type": r["type"],
-                            "stage_id": r["stage"], "occurred_ms": r["occurred_ms"]}
-                           for r in rows if r["stage"] is None or activity[r["stage"]]],
+                "events": events,
                 "next_sequence": rows[-1]["sequence"] if rows else after,
             }
 

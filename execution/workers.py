@@ -70,16 +70,19 @@ class ModelStageWorker:
     """
 
     def __init__(self, client_factory, runtime_probe, token_counter, telemetry_sink,
-                 *, clock_ns=perf_counter_ns, public_delta_sink=None):
+                 *, clock_ns=perf_counter_ns, public_delta_sink=None, public_delta_preflight=None):
         require(all(callable(x) for x in (client_factory, runtime_probe, token_counter, telemetry_sink, clock_ns)),
                 "trusted worker dependencies required")
         require(public_delta_sink is None or callable(public_delta_sink), "invalid public answer sink")
+        require(public_delta_preflight is None or callable(public_delta_preflight),
+                "invalid public answer preflight")
         self.client_factory = client_factory
         self.runtime_probe = runtime_probe
         self.token_counter = token_counter
         self.telemetry_sink = telemetry_sink
         self.clock_ns = clock_ns
         self.public_delta_sink = public_delta_sink
+        self.public_delta_preflight = public_delta_preflight
 
     def __call__(self, spec, stage, artifacts, control, logical_id, attempt):
         control.check()
@@ -109,9 +112,15 @@ class ModelStageWorker:
         records = []
         def publish_public_delta(fragment):
             control.check()
-            self.public_delta_sink(fragment)
+            if self.public_delta_preflight is not None:
+                self.public_delta_preflight()
+            if control.publish_public is not None:
+                control.publish_public(fragment)
+            if self.public_delta_sink is not None:
+                self.public_delta_sink(fragment)
             control.check()
-        public_delta = publish_public_delta if stage.public and self.public_delta_sink is not None else None
+        public_delta = (publish_public_delta if stage.public and
+                        (self.public_delta_sink is not None or control.publish_public is not None) else None)
         try:
             if plan["engine"] == "kova-core":
                 operation = next(op for op in plan["operations"] if op["stage_id"] == stage.id)

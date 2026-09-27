@@ -70,8 +70,19 @@ or refund reservations. Automatic lease stealing and automatic retries are absen
 A crash strictly at a completed frontier can return to paused; a failed frontier
 stays failed, and stale runner epochs remain fenced out.
 
-The journal's public status and replay methods expose lifecycle metadata only,
-not prompts, intermediate artifacts, private judge text, model errors or tokens.
+The journal's status and default replay expose lifecycle metadata only. With
+`persist_public_deltas=True`, a trusted final-stage worker also appends provisional
+answer fragments before immediate delivery. Reconnect uses owner-scoped replay and
+the monotonically increasing `(job_id, sequence)` pair to deduplicate deliveries;
+filtered stage events still advance the cursor. A fragment is never a successful
+result by itself: a later failure, cancellation or uncertain attempt leaves its
+earlier fragments provisional. The private SQLite and PostgreSQL stores encrypt
+fragment text at rest, bind it to owner/job/sequence and retention, and reject
+stale runner/attempt writes. The synthetic LocalJobStore writes plaintext and
+must never hold real user content. Source-context integrations recheck ACLs before
+the fragment is saved; deployments still need authenticated browser transport
+and application-owned ACL/entitlement wiring. No prompt, intermediate artifact,
+private judge text, model error or token becomes a replay event.
 The final result is unavailable until every required stage succeeds. Tool-call
 responses become `waiting_tools`, not a successful answer; no tool is executed.
 Private server methods are not public web endpoints and must not be exposed as such.

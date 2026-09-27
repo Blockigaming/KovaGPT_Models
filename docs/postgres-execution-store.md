@@ -31,12 +31,15 @@ verified before deployment; browsers must never connect as the worker role.
 
 ## Schema and connection controls
 
-The initial PostgreSQL schema lives in migrations/001_private_execution_postgres.sql.
-Its installation function is separate from runtime construction and refuses to run
-without explicit administrative authorization. It creates a new named schema,
-revokes PUBLIC access and applies the initial tables in one transaction. It never
-drops, repairs, extends or silently migrates an existing production schema. Opening
-an absent or wrong-version schema fails rather than creating it during a request.
+The initial PostgreSQL schema lives in migrations/001_private_execution_postgres.sql;
+migrations/002_public_fragments_postgres.sql adds encrypted public-answer fragment
+rows and schema version 2. Installation applies both revisions to a new named
+schema in one transaction. An existing version 1 schema requires the separately
+authorized `upgrade_postgres_schema` administrative operation; the runtime never
+migrates it. Both operations revoke PUBLIC schema/table access. They do not select
+a production target, take backups or grant an application role. Opening an absent
+or wrong-version schema fails rather than creating it during a request. Migration
+planning, compatibility and backups require separate operational review.
 
 The optional concrete connection function requires an explicitly authorized server
 configuration with separate hostname/numeric address, port, database, user, protected
@@ -54,8 +57,10 @@ existing runner fence. Unknown in-flight stages still require confirmed supervis
 recovery and remain interrupted rather than automatically rerunning.
 
 Clean stage frontiers survive closing connections and restarting the isolated
-PostgreSQL process. Encryption, retention, final-only results and idempotency
-metadata survive that restart as well. This validates backend behavior on the
+PostgreSQL process. Encryption, retention, provisional final-stage fragments,
+final-only results and idempotency metadata survive that restart as well. The
+fragment event and ciphertext row commit atomically and replay is owner scoped.
+This validates backend behavior on the
 observed test PostgreSQL version, not a cloud availability SLA, failover setup,
 backup restore, account billing service or a production migration.
 
