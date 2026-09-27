@@ -34,6 +34,7 @@ MAX_FRAGMENT_CHARS = 8192
 MAX_FRAGMENT_BYTES = 32768
 MAX_FRAGMENTS_PER_JOB = 4096
 MAX_PUBLIC_ANSWER_CHARS = 250_000
+FORBIDDEN_PUBLIC_MARKERS = ("<think", "</think>")
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
  id TEXT PRIMARY KEY, owner TEXT NOT NULL, idem TEXT NOT NULL,
@@ -215,8 +216,8 @@ class LocalJobStore:
             previous = db.execute("SELECT sequence,stage FROM answer_fragments WHERE job=? "
                                   "ORDER BY sequence DESC LIMIT 6", (job_id,)).fetchall()
             tail = "".join(self._replay_fragment(db, grant.owner_id, job_id, row)
-                           for row in reversed(previous))[-6:]
-            require(not any(marker in (tail + fragment).lower() for marker in ("<think", "</think>")),
+                           for row in reversed(previous))[-(max(map(len, FORBIDDEN_PUBLIC_MARKERS)) - 1):]
+            require(not any(marker in (tail + fragment).lower() for marker in FORBIDDEN_PUBLIC_MARKERS),
                     "invalid public answer fragment")
             sequence = self._event(db, job_id, "answer_fragment", stage_id)
             payload = self._seal_fragment(grant.owner_id, job_id, sequence, encoded)

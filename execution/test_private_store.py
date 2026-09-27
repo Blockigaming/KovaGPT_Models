@@ -284,6 +284,11 @@ class PrivateStoreTests(SyntheticAdapterTestCase):
         with self.assertRaisesRegex(ExecutionError, "invalid public answer fragment"):
             self.store.append_public_delta(permitted, public_job, fence, generation, public_stage,
                                            current_attempt, "think>hidden")
+        self.store.append_public_delta(permitted, public_job, fence, generation, public_stage,
+                                       current_attempt, "</think")
+        with self.assertRaisesRegex(ExecutionError, "invalid public answer fragment"):
+            self.store.append_public_delta(permitted, public_job, fence, generation, public_stage,
+                                           current_attempt, ">hidden")
         with self.assertRaises(ExecutionError):
             self.store.append_public_delta(permitted, public_job, fence, generation, public_stage,
                                            current_attempt, "\ud800")
