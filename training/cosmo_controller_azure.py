@@ -129,7 +129,8 @@ def watchdog_definition(vm_id, pilot_group_id, watchdog_group_id):
         "triggers": {"every_minute": {"type": "Recurrence",
             "recurrence": {"frequency": "Minute", "interval": 1},
             "runtimeConfiguration": {"concurrency": {"runs": 1}},
-            "conditions": ["@greaterOrEquals(ticks(utcNow()), ticks(parameters('deadlineUtc')))" ]}},
+            "conditions": [{"expression":
+                "@greaterOrEquals(ticks(utcNow()), ticks(parameters('deadlineUtc')))"}]}},
         "actions": {"deallocate_after_deadline": deallocate, "delete_pilot_group": delete,
                     "check_pilot_absent": check,
                     "delete_watchdog_if_pilot_absent": gated_self_delete},
