@@ -1,14 +1,16 @@
 """Fail-closed Kova Core benchmark worker. Importing it starts no paid work."""
 
 import json
-from pathlib import Path
+import math
 from time import perf_counter_ns
 from uuid import UUID, uuid4
 
 from core.adapter import bind_core_operation, build_core_plan
+from core.current_candidates import CORE_SERVING
+from core.identity import load_runtime_identity
+from router.policy import CHAT_POLICIES, WORK_EFFORTS, WORK_FAMILY_POLICIES, resolve_route
 
 
-ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_EFFORTS = frozenset(("low", "medium", "xhigh"))
 ALLOWED_SERVING_ENGINES = frozenset(("vllm", "sglang"))
 ALLOWED_ENDPOINT_TYPES = frozenset(("queue_based", "load_balancing"))
@@ -18,20 +20,16 @@ MAX_MESSAGE_TEXT_CHARS = 250_000
 MAX_TOTAL_TEXT_CHARS = 750_000
 MAX_TOOL_CALLS = 32
 MAX_TOOL_ARGUMENT_CHARS = 250_000
-TRUSTED_SYSTEM_IDENTITY = json.loads(
-    (ROOT / "config" / "identity.v1.json").read_text(encoding="utf-8")
-)["system_identity"]
-ROUTE_POLICY = json.loads(
-    (ROOT / "config" / "route-policy.v1.json").read_text(encoding="utf-8")
-)
-CORE_SERVING = json.loads(
-    (ROOT / "config" / "core-serving.v1.json").read_text(encoding="utf-8")
-)
+MAX_TOOL_JSON_DEPTH = 64
+MAX_TOOL_JSON_NODES = 50_000
+TRUSTED_SYSTEM_IDENTITY = load_runtime_identity()
 PINNED_CORE_CANDIDATES = {
     candidate["id"]: {
         "id": candidate["id"],
         "model": candidate["model"],
         "model_revision": candidate["revision"],
+        "adapter_sha256": candidate["adapter_sha256"],
+        "adapter_bundle_sha256": candidate["adapter_bundle_sha256"],
     }
     for candidate in CORE_SERVING["candidates"]
 }
@@ -39,7 +37,8 @@ RUNTIME_NUMERIC_FIELDS = (
     "worker_start_ms", "model_load_ms", "queue_ms", "gpu_rate_per_second_usd",
 )
 RUNTIME_IDENTITY_FIELDS = (
-    "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "cold_start",
+    "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "loaded_adapter_sha256",
+    "loaded_adapter_bundle_sha256", "cold_start",
     "worker_start_ms", "model_load_ms", "queue_ms", "gpu_rate_per_second_usd", "gpu_type_id",
     "gpu_count", "serving_engine", "endpoint_type", "container_image_digest",
 )
@@ -63,30 +62,31 @@ def _selected_candidate(candidate_id):
 
 def _stage_ids(policy):
     stages = []
-    for phase, field in (
-        ("planning", "planning_passes"), ("answer", "answer_passes"),
-        ("critic", "critic_passes"), ("verification", "verification_passes"),
-    ):
-        stages.extend(f"{phase}-{index}" for index in range(1, policy.get(field, 0) + 1))
+    for phase, count in zip(("planning", "answer", "critic", "verification"), policy["passes"]):
+        stages.extend(f"{phase}-{index}" for index in range(1, count + 1))
     return stages
 
 
 CORE_ROUTE_STAGES = {}
 CORE_ROUTE_EFFORTS = {}
 WORK_ROUTE_REQUESTS = {}
-for route in ROUTE_POLICY["chat"]:
-    if route["engine"] == "kova-core":
-        CORE_ROUTE_STAGES[route["id"]] = _stage_ids(route)
-        CORE_ROUTE_EFFORTS[route["id"]] = route["reasoning_effort"]
-for family in ROUTE_POLICY["work"]["families"]:
-    for effort in ROUTE_POLICY["work"]["effort_profiles"]:
-        if effort["engine"] == "kova-core":
-            route_id = f"work:{family}:{effort['name'].lower().replace(' ', '-')}"
-            CORE_ROUTE_STAGES[route_id] = _stage_ids(effort)
+for route_id, policy in CHAT_POLICIES.items():
+    if policy["engine"] == "kova-core":
+        CORE_ROUTE_STAGES[route_id] = _stage_ids(resolve_route({"surface": "chat", "route_id": route_id}))
+        CORE_ROUTE_EFFORTS[route_id] = policy["reasoning_effort"]
+for family in WORK_FAMILY_POLICIES:
+    for name, effort in WORK_EFFORTS.items():
+        if name != "Ultra":
+            route_id = f"work:{family}:{name.lower().replace(' ', '-')}"
+            CORE_ROUTE_STAGES[route_id] = _stage_ids(resolve_route({"surface": "work", "family": family, "effort": name}))
             CORE_ROUTE_EFFORTS[route_id] = effort["reasoning_effort"]
             WORK_ROUTE_REQUESTS[route_id] = {
-                "surface": "work", "family": family, "effort": effort["name"],
+                "surface": "work", "family": family, "effort": name,
             }
+            if family in ("cosmo", "orion"):
+                chat_route_id = f"chat:{family}:{name.lower().replace(' ', '-')}"
+                CORE_ROUTE_STAGES[chat_route_id] = _stage_ids(resolve_route({"surface": "chat", "family": family, "effort": name}))
+                CORE_ROUTE_EFFORTS[chat_route_id] = effort["reasoning_effort"]
 
 
 def _validated_message(message):
@@ -164,10 +164,22 @@ def _validate_runtime_value(value, selected_candidate):
         value.get("loaded_model_revision") == selected_candidate["model_revision"],
         "runtime loaded model revision does not match selected pinned revision",
     )
+    pinned_adapter = selected_candidate["adapter_sha256"]
+    _require(isinstance(pinned_adapter, str) and len(pinned_adapter) == 64
+             and all(character in "0123456789abcdef" for character in pinned_adapter),
+             "trained adapter digest is not pinned for this candidate")
+    _require(value.get("loaded_adapter_sha256") == pinned_adapter,
+             "runtime loaded adapter does not match pinned trained adapter")
+    pinned_bundle = selected_candidate["adapter_bundle_sha256"]
+    _require(isinstance(pinned_bundle, str) and len(pinned_bundle) == 64
+             and all(character in "0123456789abcdef" for character in pinned_bundle),
+             "trained adapter bundle digest is not pinned for this candidate")
+    _require(value.get("loaded_adapter_bundle_sha256") == pinned_bundle,
+             "runtime loaded adapter bundle does not match pinned manifest")
     for field in RUNTIME_NUMERIC_FIELDS:
         number = value.get(field)
         _require(isinstance(number, (int, float)) and not isinstance(number, bool), f"invalid {field}")
-        _require(number >= 0, f"invalid {field}")
+        _require(number >= 0 and (not isinstance(number, float) or math.isfinite(number)), f"invalid {field}")
     _require(value["gpu_rate_per_second_usd"] > 0, "invalid gpu_rate_per_second_usd")
     _require(isinstance(value["worker_lifecycle_id"], str) and value["worker_lifecycle_id"], "invalid worker_lifecycle_id")
     _require(isinstance(value["gpu_type_id"], str) and value["gpu_type_id"].strip(), "invalid gpu_type_id")
@@ -195,6 +207,7 @@ def _planner_request(value, route_id):
 
 
 def build_engine_request(value, execution_context, *, token_counter):
+    _require(load_runtime_identity() == TRUSTED_SYSTEM_IDENTITY, "approved Kova identity prompt changed")
     value = validate_input(value)
     execution = validate_execution_context(execution_context)
     selected_candidate = _selected_candidate(execution["benchmark_candidate_id"])
@@ -252,7 +265,8 @@ def _append_stream_tool_calls(states, fragments):
             "stream tool call has invalid fields",
         )
         index = fragment.get("index")
-        _require(isinstance(index, int) and not isinstance(index, bool) and index >= 0, "invalid stream tool call index")
+        _require(isinstance(index, int) and not isinstance(index, bool) and 0 <= index < MAX_TOOL_CALLS, "invalid stream tool call index")
+        _require(index in states or len(states) < MAX_TOOL_CALLS, "too many engine tool_calls")
         state = states.setdefault(index, {"id": "", "type": "", "function": {"name": "", "arguments": ""}})
         for field in ("id", "type"):
             part = fragment.get(field)
@@ -260,6 +274,7 @@ def _append_stream_tool_calls(states, fragments):
             if part:
                 contributed_visible_data = contributed_visible_data or bool(part.strip())
                 state[field] += part
+                _require(len(state[field]) <= (256 if field == "id" else 8), "stream tool identity too large")
         function = fragment.get("function")
         if function is not None:
             function = _mapping(function, "stream tool call function must be an object")
@@ -273,6 +288,8 @@ def _append_stream_tool_calls(states, fragments):
                 if part:
                     contributed_visible_data = contributed_visible_data or bool(part.strip())
                     state["function"][field] += part
+                    _require(len(state["function"][field]) <= (64 if field == "name" else MAX_TOOL_ARGUMENT_CHARS),
+                             "stream tool function too large")
     return contributed_visible_data
 
 
@@ -296,37 +313,53 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
         raise ValueError("streaming engine response must be an iterable of chunks") from error
 
     content_parts = []
+    content_chars = 0
     tool_call_states = {}
     usage = None
     first_token_ns = None
     finish_reason = None
-    for raw_chunk in chunks:
-        chunk = _mapping(raw_chunk, "stream chunk must be an object")
-        if chunk.get("usage") is not None:
-            usage = _mapping(chunk["usage"], "stream usage must be an object")
-        choices = chunk.get("choices", [])
-        _require(isinstance(choices, list), "stream choices must be an array")
-        for raw_choice in choices:
-            _require(finish_reason is None, "stream returned a choice after its terminal finish reason")
-            choice = _mapping(raw_choice, "stream choice must be an object")
-            _require(choice.get("index", 0) == 0, "stream returned an unexpected choice index")
-            delta = _mapping(choice.get("delta"), "stream choice missing delta")
-            reason = choice.get("finish_reason")
-            _require(reason is None or isinstance(reason, str), "invalid stream finish_reason")
-            if reason is not None:
-                _require(finish_reason is None, "stream returned multiple finish reasons")
-                finish_reason = reason
-            _require(delta.get("reasoning_content") in (None, ""), "engine returned hidden reasoning")
-            content = delta.get("content")
-            _require(content is None or isinstance(content, str), "stream content must be text or null")
-            fragments = delta.get("tool_calls", [])
-            _require(isinstance(fragments, list), "stream tool_calls must be an array")
-            meaningful_tool_fragment = _append_stream_tool_calls(tool_call_states, fragments)
-            if first_token_ns is None and ((content and content.strip()) or meaningful_tool_fragment):
-                first_token_ns = clock_ns()
-                timing_state["time_to_first_token_ms"] = max(0, first_token_ns - started_ns) / 1_000_000
-            if content:
-                content_parts.append(content)
+    try:
+        for raw_chunk in chunks:
+            chunk = _mapping(raw_chunk, "stream chunk must be an object")
+            if chunk.get("usage") is not None:
+                _require(usage is None, "stream returned duplicate usage evidence")
+                usage = _mapping(chunk["usage"], "stream usage must be an object")
+            choices = chunk.get("choices", [])
+            _require(isinstance(choices, list) and len(choices) <= 1, "stream must return at most one choice")
+            for raw_choice in choices:
+                _require(finish_reason is None, "stream returned a choice after its terminal finish reason")
+                choice = _mapping(raw_choice, "stream choice must be an object")
+                _require(type(choice.get("index", 0)) is int and choice.get("index", 0) == 0,
+                         "stream returned an unexpected choice index")
+                delta = _mapping(choice.get("delta"), "stream choice missing delta")
+                reason = choice.get("finish_reason")
+                _require(reason is None or isinstance(reason, str), "invalid stream finish_reason")
+                if reason is not None:
+                    _require(finish_reason is None, "stream returned multiple finish reasons")
+                    finish_reason = reason
+                _require(delta.get("reasoning_content") in (None, ""), "engine returned hidden reasoning")
+                content = delta.get("content")
+                _require(content is None or isinstance(content, str), "stream content must be text or null")
+                fragments = delta.get("tool_calls", [])
+                _require(isinstance(fragments, list), "stream tool_calls must be an array")
+                meaningful_tool_fragment = _append_stream_tool_calls(tool_call_states, fragments)
+                if first_token_ns is None and ((content and content.strip()) or meaningful_tool_fragment):
+                    first_token_ns = clock_ns()
+                    timing_state["time_to_first_token_ms"] = max(0, first_token_ns - started_ns) / 1_000_000
+                if content:
+                    content_chars += len(content)
+                    _require(content_chars <= MAX_TOTAL_TEXT_CHARS, "stream content too large")
+                    content_parts.append(content)
+    finally:
+        # The consumer can reject a chunk before exhausting the provider stream.
+        # Close explicitly rather than relying on generator garbage collection.
+        close = getattr(chunks, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                # Never mask the original rejection with transport cleanup details.
+                pass
 
     finished_ns = clock_ns()
     tool_calls = [tool_call_states[index] for index in sorted(tool_call_states)]
@@ -340,15 +373,56 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
     return normalized, finished_ns
 
 
+def _unique_tool_object(pairs):
+    result = {}
+    for key, value in pairs:
+        _require(key not in result, "duplicate tool argument key")
+        result[key] = value
+    return result
+
+
+def _finite_tool_float(raw):
+    value = float(raw)
+    _require(math.isfinite(value), "nonfinite tool argument")
+    return value
+
+
+def _reject_tool_constant(_value):
+    raise ValueError("nonfinite tool argument")
+
+
+def _validate_tool_structure(value):
+    # Iterative validation avoids interpreter-dependent recursion limits.
+    pending = [(value, 0)]
+    visited = 0
+    while pending:
+        current, depth = pending.pop()
+        visited += 1
+        _require(depth <= MAX_TOOL_JSON_DEPTH and visited <= MAX_TOOL_JSON_NODES,
+                 "tool argument structure too large")
+        if isinstance(current, dict):
+            pending.extend((item, depth + 1) for pair in current.items() for item in pair)
+        elif isinstance(current, list):
+            pending.extend((item, depth + 1) for item in current)
+        elif isinstance(current, str):
+            try:
+                current.encode("utf-8")
+            except UnicodeEncodeError:
+                raise ValueError("tool argument is not valid UTF-8") from None
+
+
 def _sanitized_tool_calls(value):
     _require(isinstance(value, list), "engine tool_calls must be an array")
     _require(len(value) <= MAX_TOOL_CALLS, "too many engine tool_calls")
     cleaned = []
+    seen_ids = set()
     for raw_call in value:
         call = _mapping(raw_call, "engine tool call must be an object")
         _require(set(call) == {"id", "type", "function"}, "engine tool call has invalid fields")
         call_id = call["id"]
         _require(isinstance(call_id, str) and 1 <= len(call_id) <= 256, "invalid engine tool call id")
+        _require(call_id not in seen_ids, "duplicate engine tool call id")
+        seen_ids.add(call_id)
         _require(call["type"] == "function", "unsupported engine tool call type")
         function = _mapping(call["function"], "engine tool call function must be an object")
         _require(set(function) == {"name", "arguments"}, "engine tool function has invalid fields")
@@ -364,10 +438,12 @@ def _sanitized_tool_calls(value):
             "invalid engine tool function arguments",
         )
         try:
-            decoded_arguments = json.loads(arguments)
-        except json.JSONDecodeError as error:
-            raise ValueError("engine tool function arguments must be valid JSON") from error
+            decoded_arguments = json.loads(arguments, object_pairs_hook=_unique_tool_object,
+                                           parse_constant=_reject_tool_constant, parse_float=_finite_tool_float)
+        except (ValueError, RecursionError):
+            raise ValueError("engine tool function arguments must be valid JSON with finite values and unique keys") from None
         _require(isinstance(decoded_arguments, dict), "engine tool function arguments must be a JSON object")
+        _validate_tool_structure(decoded_arguments)
         cleaned.append({
             "id": call_id,
             "type": "function",
@@ -379,9 +455,11 @@ def _sanitized_tool_calls(value):
 def sanitize_engine_response(request_id, response):
     _require(isinstance(response, dict), "engine response must be an object")
     choices = response.get("choices")
-    _require(isinstance(choices, list) and choices, "engine response missing choices")
+    _require(isinstance(choices, list) and len(choices) == 1, "engine response must contain exactly one choice")
     first = choices[0]
     _require(isinstance(first, dict), "engine choice must be an object")
+    _require(type(first.get("index", 0)) is int and first.get("index", 0) == 0,
+             "engine returned an unexpected choice index")
     message = first.get("message")
     _require(isinstance(message, dict), "engine response missing message")
     finish_reason = first.get("finish_reason")
@@ -389,6 +467,7 @@ def sanitize_engine_response(request_id, response):
     content = message.get("content")
     tool_calls = _sanitized_tool_calls(message.get("tool_calls", []))
     _require(content is None or isinstance(content, str), "engine response content must be text or null")
+    _require(content is None or len(content) <= MAX_TOTAL_TEXT_CHARS, "engine response content too large")
     has_content = bool(content and content.strip())
     _require(has_content or bool(tool_calls), "engine response must contain non-whitespace content or tool_calls")
     _require(finish_reason != "tool_calls" or bool(tool_calls), "tool-call finish_reason missing tool_calls")
@@ -419,6 +498,8 @@ def _attempt_record(value, execution, attempt_id, outcome, elapsed_ms, first_tok
         "outcome": outcome,
         "model": runtime["loaded_model"],
         "model_revision": runtime["loaded_model_revision"],
+        "adapter_sha256": runtime["loaded_adapter_sha256"],
+        "adapter_bundle_sha256": runtime["loaded_adapter_bundle_sha256"],
         "route_id": execution["route_id"],
         "stage_id": execution["stage_id"],
         "public_response": execution["public_response"],
@@ -452,14 +533,16 @@ def emit_lifecycle_close(
     selected_candidate = _selected_candidate(benchmark_candidate_id)
     value = runtime_close_probe()
     required = {
-        "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "billed_lifecycle_ms",
+        "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "loaded_adapter_sha256",
+        "loaded_adapter_bundle_sha256", "billed_lifecycle_ms",
         "attributed_idle_timeout_ms", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count",
         "serving_engine", "endpoint_type", "container_image_digest",
     }
     _require(isinstance(value, dict) and set(value) == required, "invalid lifecycle close probe")
     identity_probe = {
         **{field: value[field] for field in (
-            "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision",
+            "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "loaded_adapter_sha256",
+            "loaded_adapter_bundle_sha256",
             "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count", "serving_engine",
             "endpoint_type", "container_image_digest",
         )},
@@ -470,9 +553,11 @@ def emit_lifecycle_close(
     }
     validated = _validate_runtime_value(identity_probe, selected_candidate)
     idle_ms = value["attributed_idle_timeout_ms"]
-    _require(isinstance(idle_ms, (int, float)) and not isinstance(idle_ms, bool) and idle_ms > 0, "invalid attributed_idle_timeout_ms")
+    _require(isinstance(idle_ms, (int, float)) and not isinstance(idle_ms, bool) and idle_ms > 0
+             and (not isinstance(idle_ms, float) or math.isfinite(idle_ms)), "invalid attributed_idle_timeout_ms")
     billed_ms = value["billed_lifecycle_ms"]
-    _require(isinstance(billed_ms, (int, float)) and not isinstance(billed_ms, bool) and billed_ms > 0, "invalid billed_lifecycle_ms")
+    _require(isinstance(billed_ms, (int, float)) and not isinstance(billed_ms, bool) and billed_ms > 0
+             and (not isinstance(billed_ms, float) or math.isfinite(billed_ms)), "invalid billed_lifecycle_ms")
     _require(idle_ms <= billed_ms, "idle tail exceeds billed lifecycle")
     close_event_id = close_event_id_factory()
     _require(isinstance(close_event_id, str) and close_event_id, "invalid close_event_id")
@@ -482,6 +567,8 @@ def emit_lifecycle_close(
         "worker_lifecycle_id": validated["worker_lifecycle_id"],
         "model": validated["loaded_model"],
         "model_revision": validated["loaded_model_revision"],
+        "adapter_sha256": validated["loaded_adapter_sha256"],
+        "adapter_bundle_sha256": validated["loaded_adapter_bundle_sha256"],
         "billed_lifecycle_ms": billed_ms,
         "attributed_idle_timeout_ms": idle_ms,
         "gpu_rate_per_second_usd": validated["gpu_rate_per_second_usd"],

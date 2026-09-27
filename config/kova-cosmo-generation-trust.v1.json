@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "status": "signing_public_key_provisioning_required",
+  "algorithm": "ed25519",
+  "public_key_hex": null,
+  "public_key_sha256": null,
+  "runner_private_key_environment_variable": "KOVA_COSMO_GENERATION_SIGNING_KEY_FILE",
+  "verifier_private_key_access_allowed": false,
+  "checked_in_private_key_allowed": false
+}

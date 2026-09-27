@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "status": "owner_approved_source_contract_not_runtime_integrated",
+  "context_order": [
+    "current_conversation",
+    "saved_memory",
+    "custom_instructions",
+    "task_context",
+    "session_corrections"
+  ],
+  "memory_policy": {
+    "explicitly_approved_only": true,
+    "owner_scoped": true,
+    "cross_owner_access_forbidden": true,
+    "deletion_must_take_effect_before_next_request": true
+  },
+  "request_scope_policy": {
+    "active_conversation_id_required": true,
+    "conversation_history_must_match_active_conversation": true,
+    "session_corrections_must_match_active_conversation": true
+  },
+  "custom_instruction_policy": {
+    "owner_scoped": true,
+    "cannot_override_entitlements": true,
+    "cannot_select_provider_or_model": true
+  },
+  "task_context_policy": {
+    "authorized_references_only": true,
+    "project_scope_required": true,
+    "tool_results_must_be_attributed": true,
+    "source_revision_and_sha256_required": true
+  },
+  "correction_policy": {
+    "session_scoped_by_default": true,
+    "does_not_modify_model_weights": true,
+    "promotion_to_memory_requires_separate_approval": true
+  },
+  "routing_policy": {
+    "tier_and_effort_are_server_authoritative": true,
+    "personalization_cannot_expand_model_or_effort_access": true
+  },
+  "limits": {
+    "maximum_items_per_section": 64,
+    "maximum_item_characters": 4096,
+    "maximum_total_characters": 65536,
+    "total_includes_every_string_value": true
+  },
+  "runtime_integrated": false,
+  "production_ready": false
+}

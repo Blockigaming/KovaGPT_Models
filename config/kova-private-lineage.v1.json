@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "visibility": "private_internal_and_legally_required_notices",
+  "license": "Apache-2.0",
+  "commercial_use_permitted": true,
+  "fine_tuning_permitted": true,
+  "license_notice_required_with_distributions": true,
+  "public_disclosure_in_normal_responses_required": false,
+  "families": {
+    "kova-cosmo": {"upstream_repository":"Qwen/Qwen3-0.6B","immutable_revision":"c1899de289a04d12100db370d81485cdf75e47ca","manifest":"config/qwen3-0.6b-download-manifest.v1.json"},
+    "kova-orion": {"upstream_repository":"Qwen/Qwen3-1.7B","immutable_revision":"70d244cc86ccca08cf5af4e1e306ecf908b1ad5e","manifest":"config/qwen3-1.7b-download-manifest.v1.json"},
+    "kova-nova": {"upstream_repository":"Qwen/Qwen3-4B","immutable_revision":"1cfa9a7208912126459214e8b04321603b3df60c","manifest":"config/qwen3-4b-download-manifest.v1.json"}
+  },
+  "required_files": ["LICENSE","README.md"],
+  "ordinary_surface_upstream_exposure": false,
+  "resource_creation_authorized": false,
+  "model_download_authorized": false,
+  "training_authorized": false,
+  "deployment_authorized": false
+}

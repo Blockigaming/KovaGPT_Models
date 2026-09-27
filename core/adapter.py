@@ -1,15 +1,14 @@
 """Build RunPod Kova Core plans without performing network requests."""
 
 from copy import deepcopy
-import json
-from pathlib import Path
 
 from router.policy import resolve_route
+from core.current_candidates import CORE_SERVING
+from core.identity import TRUSTED_SYSTEM_MESSAGE_COUNT, load_runtime_identity, selected_candidate_provenance
+from release.model_revisions import source_reference_for_route
 
 
-ROOT = Path(__file__).resolve().parents[1]
-IDENTITY = json.loads((ROOT / "config" / "identity.v1.json").read_text(encoding="utf-8"))["system_identity"]
-CORE_SERVING = json.loads((ROOT / "config" / "core-serving.v1.json").read_text(encoding="utf-8"))
+IDENTITY = load_runtime_identity()
 CANDIDATES = {candidate["model"]: candidate for candidate in CORE_SERVING["candidates"]}
 CORE_ROUTE_LIMITS = {
     "instant": 2048,
@@ -61,11 +60,20 @@ def _resolved_policy(value):
     keys = set(value)
     if "route_id" in value:
         _require(keys == {"request_id", "messages", "route_id"}, "request contains unsupported or server-controlled fields")
-        policy = resolve_route({"surface": "chat", "route_id": value["route_id"]})
+        route_id = value["route_id"]
+        if isinstance(route_id, str) and route_id.startswith("chat:"):
+            parts = route_id.split(":")
+            _require(len(parts) == 3, "invalid canonical chat route")
+            effort = parts[2].replace("-", " ").title()
+            policy = resolve_route({"surface": "chat", "family": parts[1], "effort": effort})
+        else:
+            policy = resolve_route({"surface": "chat", "route_id": route_id})
     else:
         expected = {"request_id", "messages", "surface", "family", "effort"}
-        _require(keys == expected and value.get("surface") == "work", "request contains unsupported or server-controlled fields")
-        policy = resolve_route({"surface": "work", "family": value["family"], "effort": value["effort"]})
+        _require(keys == expected and value.get("surface") in ("chat", "work"),
+                 "request contains unsupported or server-controlled fields")
+        policy = resolve_route({"surface": value["surface"], "family": value["family"],
+                                "effort": value["effort"]})
     _require(policy["engine"] == "kova-core", "route is not eligible for Kova Core")
     return policy
 
@@ -73,9 +81,8 @@ def _resolved_policy(value):
 def _stage_output_limit(kind, route_limit, is_final):
     if is_final:
         return route_limit
-    if kind in ("planning", "critic"):
-        return min(2048, route_limit)
-    return min(8192, route_limit)
+    # Native 32k context must reserve room for each earlier private stage.
+    return min(512, route_limit)
 
 
 def _artifact_message(stage_id):
@@ -90,12 +97,15 @@ def _artifact_message(stage_id):
 
 def build_core_plan(value, *, candidate_model, token_counter):
     """Build immutable provider calls; the caller payload cannot select a model or effort."""
+    identity = load_runtime_identity()
     _require(isinstance(value, dict), "request must be an object")
     policy = _resolved_policy(value)
     request_id = value["request_id"]
     _require(isinstance(request_id, str) and 1 <= len(request_id) <= 128, "invalid request_id")
     route_id = policy["route_id"]
     _require(candidate_model in CANDIDATES, "unverified Core candidate")
+    _require(candidate_model == source_reference_for_route(route_id).slot,
+             "candidate differs from authoritative family route")
     _require(callable(token_counter), "trusted token counter missing")
     messages = _messages(value["messages"])
     route_limit = policy.get("maximum_output_tokens", CORE_ROUTE_LIMITS.get(route_id))
@@ -107,7 +117,7 @@ def build_core_plan(value, *, candidate_model, token_counter):
         is_final = offset == len(stages) - 1
         dependencies = [operation["stage_id"] for operation in operations]
         maximum_output_tokens = _stage_output_limit(kind, route_limit, is_final)
-        first_artifact_message_index = 3 + len(messages)
+        first_artifact_message_index = TRUSTED_SYSTEM_MESSAGE_COUNT + len(messages)
         artifact_bindings = [
             {
                 "source_stage_id": dependency,
@@ -120,7 +130,8 @@ def build_core_plan(value, *, candidate_model, token_counter):
             for dependency_index, dependency in enumerate(dependencies)
         ]
         provider_messages = [
-            {"role": "system", "content": IDENTITY},
+            {"role": "system", "content": identity},
+            selected_candidate_provenance(route_id, candidate_model),
             {"role": "system", "content": policy["behavior_instruction"]},
             {"role": "system", "content": STAGE_INSTRUCTIONS[kind]},
             *messages,
@@ -222,6 +233,10 @@ def bind_core_operation(plan, stage_id, prior_stage_outputs, *, token_counter):
     messages = template.get("messages")
     bindings = template.get("artifact_bindings")
     _require(isinstance(messages, list) and isinstance(bindings, list), "Core artifact binding contract missing")
+    _require(len(messages) >= TRUSTED_SYSTEM_MESSAGE_COUNT and
+             messages[0] == {"role": "system", "content": load_runtime_identity()} and
+             messages[1] == selected_candidate_provenance(plan.get("route_id"), plan.get("candidate_model")),
+             "Core trusted identity or provenance was changed")
     _require(len(bindings) == len(dependencies), "Core artifact binding count does not match DAG")
     bound_targets = set()
     for binding in bindings:

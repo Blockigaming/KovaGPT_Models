@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 import unittest
 
 from router.auto import classify_auto
@@ -34,9 +36,9 @@ class AutoClassifierTests(unittest.TestCase):
         self.assertEqual(route["route_id"], "ultra")
         self.assertEqual(route["engine"], "kova-ultra")
 
-    def test_ultra_fails_back_to_max_without_entitlement_or_budget(self):
+    def test_ultra_fallback_respects_entitlement_and_budget(self):
         prompt = "Research competitors and create a comprehensive cross-functional launch strategy and full report."
-        self.assertEqual(self.classify(prompt, entitlement="plus")["route_id"], "max")
+        self.assertEqual(self.classify(prompt, entitlement="plus")["route_id"], "high")
         self.assertEqual(self.classify(prompt, remaining_usd=0.1)["route_id"], "max")
         self.assertEqual(self.classify(prompt, ultra_authorized=False)["route_id"], "max")
 
@@ -48,6 +50,74 @@ class AutoClassifierTests(unittest.TestCase):
     def test_invalid_budget_context_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "budget context"):
             classify_auto("hello", entitlement="pro", budget={})
+
+    def test_plus_caps_deep_max_and_ultra_branches_at_high(self):
+        cases = (
+            ("Analyze architecture " + "context " * 65, "extra-high"),
+            ("Analyze architecture " + "context " * 145, "max"),
+            ("Research competitors and create a comprehensive full report.", "ultra"),
+        )
+        for prompt, pro_route in cases:
+            with self.subTest(pro_route=pro_route):
+                self.assertEqual(self.classify(prompt)["route_id"], pro_route)
+                route = self.classify(prompt, entitlement="plus")
+                self.assertEqual(route["route_id"], "high")
+                self.assertEqual(route["engine"], "kova-core")
+                self.assertIn("plus_plan_high_cap", route["feature_ids"])
+
+    def test_plus_keeps_allowed_routes_unchanged(self):
+        for prompt, expected in (
+            ("What is 8 + 7?", "instant"),
+            ("Debug this React error", "medium"),
+            ("Analyze security", "high"),
+        ):
+            with self.subTest(expected=expected):
+                route = self.classify(prompt, entitlement="plus")
+                self.assertEqual(route["route_id"], expected)
+                self.assertNotIn("plus_plan_high_cap", route["feature_ids"])
+
+    def test_every_branch_obeys_plan_caps_across_budget_states(self):
+        prompts = (
+            "What is 8 + 7?", "Debug this React error", "Analyze security",
+            "Analyze architecture " + "context " * 65,
+            "Analyze architecture " + "context " * 145,
+            "Research competitors and create a comprehensive full report.",
+        )
+        allowed = {
+            "free": {"instant"},
+            "plus": {"instant", "medium", "high"},
+            "pro": {"instant", "medium", "high", "extra-high", "max", "ultra"},
+        }
+        for tier, routes in allowed.items():
+            for authorized in (False, True):
+                for remaining in (0, 0.49, 0.5, 1):
+                    for prompt in prompts:
+                        with self.subTest(tier=tier, authorized=authorized, remaining=remaining, prompt=prompt[:25]):
+                            route = self.classify(prompt, entitlement=tier,
+                                                  ultra_authorized=authorized, remaining_usd=remaining)
+                            self.assertIn(route["route_id"], routes)
+                            if route["route_id"] == "ultra":
+                                self.assertEqual(tier, "pro")
+                                self.assertTrue(authorized)
+                                self.assertGreaterEqual(remaining, 0.5)
+
+    def test_nonfinite_or_invalid_budget_numbers_fail_closed(self):
+        for field in ("remaining_usd", "estimated_ultra_usd"):
+            for value in (float("nan"), float("inf"), -float("inf"), True, "1", None, -1):
+                with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                    self.classify("Research competitors and create a comprehensive full report.", **{field: value})
+
+    def test_source_contract_records_the_same_plus_cap(self):
+        policy = json.loads((Path(__file__).resolve().parents[1] / "config/route-policy.v1.json").read_text(encoding="utf-8"))
+        self.assertEqual(policy["auto"]["free_plan_route_cap"], "instant")
+        self.assertEqual(policy["auto"]["plus_plan_route_cap"], "high")
+        self.assertEqual(policy["auto"]["ultra_entitlement"], "pro")
+        self.assertFalse(policy["auto"]["production_ready"])
+
+    def test_invalid_server_entitlement_fails_closed(self):
+        for entitlement in ("unknown", "PLUS", "", None, True, [], {}):
+            with self.subTest(entitlement=entitlement), self.assertRaises(ValueError):
+                self.classify("hello", entitlement=entitlement)
 
 
 if __name__ == "__main__":

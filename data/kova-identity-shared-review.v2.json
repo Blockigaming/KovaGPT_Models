@@ -1,0 +1,19 @@
+{
+  "schema_version":2,
+  "status":"owner_approved_exact_dataset_and_all_review_entries",
+  "owner":"Zachary Block",
+  "owner_statement":"I approve dataset SHA-256 fa6406b2be2e607f8a40565bf9340db226a6fb8def4d5342d30dc38105696051 and all 42 review entries for Kova Cosmo, Kova Orion, and Kova Nova.",
+  "approved_dataset_sha256":"fa6406b2be2e607f8a40565bf9340db226a6fb8def4d5342d30dc38105696051",
+  "current_reconstructed_dataset_sha256":"fa6406b2be2e607f8a40565bf9340db226a6fb8def4d5342d30dc38105696051",
+  "exact_current_dataset_owner_approved":true,
+  "approval_date":"2026-09-22",
+  "reason":"owner explicitly approved the reconstructed exact byte hash and all 42 review entries",
+  "criteria":["correct","useful","kova_identity_consistent","ownership_language_accurate","ordinary_upstream_suppression","provenance_truthful_with_trusted_evidence","safe","style_appropriate","synthetic_and_licensed","contains_no_secrets_or_private_conversations"],
+  "records":[
+    {"id":"train-001","verdict":"approve"},{"id":"train-002","verdict":"approve"},{"id":"train-003","verdict":"approve"},{"id":"train-004","verdict":"approve"},{"id":"train-005","verdict":"approve"},{"id":"train-006","verdict":"approve"},{"id":"train-007","verdict":"approve"},{"id":"train-008","verdict":"approve"},{"id":"train-009","verdict":"approve"},{"id":"train-010","verdict":"approve"},{"id":"train-011","verdict":"approve"},{"id":"train-012","verdict":"approve"},{"id":"train-013","verdict":"approve"},{"id":"train-014","verdict":"approve"},{"id":"train-015","verdict":"approve"},{"id":"train-016","verdict":"approve"},{"id":"train-017","verdict":"approve"},{"id":"train-018","verdict":"approve"},{"id":"train-019","verdict":"approve"},{"id":"train-020","verdict":"approve"},{"id":"train-021","verdict":"approve"},{"id":"train-022","verdict":"approve"},{"id":"train-023","verdict":"approve"},{"id":"train-024","verdict":"approve"},{"id":"train-025","verdict":"approve"},{"id":"train-026","verdict":"approve"},{"id":"train-027","verdict":"approve"},
+    {"id":"validation-001","verdict":"approve"},{"id":"validation-002","verdict":"approve"},{"id":"validation-003","verdict":"approve"},{"id":"validation-004","verdict":"approve"},{"id":"validation-005","verdict":"approve"},{"id":"validation-006","verdict":"approve"},{"id":"validation-007","verdict":"approve"},{"id":"validation-008","verdict":"approve"},{"id":"validation-009","verdict":"approve"},{"id":"validation-010","verdict":"approve"},{"id":"validation-011","verdict":"approve"},{"id":"validation-012","verdict":"approve"},{"id":"validation-013","verdict":"approve"},{"id":"validation-014","verdict":"approve"},{"id":"validation-015","verdict":"approve"}
+  ],
+  "human_content_review_complete":true,
+  "cryptographic_dataset_approval_complete":true,
+  "training_authorized":false
+}

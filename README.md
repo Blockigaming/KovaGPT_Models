@@ -1,10 +1,27 @@
 # Kova 1.0
 
-Kova is the AI system developed for KovaGPT. The target architecture has two
-physical RunPod Serverless inference endpoints while preserving the existing
-Azure application plane: one benchmark-selected Kova Core endpoint for Auto
-through Max and non-Ultra Work, plus a separate scale-to-zero Kova Ultra endpoint.
-Cloudflare remains the DNS, CDN, WAF, and DDoS edge; it is not an inference host.
+Kova is the AI system developed for KovaGPT. **Microsoft Azure is the selected
+hosting direction** for Kova Core and Kova Ultra. Azure Container Apps Consumption
+GPU is the proposed scale-to-zero target; region, quota, hardware, container and
+model selections remain blocked. The existing RunPod source is legacy compatibility
+material, not the active hosting decision or a live deployment. Cloudflare remains
+the DNS, CDN, WAF and DDoS edge, not an inference host.
+
+The guarded [Azure provider boundary](docs/azure-provider-boundary.md) now has
+CPU-only HTTP/SSE fixtures, explicit execution gates, cancellation cleanup and
+integration coverage for every Core Chat/Work stage. No network/credential SDK is
+bound to production, and no model or Azure resource was started. The concrete
+[HTTP and managed-identity REST client](docs/azure-http-runtime.md) is implemented
+and loopback-tested behind disabled-by-default controls. No live endpoint,
+address, audience, identity or timeout is selected. The historical RunPod-specific
+sections below describe the retained source until a verified Azure cutover.
+
+The [source-only execution kernel](docs/execution-kernel.md) now runs Core stages
+and concurrent Ultra specialist/decision/synthesis workflows over injected clients.
+Its local reference journal supports safe-frontier restart, owner-scoped replay,
+atomic stage claims, retained unknown-attempt reservations and cancellation. It is
+not a production durable store or deployed background service. All model timing,
+GPU capacity and quality claims still require separately authorized evidence.
 
 Kova is not a foundation model trained from scratch. Cosmo, Orion, and Nova are behavior and compute profiles, not claims of separately trained foundation weights. The active provider, upstream model, and license must be disclosed truthfully when asked. This repository contains public-safe source only: never commit credentials, private conversations, paid model outputs, private datasets, downloaded weights, adapters, or checkpoints.
 
@@ -20,7 +37,7 @@ Kova is not a foundation model trained from scratch. Cosmo, Orion, and Nova are 
 - Paid training disabled
 - No trained Kova checkpoint exists yet
 - No KovaGPT production routing has changed
-- Progress is 22% under the product-complete definition; zero of 25 target routes are live
+- The recorded 22% estimate is historical and has not been recomputed for Azure; zero of 25 target routes are recorded live
 - Deterministic Kova Auto baseline implemented with Free-plan and Ultra-budget gates
 - Source-only RunPod Core multi-pass request planner and lifecycle-cost summarizer implemented
 - Source-only Ultra specialist, disagreement-check, judge, conditional-debate, and synthesis planner implemented
@@ -31,8 +48,8 @@ Kova is not a foundation model trained from scratch. Cosmo, Orion, and Nova are 
 Kova Auto sits above six Chat modes: Instant, Medium, High, Extra High, Max,
 and Ultra. Instant through Max use increasing compute policies over one Kova
 Core model. Ultra changes architecture to dynamic specialists, a disagreement
-check, a judge, and synthesis. Work exposes Kova 5.6 Cosmo, Kova 5.6 Orion,
-and Kova 5.6 Nova, each with Light through Ultra effort. Instant responds directly. Deeper modes
+check, a judge, and synthesis. Work exposes Kova Cosmo, Kova Orion,
+and Kova Nova, each with Light through Ultra effort. Instant responds directly. Deeper modes
 may provide concise, truthful progress updates and ask focused questions when
 missing information would materially change the result. Activity text is never
 hidden chain-of-thought and may only describe events that actually occurred.
@@ -126,7 +143,8 @@ inference backend after user-reported inconsistent interactive latency. That rep
 is recorded as a product decision, not reproducible benchmark telemetry. Cloudflare
 continues to serve only the edge roles.
 
-Both inference engines target RunPod Serverless. Kova Core has two source-verified,
+The historical RunPod source below is retained for compatibility, not the current
+Azure hosting decision. Kova Core has two source-verified,
 hardware-unbenchmarked candidates representing the same Qwen3.8-27B model family:
 the original BF16 checkpoint and the official fine-grained FP8 checkpoint. Model,
 quantization, GPU, serving engine, endpoint type, and container digest all remain
@@ -150,9 +168,9 @@ unselected. Resolving any of those choices requires explicit benchmarks and does
 authorize image pulls, endpoint creation, GPU execution, deployment, or routing.
 
 Kova Auto currently uses deterministic server rules. Free is capped to Instant;
-Plus can route through Max; Ultra additionally requires Pro entitlement, explicit
-runtime authorization, and sufficient remaining request budget. This classifier is
-tested but not production-routed.
+Plus is capped to High on every classification/fallback branch; Ultra requires
+Pro entitlement, explicit runtime authorization, and sufficient remaining request
+budget. This classifier is tested but not production-routed.
 
 ### RunPod Core and Ultra
 
@@ -178,10 +196,9 @@ customer price = attributable cost / 0.574
 This formula targets 42.6% before rounding. Realized margin must be measured from
 actual usage and recalibrated; it cannot be guaranteed from GPU list prices alone.
 
-The public catalog reserves Kova Auto, Kova 5.6 Cosmo, Kova 5.6 Orion, Kova 5.6
-Nova, and Kova Ultra. None is live. Public profile names describe actual compute and
-orchestration differences while sharing Core weights through Max; they never imply
-separate foundation models.
+The target catalog contains Kova Cosmo, Kova Orion, and Kova Nova. Nova is
+Work-only. Lite through Ultra are bounded processing configurations over the
+selected family, not separate foundation models. None is live.
 
 The offline evaluator resolves all 25 Auto, Chat, and Work route contracts through
 the actual router; builds provider-free Core or Ultra plans; verifies DAG, identity,

@@ -1,13 +1,25 @@
 import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { execFileSync } from "node:child_process";
 
-const serving = JSON.parse(readFileSync(new URL("../config/core-serving.v1.json", import.meta.url), "utf8"));
-const routePolicy = JSON.parse(readFileSync(new URL("../config/route-policy.v1.json", import.meta.url), "utf8"));
+const current = JSON.parse(execFileSync("python3", ["-E", "-S", "-B", "-c", `
+import json
+from core.current_candidates import CORE_SERVING
+from router.policy import resolve_route
+from worker.handler import ALLOWED_SERVING_ENGINES, ALLOWED_ENDPOINT_TYPES
+routes = [resolve_route({'surface':'chat','route_id':route}) for route in ('instant','medium','high','extra-high','max')]
+routes += [resolve_route({'surface':surface,'family':family,'effort':effort}) for surface, families in (('chat',('cosmo','orion')),('work',('cosmo','orion','nova'))) for family in families for effort in ('Light','Medium','High','Extra High','Max')]
+print(json.dumps({'serving':CORE_SERVING,'routes':routes,'capabilities':{
+    'serving_engines':sorted(ALLOWED_SERVING_ENGINES),
+    'endpoint_types':sorted(ALLOWED_ENDPOINT_TYPES)}}))
+`], { cwd: fileURLToPath(new URL("..", import.meta.url)), encoding: "utf8" }));
+const serving = current.serving;
+const servingCapabilities = current.capabilities;
 const candidates = new Map(serving.candidates.map((candidate) => [candidate.model, candidate]));
 const outcomes = new Set(["success", "failed", "quarantined"]);
 const recordTypes = new Set(["attempt", "lifecycle_close"]);
 const commonRequired = [
-  "record_type", "worker_lifecycle_id", "model", "model_revision", "gpu_type_id",
+  "record_type", "worker_lifecycle_id", "model", "model_revision", "adapter_sha256", "adapter_bundle_sha256", "gpu_type_id",
   "gpu_count", "serving_engine", "endpoint_type", "container_image_digest",
   "gpu_rate_per_second_usd", "measurement_source",
 ];
@@ -35,30 +47,29 @@ const stageIds = (policy) => {
 };
 
 const routeSpecs = new Map();
-for (const route of routePolicy.chat.filter((item) => item.engine === "kova-core")) {
-  const stages = stageIds(route);
-  routeSpecs.set(route.id, {stages, public_stage: stages.at(-1), reasoning_effort: route.reasoning_effort});
-}
-for (const family of routePolicy.work.families) {
-  for (const effort of routePolicy.work.effort_profiles.filter((item) => item.engine === "kova-core")) {
-    const routeId = `work:${family}:${effort.name.toLowerCase().replaceAll(" ", "-")}`;
-    const stages = stageIds(effort);
-    routeSpecs.set(routeId, {stages, public_stage: stages.at(-1), reasoning_effort: effort.reasoning_effort});
-  }
+for (const route of current.routes) {
+  const [planning_passes, answer_passes, critic_passes, verification_passes] = route.passes;
+  const stages = stageIds({planning_passes, answer_passes, critic_passes, verification_passes});
+  routeSpecs.set(route.route_id, {stages, public_stage: stages.at(-1), reasoning_effort: route.reasoning_effort,
+    model: `kova-${route.profile}`});
 }
 
 export const coreConfigurationKey = (record) => [
   `${record.model}@${record.model_revision}`,
+  record.adapter_sha256,
+  record.adapter_bundle_sha256,
   `${record.gpu_type_id}x${record.gpu_count}`,
   record.serving_engine,
   record.endpoint_type,
   record.container_image_digest,
 ].join("|");
 
-const configurationFrom = (record) => ({
+const configurationFrom = (record, candidateCatalog) => ({
   model: record.model,
   model_revision: record.model_revision,
-  quantization: candidates.get(record.model).quantization,
+  adapter_sha256: record.adapter_sha256,
+  adapter_bundle_sha256: record.adapter_bundle_sha256,
+  quantization: candidateCatalog.get(record.model).quantization,
   gpu_type_id: record.gpu_type_id,
   gpu_count: record.gpu_count,
   serving_engine: record.serving_engine,
@@ -121,7 +132,8 @@ function summarizeGroup(records, routeId, allocations) {
   };
 }
 
-export function summarizeCoreBenchmark(records) {
+// The CLI always uses the source candidate registry; synthetic catalogs are for offline unit tests.
+export function summarizeCoreBenchmark(records, candidateCatalog = candidates) {
   if (!Array.isArray(records) || records.length === 0) throw new Error("Core benchmark requires records");
   const seenRecordIds = new Set();
   const requestIdentities = new Map();
@@ -141,13 +153,17 @@ export function summarizeCoreBenchmark(records) {
     for (const field of ["worker_lifecycle_id", "model", "model_revision", "gpu_type_id", "serving_engine", "endpoint_type", "container_image_digest"]) {
       if (typeof record[field] !== "string" || !record[field].trim()) throw new Error(`record ${index} invalid ${field}`);
     }
-    const candidate = candidates.get(record.model);
+    const candidate = candidateCatalog.get(record.model);
     if (!candidate || candidate.revision !== record.model_revision) throw new Error(`record ${index} unverified model revision`);
+    if (!/^[a-f0-9]{64}$/u.test(record.adapter_sha256)
+        || record.adapter_sha256 !== candidate.adapter_sha256) throw new Error(`record ${index} unverified adapter digest`);
+    if (!/^[a-f0-9]{64}$/u.test(record.adapter_bundle_sha256)
+        || record.adapter_bundle_sha256 !== candidate.adapter_bundle_sha256) throw new Error(`record ${index} unverified adapter bundle digest`);
     if (!Number.isInteger(record.gpu_count) || record.gpu_count < 1 || record.gpu_count > 8) {
       throw new Error(`record ${index} invalid gpu_count`);
     }
-    if (!serving.serving_engine_candidates.includes(record.serving_engine)) throw new Error(`record ${index} invalid serving_engine`);
-    if (!serving.endpoint_type_candidates.includes(record.endpoint_type)) throw new Error(`record ${index} invalid endpoint_type`);
+    if (!servingCapabilities.serving_engines.includes(record.serving_engine)) throw new Error(`record ${index} invalid serving_engine`);
+    if (!servingCapabilities.endpoint_types.includes(record.endpoint_type)) throw new Error(`record ${index} invalid endpoint_type`);
     if (!/^sha256:[a-f0-9]{64}$/u.test(record.container_image_digest)) throw new Error(`record ${index} invalid container_image_digest`);
     if (!Number.isFinite(record.gpu_rate_per_second_usd) || record.gpu_rate_per_second_usd <= 0) {
       throw new Error(`record ${index} invalid gpu_rate_per_second_usd`);
@@ -157,7 +173,7 @@ export function summarizeCoreBenchmark(records) {
     const configurationKey = coreConfigurationKey(record);
     const lifecycle = lifecycles.get(record.worker_lifecycle_id) ?? {
       configuration_key: configurationKey,
-      configuration: configurationFrom(record),
+      configuration: configurationFrom(record, candidateCatalog),
       attempts: [],
       closes: [],
       rates: new Set(),
@@ -179,6 +195,7 @@ export function summarizeCoreBenchmark(records) {
       seenRecordIds.add(`attempt:${record.attempt_id}`);
       const routeSpec = routeSpecs.get(record.route_id);
       if (!routeSpec) throw new Error(`record ${index} invalid route_id`);
+      if (record.model !== routeSpec.model) throw new Error(`record ${index} model differs from route family`);
       if (!outcomes.has(record.outcome)) throw new Error(`record ${index} invalid outcome`);
       if (!["low", "medium", "xhigh"].includes(record.reasoning_effort)) throw new Error(`record ${index} invalid reasoning_effort`);
       if (record.reasoning_effort !== routeSpec.reasoning_effort) throw new Error(`record ${index} reasoning_effort does not match route`);
@@ -340,7 +357,7 @@ export function summarizeCoreBenchmark(records) {
   const byConfiguration = {};
   for (const record of pricedAttempts) {
     const key = record.configuration_key;
-    byConfiguration[key] ??= {configuration: configurationFrom(record), by_route: {}};
+    byConfiguration[key] ??= {configuration: configurationFrom(record, candidateCatalog), by_route: {}};
   }
   for (const [configurationKey, configurationGroup] of Object.entries(byConfiguration)) {
     for (const routeId of routeSpecs.keys()) {

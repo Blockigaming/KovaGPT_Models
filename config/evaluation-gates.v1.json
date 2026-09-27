@@ -32,8 +32,8 @@
   "offline_contract_evidence": {
     "status": "passed",
     "suite": "evaluations/offline-suite.v1.json",
-    "route_contracts_checked": 25,
-    "engine_split": { "auto": 1, "core": 20, "ultra": 4 },
+    "route_contracts_checked": 37,
+    "engine_split": { "auto": 1, "core": 30, "ultra": 6 },
     "auto_classifier_cases_checked": 7,
     "response_evaluator_cases_checked": 6,
     "activity_evaluator_cases_checked": 4,
@@ -42,5 +42,5 @@
     "paid_provider_calls": 0
   },
   "passing_routes": [],
-  "target_routes": 25
+  "target_routes": 37
 }

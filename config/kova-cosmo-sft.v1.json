@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "status": "owner_requested_recipe_not_executed",
+  "display_name": "Kova Cosmo",
+  "model_slot": "work-cosmo",
+  "base_model": "Qwen/Qwen3-0.6B",
+  "base_revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+  "dataset_path": "data/kova-identity-pilot.v1.jsonl",
+  "method": "lora_sft",
+  "hardware": {
+    "region": "eastus",
+    "vm_size": "Standard_NC4as_T4_v3",
+    "gpu_family": "NVIDIA T4",
+    "precision": "fp16",
+    "bf16": false,
+    "quantized_base": false
+  },
+  "software": {
+    "python": "3.12",
+    "torch": "2.8.0",
+    "transformers": "5.17.0",
+    "peft": "0.21.0",
+    "trl": "1.13.0",
+    "accelerate": "1.15.0",
+    "datasets": "5.0.1",
+    "cryptography": "50.0.1"
+  },
+  "lora": {
+    "r": 16,
+    "alpha": 32,
+    "dropout": 0.05,
+    "bias": "none",
+    "target_modules": [
+      "q_proj",
+      "k_proj",
+      "v_proj",
+      "o_proj",
+      "gate_proj",
+      "up_proj",
+      "down_proj"
+    ]
+  },
+  "training": {
+    "learning_rate": 0.0001,
+    "num_train_epochs": 3,
+    "per_device_train_batch_size": 2,
+    "per_device_eval_batch_size": 2,
+    "gradient_accumulation_steps": 2,
+    "max_length": 1024,
+    "optimizer": "adamw_torch",
+    "lr_scheduler_type": "linear",
+    "warmup_ratio": 0.1,
+    "weight_decay": 0.01,
+    "max_grad_norm": 1.0,
+    "gradient_checkpointing": false,
+    "completion_only_loss": true,
+    "packing": false,
+    "seed": 42,
+    "report_to": "none",
+    "push_to_hub": false
+  },
+  "account_gates": {
+    "microsoft_quota_provider_registration_authorized": true,
+    "eastus_ncast4_quota_verified": true,
+    "runtime_compatibility_verified": false,
+    "approved_budget_usd": 2.0
+  },
+  "execution": {
+    "model_download_authorized": true,
+    "training_authorized": true,
+    "deployment_authorized": false
+  },
+  "output": {
+    "directory": "artifacts/kova-cosmo-sft",
+    "adapter_sha256": null
+  },
+  "phase_b_ready": false
+}

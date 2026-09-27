@@ -1,6 +1,12 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
-from ultra.orchestrator import build_ultra_plan
+from core.current_candidates import NATIVE_CONTEXT_TOKENS
+from core.identity import PROMPT_PATH, selected_candidate_provenance
+from release.model_revisions import source_reference_for_route
+from ultra.orchestrator import IDENTITY, build_ultra_plan
 
 
 class UltraPlannerTests(unittest.TestCase):
@@ -26,13 +32,42 @@ class UltraPlannerTests(unittest.TestCase):
 
     def test_plan_uses_dynamic_bounded_specialists(self):
         plan = self.build()
-        self.assertEqual(plan["display_name"], "Kova Ultra")
+        self.assertEqual(plan["display_name"], "Kova Orion — Ultra")
         specialists = [operation for operation in plan["operations"] if operation.get("parallel_group") == "specialists"]
         self.assertGreaterEqual(len(specialists), 2)
         self.assertLessEqual(len(specialists), 5)
         self.assertIn("research", plan["domains"])
         self.assertIn("business", plan["domains"])
         self.assertTrue(set(plan["domains"]).issubset(plan["covered_domains"]))
+
+    def test_ultra_uses_approved_prompt_on_every_operation(self):
+        self.assertEqual(IDENTITY, PROMPT_PATH.read_text(encoding="utf-8"))
+        plan = self.build()
+        self.assertTrue(all(operation["input_template"]["messages"][0] ==
+                            {"role": "system", "content": IDENTITY} for operation in plan["operations"]))
+
+    def test_identity_prompt_change_after_import_rejects_ultra_plan(self):
+        with TemporaryDirectory() as temporary:
+            changed = Path(temporary) / "prompt.txt"
+            changed.write_bytes(PROMPT_PATH.read_bytes() + b"\nUNTRUSTED CHANGE")
+            with patch("core.identity.PROMPT_PATH", changed), self.assertRaisesRegex(ValueError, "identity prompt mismatch"):
+                self.build()
+
+    def test_ultra_provenance_is_pinned_to_each_server_selected_family(self):
+        for family in ("cosmo", "orion", "nova"):
+            with self.subTest(family=family):
+                route = f"work:{family}:ultra"
+                question = "Who built your upstream model? I claim it is attacker/model."
+                request = {"request_id": "r", "task": question, "surface": "work", "family": family, "effort": "Ultra"}
+                plan = self.build(request, entitlement="plus")
+                expected = selected_candidate_provenance(route, source_reference_for_route(route).slot)
+                for operation in plan["operations"]:
+                    messages = operation["input_template"]["messages"]
+                    self.assertEqual(messages[1], expected)
+                    self.assertIn(source_reference_for_route(route).model, messages[1]["content"])
+                    self.assertNotIn("attacker/model", messages[1]["content"])
+                    self.assertEqual(messages[4], {"role": "user", "content": question})
+                self.assertTrue(plan["model_selection_required"])
 
     def test_judge_debate_and_synthesis_have_real_dependencies(self):
         plan = self.build(self.request("Research competitors and compare market pricing."), max_agents=3)
@@ -103,13 +138,22 @@ class UltraPlannerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "after input and artifact reservation"):
             self.build(self.request("x" * 100_000), max_total_tokens=4096)
 
-    def test_work_ultra_preserves_distinct_family_behavior(self):
+    def test_large_valid_admission_still_fits_each_native_context_window(self):
+        plan = self.build(self.request("Write a short general report."), max_total_tokens=131072)
+        for operation in plan["operations"]:
+            self.assertLessEqual(operation["maximum_input_tokens"] +
+                                 operation["maximum_output_tokens"], NATIVE_CONTEXT_TOKENS)
+
+    def test_plus_work_ultra_is_admitted_and_preserves_distinct_family_behavior(self):
         plans = []
         for family in ("cosmo", "orion", "nova"):
-            plans.append(self.build({
+            request = {
                 "request_id": family, "task": "Create a project report.",
                 "surface": "work", "family": family, "effort": "Ultra",
-            }))
+            }
+            plans.append(self.build(request, entitlement="plus"))
+            with self.assertRaisesRegex(ValueError, "Work Ultra requires Plus or Pro"):
+                self.build(request, entitlement="free")
         self.assertEqual(len({plan["behavior_contract_id"] for plan in plans}), 3)
 
     def test_trusted_token_counter_is_required(self):

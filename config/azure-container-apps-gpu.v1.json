@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "status": "planning_only",
+  "provider": "azure_container_apps_consumption_gpu",
+  "hosting_goal": "migrate_kova_core_and_kova_ultra_inference_to_azure_without_enabling_paid_execution",
+  "workload_profile": "consumption_gpu",
+  "scale_to_zero_required": true,
+  "per_second_billing_required": true,
+  "physical_app_count": 2,
+  "apps": [
+    {
+      "id": "kova-core",
+      "container_app_name_reserved": "kova-core",
+      "deployed": false,
+      "min_replicas": 0,
+      "max_replicas": null,
+      "gpu_profile_selected": null,
+      "gpu_candidates": [
+        "Consumption-GPU-NC8as-T4",
+        "Consumption-GPU-NC24-A100"
+      ],
+      "model_selected": false,
+      "container_image_digest": null,
+      "streaming_required": true,
+      "cold_start_benchmark_required": true,
+      "throughput_benchmark_required": true
+    },
+    {
+      "id": "kova-ultra",
+      "container_app_name_reserved": "kova-ultra",
+      "deployed": false,
+      "min_replicas": 0,
+      "max_replicas": null,
+      "gpu_profile_selected": null,
+      "gpu_candidates": [
+        "Consumption-GPU-NC8as-T4",
+        "Consumption-GPU-NC24-A100"
+      ],
+      "model_selected": false,
+      "container_image_digest": null,
+      "streaming_required": true,
+      "cold_start_benchmark_required": true,
+      "throughput_benchmark_required": true,
+      "multi_agent_capacity_benchmark_required": true
+    }
+  ],
+  "migration": {
+    "source_provider": "runpod_serverless",
+    "source_transport_status": "legacy_source_only_not_production_live",
+    "preserve_existing_source_until_azure_adapter_verified": true,
+    "delete_existing_azure_deployments": false,
+    "production_cutover_authorized": false
+  },
+  "selection_guards": {
+    "region": null,
+    "quota_verified": false,
+    "gpu_profile_selected": false,
+    "container_compatibility_verified": false,
+    "private_auth_verified": false,
+    "streaming_verified": false,
+    "scale_to_zero_verified": false,
+    "cold_start_measured": false,
+    "token_throughput_measured": false,
+    "cost_measured": false
+  },
+  "safety": {
+    "paid_execution_authorized": false,
+    "image_build_authorized": false,
+    "deployment_authorized": false,
+    "endpoint_creation_authorized": false,
+    "production_routing_authorized": false
+  },
+  "transport": {
+    "adapter": "worker/azure_container_apps.py",
+    "shared_protocol": "worker/openai_protocol.py",
+    "route": "/v1/chat/completions",
+    "request_shape": "direct_openai_compatible_json_no_queue_envelope",
+    "credential_source": "trusted_server_provider_only",
+    "injected_http_boundary_implemented": true,
+    "cpu_fixture_contract_verified": true,
+    "network_client_bound": false,
+    "live_transport_verified": false,
+    "client_transport_overrides_allowed": false,
+    "redirects_allowed": false,
+    "automatic_retries_allowed": false,
+    "tls_verification_required": true,
+    "close_on_completion_failure_and_cancellation": true,
+    "sdk_authentication_integration": null,
+    "configured_origin": null
+  },
+  "execution_timing": {
+    "documented_http_ingress_limit_seconds": 240,
+    "selected_http_hop_timeout_seconds": null,
+    "selected_total_model_work_budget_seconds": null,
+    "transport_io_timeout_required": true,
+    "streaming_bypasses_ingress_limit_claimed": false,
+    "long_work_transport_implemented": false,
+    "deadline_checks": "cooperative_plus_required_transport_io_timeout"
+  },
+  "source_urls": {
+    "azure_http_ingress": "https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview",
+    "azure_authentication": "https://learn.microsoft.com/en-us/azure/container-apps/authentication",
+    "azure_gpu_profiles": "https://learn.microsoft.com/en-us/azure/container-apps/workload-profiles-overview"
+  }
+}

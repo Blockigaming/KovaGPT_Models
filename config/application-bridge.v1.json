@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "status": "superseded_non_authoritative_history",
+  "selection_schema": "kova-models.v1",
+  "superseded_by": "config/current-product-policy.v3.json",
+  "must_not_drive_current_routing": true,
+  "application_source": {
+    "repository": "Blockigaming/KovaGPT",
+    "commit": "b964d1bc9fcd81fcfc70e97a22cbf4a516605c94",
+    "path": "src/lib/mode-entitlements.mjs",
+    "git_blob_sha": "e9ce5faeeb855e824b83855a58f8924183eea30b",
+    "fixture": "tests/fixtures/app-mode-entitlements.mjs"
+  },
+  "application_chat_modes": {
+    "free": [
+      "instant",
+      "thinking"
+    ],
+    "plus": [
+      "instant",
+      "medium",
+      "high"
+    ],
+    "pro": [
+      "instant",
+      "medium",
+      "high",
+      "extra_high",
+      "max",
+      "ultra"
+    ]
+  },
+  "legacy": {
+    "unversioned_selection": "existing_application_handler",
+    "thinking": "unmapped_existing_application_handler",
+    "legacy_auto_alias_changed": false,
+    "cached_history_rewritten": false
+  },
+  "rules": {
+    "server_entitlement_required": true,
+    "explicit_server_auto_enablement_required": true,
+    "auto_final_route_must_be_allowed": true,
+    "work_route_allowlist_required": true,
+    "extra_high_route_id": "extra-high",
+    "extra_high_application_id": "extra_high",
+    "client_provider_overrides_allowed": false,
+    "client_permission_overrides_allowed": false
+  },
+  "safety": {
+    "application_startup_wired": false,
+    "production_routing_authorized": false,
+    "paid_execution_authorized": false,
+    "legacy_history_migration_authorized": false
+  },
+  "unresolved": [
+    "free_thinking_custom_model_mapping",
+    "complete_work_plan_matrix",
+    "application_startup_provider_cutover",
+    "older_application_identity_prompt_reconciliation"
+  ]
+}

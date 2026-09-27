@@ -1,0 +1,17 @@
+{
+  "schema_version":1,
+  "currency":"USD",
+  "combined_hard_ceiling":"6.0000",
+  "conditional_cosmo_only_pilot":{"hard_ceiling_usd":"3.3000","minimum_allocation_seconds":5400,"maximum_allocation_seconds":7200,"maximum_compute_reservation_usd":"0.9000","other_families_authorized":false},
+  "emergency_cleanup_margin":"1.2500",
+  "provider_compute_meter_increment_seconds":60,
+  "meter_categories":["compute_allocation_time","managed_disks","snapshots","storage_capacity","storage_transactions","network_transfer","public_ip_and_network","nat_gateway_hours","nat_gateway_data_processed","logic_app_executions","shutdown_delay","failed_allocation_attempts"],
+  "category_upper_bounds":{"managed_disks":"0.1000","snapshots":"0.0000","storage_capacity":"0.1000","storage_transactions":"0.1000","network_transfer":"0.1000","public_ip_and_network":"0.0250","nat_gateway_hours":"0.1500","nat_gateway_data_processed":"0.3250","logic_app_executions":"0.0500","shutdown_delay":"0.1000","failed_allocation_attempts":"0.1000"},
+  "family_allowances":{"kova-cosmo":"1.2500","kova-orion":"1.5000","kova-nova":"1.7500"},
+  "launch_rule":"remaining_budget_must_cover_family_worst_case_plus_all_unspent_ancillary_bounds_plus_cleanup_margin",
+  "azure_budget_alert_is_hard_stop":false,
+  "independent_signed_admission_required":true,
+  "post_run_cost_evidence_required":true,
+  "zero_residual_billable_resources_required":true,
+  "resource_creation_authorized":false,"spending_authorized":false
+}

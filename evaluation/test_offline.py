@@ -11,10 +11,10 @@ from evaluation.offline import (
 class OfflineEvaluationTests(unittest.TestCase):
     def test_manifest_has_exact_product_complete_route_set(self):
         manifest = build_route_manifest()
-        self.assertEqual(len(manifest), 25)
-        self.assertEqual(len({route["route_id"] for route in manifest}), 25)
-        self.assertEqual(sum(route["engine"] == "kova-core" for route in manifest), 20)
-        self.assertEqual(sum(route["engine"] == "kova-ultra" for route in manifest), 4)
+        self.assertEqual(len(manifest), 37)
+        self.assertEqual(len({route["route_id"] for route in manifest}), 37)
+        self.assertEqual(sum(route["engine"] == "kova-core" for route in manifest), 30)
+        self.assertEqual(sum(route["engine"] == "kova-ultra" for route in manifest), 6)
         self.assertEqual(sum(route["engine"] == "server-selected" for route in manifest), 1)
 
     def test_work_family_behavior_is_not_name_only(self):
@@ -82,7 +82,7 @@ class OfflineEvaluationTests(unittest.TestCase):
     def test_complete_offline_suite_passes_without_releasing_routes(self):
         report = run_offline_suite()
         self.assertEqual(report["status"], "offline_contracts_passed_release_still_blocked")
-        self.assertEqual(report["route_contracts_checked"], 25)
+        self.assertEqual(report["route_contracts_checked"], 37)
         self.assertEqual(report["paid_provider_calls"], 0)
         self.assertFalse(report["actual_model_outputs_evaluated"])
         self.assertFalse(report["quality_or_factuality_claimed"])

@@ -1,4 +1,4 @@
-"""Run reproducible, provider-free checks for the 25 Kova route contracts."""
+"""Run reproducible, provider-free checks for the 37 Kova route contracts."""
 
 import json
 import re
@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from core.adapter import CANDIDATES, build_core_plan
+from release.model_revisions import source_reference_for_route
 from router.auto import classify_auto
 from router.policy import resolve_route
 from ultra.orchestrator import build_ultra_plan
@@ -14,7 +15,6 @@ from ultra.orchestrator import build_ultra_plan
 ROOT = Path(__file__).resolve().parents[1]
 SUITE = json.loads((ROOT / "evaluations" / "offline-suite.v1.json").read_text(encoding="utf-8"))
 ACTIVITY_CONTRACT = json.loads((ROOT / "config" / "activity-event.v1.json").read_text(encoding="utf-8"))
-CORE_CANDIDATE = "Qwen/Qwen3.8-27B"
 URL_PATTERN = re.compile(r"https?://[^\s<>\]\)]+", re.IGNORECASE)
 FORBIDDEN_RESPONSE_PATTERNS = (
     "foundation model trained from scratch",
@@ -49,8 +49,8 @@ def _route_contract(route_id):
 def build_route_manifest():
     """Resolve the checked-in expectations through the actual server router."""
     contracts = SUITE["route_contracts"]
-    _require(SUITE["target_routes"] == 25 and len(contracts) == 25, "offline suite must define exactly 25 routes")
-    _require(len({item["route_id"] for item in contracts}) == 25, "offline route IDs must be unique")
+    _require(SUITE["target_routes"] == 37 and len(contracts) == 37, "offline suite must define exactly 37 routes")
+    _require(len({item["route_id"] for item in contracts}) == 37, "offline route IDs must be unique")
     manifest = []
     for contract in contracts:
         selector = contract["selector"]
@@ -86,7 +86,7 @@ def _core_request(contract):
         "request_id": f"offline-{contract['route_id']}",
         "messages": [{"role": "user", "content": "Produce a concise, accurate project assessment."}],
     }
-    if selector["surface"] == "chat":
+    if selector["surface"] == "chat" and "route_id" in selector:
         return {**base, "route_id": selector["route_id"]}
     return {**base, **selector}
 
@@ -97,15 +97,16 @@ def _ultra_request(contract):
         "request_id": f"offline-{contract['route_id']}",
         "task": "Research competitors, compare pricing and security, and create a project report.",
     }
-    if selector["surface"] == "chat":
+    if selector["surface"] == "chat" and "route_id" in selector:
         return {**base, "route_id": selector["route_id"]}
     return {**base, **selector}
 
 
 def _validate_core_plan(contract):
+    candidate = source_reference_for_route(contract["route_id"]).slot
     plan = build_core_plan(
         _core_request(contract),
-        candidate_model=CORE_CANDIDATE,
+        candidate_model=candidate,
         token_counter=_core_token_count,
     )
     _require(plan["route_id"] == contract["route_id"], f"Core plan route mismatch:{contract['route_id']}")
@@ -127,7 +128,7 @@ def _validate_core_plan(contract):
         _require(operation["request_template"]["recount_bound_messages_with_trusted_tokenizer"] is True, "Core recount missing")
         _require(
             operation["maximum_input_tokens"] + operation["maximum_output_tokens"]
-            <= CANDIDATES[CORE_CANDIDATE]["context_tokens"],
+            <= CANDIDATES[candidate]["context_tokens"],
             "Core context reservation exceeded",
         )
         prior_ids.append(operation["stage_id"])
@@ -172,50 +173,118 @@ def _validate_ultra_plan(contract):
     return len(plan["operations"])
 
 
+# Evidence limits bound local validation work, not model compute or product timing.
+MAX_EVIDENCE_ITEMS = 4096
+STARTED_OPERATION_STATES = frozenset((
+    "started", "running", "success", "failed", "cancelled", "expired", "interrupted", "uncertain",
+))
+
+
+def _evidence_text(value, maximum=8192):
+    if type(value) is not str or not value.strip() or len(value) > maximum:
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeError:
+        return False
+    return True
+
+
+def _evidence_urls(value, label, violations):
+    if type(value) is not list or len(value) > MAX_EVIDENCE_ITEMS:
+        violations.append(f"invalid_{label}")
+        return set()
+    result = set()
+    for url in value:
+        if not _evidence_text(url):
+            violations.append(f"invalid_{label}_entry")
+        else:
+            result.add(url)
+    return result
+
+
+def _evidence_index(rows, label, violations, *, require_tool=False):
+    """Index unambiguous supplied records; never turn dropped failures into pass."""
+    if type(rows) is not list or len(rows) > MAX_EVIDENCE_ITEMS:
+        violations.append(f"invalid_{label}_collection")
+        return {}
+    result, seen = {}, set()
+    for index, row in enumerate(rows, 1):
+        if type(row) is not dict or not _evidence_text(row.get("operation_id")):
+            violations.append(f"invalid_{label}_{index}")
+            continue
+        operation_id = row["operation_id"]
+        if operation_id in seen:
+            violations.append(f"duplicate_{label}_operation_id")
+            result.pop(operation_id, None)
+            continue
+        seen.add(operation_id)
+        if require_tool and not _evidence_text(row.get("tool")):
+            violations.append(f"invalid_{label}_{index}_tool")
+            continue
+        result[operation_id] = row
+    return result
+
+
 def validate_response_artifact(artifact):
-    """Validate explicit response evidence without pretending to judge factual quality."""
-    _require(isinstance(artifact, dict), "response artifact must be an object")
+    """Check supplied output/receipt consistency, not factuality or provenance."""
+    _require(type(artifact) is dict, "response artifact must be an object")
     text = artifact.get("text")
-    _require(isinstance(text, str), "response text missing")
-    lowered = text.lower()
+    _require(type(text) is str, "response text missing")
     violations = []
-    if artifact.get("identity_requested") and re.search(r"\bkova\b", text, re.IGNORECASE) is None:
+    try:
+        text.encode("utf-8")
+    except UnicodeError:
+        return ["invalid_response_text"]
+    if len(text) > 750000:
+        return ["response_text_limit_exceeded"]
+    lowered = text.lower()
+    for flag in ("identity_requested", "provider_disclosure_requested"):
+        if flag in artifact and type(artifact[flag]) is not bool:
+            violations.append("invalid_" + flag)
+    if artifact.get("identity_requested") is True and re.search(r"\bkova\b", text, re.IGNORECASE) is None:
         violations.append("kova_identity_missing")
-    if artifact.get("provider_disclosure_requested"):
+    if artifact.get("provider_disclosure_requested") is True:
         provider = artifact.get("selected_provider")
         model = artifact.get("selected_upstream_model")
-        if not isinstance(provider, str) or not provider.strip() or provider.lower() not in lowered:
+        if not _evidence_text(provider) or provider.lower() not in lowered:
             violations.append("selected_provider_missing")
-        if not isinstance(model, str) or not model.strip() or model.lower() not in lowered:
+        if not _evidence_text(model) or model.lower() not in lowered:
             violations.append("selected_upstream_model_missing")
     for pattern in FORBIDDEN_RESPONSE_PATTERNS:
         if pattern in lowered:
             violations.append(f"forbidden_response_pattern:{pattern}")
+    for field in ("reasoning", "reasoning_content", "reasoning_details"):
+        if artifact.get(field) not in (None, "", [], {}):
+            violations.append(f"private_response_field:{field}")
 
-    runtime_results = {
-        result.get("operation_id"): result
-        for result in artifact.get("runtime_tool_results", [])
-        if isinstance(result, dict) and isinstance(result.get("operation_id"), str)
-    }
-    successful_urls = set(artifact.get("user_source_urls", []))
-    for result in runtime_results.values():
-        if result.get("status") == "success":
-            successful_urls.update(result.get("source_urls", []))
+    runtime_results = _evidence_index(artifact.get("runtime_tool_results", []), "runtime_tool",
+                                      violations, require_tool=True)
+    result_urls = {}
+    successful_urls = _evidence_urls(artifact.get("user_source_urls", []), "user_source_urls", violations)
+    for operation_id, result in runtime_results.items():
+        urls = _evidence_urls(result.get("source_urls", []), "runtime_source_urls", violations)
+        result_urls[operation_id] = urls
+        if not _evidence_text(result.get("status")):
+            violations.append("invalid_runtime_tool_status")
+        elif result["status"] == "success":
+            successful_urls.update(urls)
     text_urls = {match.group(0).rstrip(".,;:!?") for match in URL_PATTERN.finditer(text)}
     for url in sorted(text_urls - successful_urls):
         violations.append(f"ungrounded_source_url:{url}")
 
-    for claim in artifact.get("tool_claims", []):
-        operation_id = claim.get("operation_id") if isinstance(claim, dict) else None
+    claims = _evidence_index(artifact.get("tool_claims", []), "tool_claim", violations, require_tool=True)
+    for operation_id, claim in claims.items():
         result = runtime_results.get(operation_id)
         if not result or result.get("status") != "success":
             violations.append(f"unverified_tool_claim:{operation_id}")
             continue
-        if claim.get("tool") != result.get("tool"):
+        if claim["tool"] != result["tool"]:
             violations.append(f"tool_claim_mismatch:{operation_id}")
-        source_url = claim.get("source_url")
-        if source_url and source_url not in result.get("source_urls", []):
-            violations.append(f"tool_source_mismatch:{operation_id}")
+        if "source_url" in claim:
+            source_url = claim["source_url"]
+            if not _evidence_text(source_url) or source_url not in result_urls[operation_id]:
+                violations.append(f"tool_source_mismatch:{operation_id}")
     return violations
 
 
@@ -230,24 +299,29 @@ def _timestamp(value):
 
 
 def validate_activity_events(route_id, events, runtime_operations):
-    """Require every visible activity event to follow a matching runtime start."""
+    """Require unambiguous, already-started supplied operations for each event.
+
+    Receipt consistency does not authenticate the caller, actual tool execution,
+    icon-map provenance or the truth of arbitrary summary prose.
+    """
     contract = _route_contract(route_id)
     activity_allowed = contract["expected"]["activity_updates"]
-    _require(isinstance(events, list) and isinstance(runtime_operations, list), "activity inputs must be arrays")
+    _require(type(events) is list and type(runtime_operations) is list, "activity inputs must be arrays")
     violations = []
+    if len(events) > MAX_EVIDENCE_ITEMS or len(runtime_operations) > MAX_EVIDENCE_ITEMS:
+        return ["activity_evidence_limit_exceeded"]
     if activity_allowed is False and events:
         violations.append("route_forbids_activity")
-    runtime = {
-        operation.get("operation_id"): operation
-        for operation in runtime_operations
-        if isinstance(operation, dict) and isinstance(operation.get("operation_id"), str)
-    }
+    runtime = _evidence_index(runtime_operations, "runtime_activity", violations)
+    urls = {key: _evidence_urls(op.get("source_urls", []), "runtime_source_urls", violations)
+            for key, op in runtime.items()}
     required = set(ACTIVITY_CONTRACT["required_fields"])
     allowed = required | set(ACTIVITY_CONTRACT["optional_grounding_fields"])
     seen_event_ids = set()
     previous_time = None
+    request_id = None
     for index, event in enumerate(events, start=1):
-        if not isinstance(event, dict):
+        if type(event) is not dict:
             violations.append(f"event_{index}_not_object")
             continue
         missing = required - set(event)
@@ -255,19 +329,29 @@ def validate_activity_events(route_id, events, runtime_operations):
         if missing:
             violations.append(f"event_{index}_missing:{','.join(sorted(missing))}")
         if extra:
-            violations.append(f"event_{index}_unsupported:{','.join(sorted(extra))}")
+            violations.append(f"event_{index}_unsupported_fields")
         if missing:
             continue
-        if not isinstance(event["event_id"], str) or not event["event_id"] or event["event_id"] in seen_event_ids:
+        event_id = event["event_id"]
+        if not _evidence_text(event_id) or event_id in seen_event_ids:
             violations.append(f"event_{index}_invalid_event_id")
-        seen_event_ids.add(event["event_id"])
-        if event["sequence"] != index:
+        else:
+            seen_event_ids.add(event_id)
+        if type(event["sequence"]) is not int or event["sequence"] != index:
             violations.append(f"event_{index}_invalid_sequence")
-        if event["phase"] not in ACTIVITY_CONTRACT["allowed_phases"]:
+        if not _evidence_text(event["phase"]) or event["phase"] not in ACTIVITY_CONTRACT["allowed_phases"]:
             violations.append(f"event_{index}_invalid_phase")
+        valid_fields = True
         for field in ("request_id", "title", "summary", "grounding_operation_id"):
-            if not isinstance(event[field], str) or not event[field].strip():
+            if not _evidence_text(event[field]):
                 violations.append(f"event_{index}_invalid_{field}")
+                valid_fields = False
+        if not valid_fields:
+            continue  # In particular, never use malformed grounding IDs as dict keys.
+        if request_id is None:
+            request_id = event["request_id"]
+        elif event["request_id"] != request_id:
+            violations.append(f"event_{index}_request_stream_mismatch")
         try:
             occurred_at = _timestamp(event["occurred_at"])
         except ValueError:
@@ -284,6 +368,9 @@ def validate_activity_events(route_id, events, runtime_operations):
             violations.append(f"event_{index}_request_mismatch")
         if operation.get("phase") != event["phase"]:
             violations.append(f"event_{index}_phase_mismatch")
+        status = operation.get("status")
+        if type(status) is not str or status not in STARTED_OPERATION_STATES:
+            violations.append(f"event_{index}_runtime_not_started")
         try:
             started_at = _timestamp(operation.get("started_at"))
         except ValueError:
@@ -291,10 +378,18 @@ def validate_activity_events(route_id, events, runtime_operations):
             continue
         if occurred_at < started_at:
             violations.append(f"event_{index}_precedes_runtime_start")
-        if "tool" in event and event["tool"] != operation.get("tool"):
-            violations.append(f"event_{index}_tool_mismatch")
+        for field in ("tool", "domain", "content_type", "icon_key"):
+            if field in event and (not _evidence_text(event[field]) or event[field] != operation.get(field)):
+                violations.append(f"event_{index}_{field}_mismatch")
+        if "result_count" in event:
+            count, observed = event["result_count"], operation.get("result_count")
+            if (type(count) is not int or not 0 <= count <= 2**53 - 1
+                    or type(observed) is not int or count != observed):
+                violations.append(f"event_{index}_result_count_mismatch")
         if "source_url" in event:
-            if operation.get("status") != "success" or event["source_url"] not in operation.get("source_urls", []):
+            source_url = event["source_url"]
+            if (not _evidence_text(source_url) or status != "success"
+                    or source_url not in urls[event["grounding_operation_id"]]):
                 violations.append(f"event_{index}_ungrounded_source")
     return violations
 
@@ -306,7 +401,7 @@ def run_offline_suite():
         "core": sum(item["engine"] == "kova-core" for item in manifest),
         "ultra": sum(item["engine"] == "kova-ultra" for item in manifest),
     }
-    _require(engine_counts == {"auto": 1, "core": 20, "ultra": 4}, "unexpected 25-route engine split")
+    _require(engine_counts == {"auto": 1, "core": 30, "ultra": 6}, "unexpected 37-route engine split")
 
     operation_counts = {}
     for contract in SUITE["route_contracts"]:

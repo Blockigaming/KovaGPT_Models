@@ -1,18 +1,21 @@
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const load = async (name) => JSON.parse(await readFile(new URL(`../config/${name}`, import.meta.url)));
 const [
-  candidate, stack, runpod, catalog, economics, identity, inference, hardware, surface,
+  candidate, stack, runpod, catalog, economics, currentIdentity, archivedIdentity, inference, hardware, surface,
   activity, completion, evaluations, nova, cosmo, architecture, routes, ultraPlan,
-  coreServing, coreContainer,
+  coreServing, coreContainer, currentPolicy,
 ] = await Promise.all([
   "candidate.v1.json", "training-stack.v1.json", "runpod-serverless.v1.json",
-  "model-catalog.v1.json", "economics.v1.json", "identity.v1.json",
+  "model-catalog.v1.json", "economics.v1.json", "kova-three-family-dataset.v2.json", "identity.v1.json",
   "inference-contract.v1.json", "hardware-benchmark.v1.json", "product-surface.v1.json",
   "activity-event.v1.json", "completion-target.v1.json", "evaluation-gates.v1.json",
   "nova-candidate.v1.json", "cosmo-candidate.v1.json", "provider-architecture.v1.json",
   "route-policy.v1.json", "ultra-orchestration.v1.json",
-  "core-serving.v1.json", "core-container.v1.json",
+  "core-serving.v1.json", "core-container.v1.json", "current-product-policy.v3.json",
 ].map(load));
 
 if (candidate.base_model !== "Qwen/Qwen3.8-27B" || !/^[a-f0-9]{40}$/u.test(candidate.base_revision)) {
@@ -58,38 +61,32 @@ if (
   economics.enforcement.allow_unmeasured_price_publication !== false
 ) throw new Error("unmeasured_prices_must_be_blocked");
 
-const requiredBehaviors = [
-  "identify_as_kova", "truthful_active_provider_and_upstream_disclosure_when_asked",
-  "do_not_claim_profile_names_are_separate_foundation_weights", "preserve_required_license_notices",
-  "tool_result_grounding", "no_hidden_chain_of_thought", "contextual_not_forced_plus_recommendations",
-];
-const requiredIdentityText = [
-  "You are Kova", "Do not claim", "Cosmo, Orion, and Nova", "provider and upstream model",
-  "Never claim a tool action", "Do not reveal hidden chain-of-thought",
-];
+const approvedIdentityDigest = "ed1b503f947cabc6a7c24a9395bd63b9eff2dd55d57570a0d5a8fd51df3c5bc8";
+const identityPrompt = await readFile(new URL("../prompts/kova-identity.v3.txt", import.meta.url));
 if (
-  identity.assistant_name !== "Kova" ||
-  !requiredBehaviors.every((behavior) => identity.required_behaviors.includes(behavior)) ||
-  !requiredIdentityText.every((value) => identity.system_identity.includes(value)) ||
-  !identity.forbidden_claims.includes("kova_foundation_trained_from_scratch")
+  archivedIdentity.status !== "superseded_non_authoritative_history" ||
+  archivedIdentity.superseded_by !== "prompts/kova-identity.v3.txt" ||
+  currentIdentity.prompt_path !== "prompts/kova-identity.v3.txt" ||
+  currentIdentity.prompt_sha256 !== approvedIdentityDigest ||
+  createHash("sha256").update(identityPrompt).digest("hex") !== approvedIdentityDigest
 ) throw new Error("truthful_kova_identity_required");
 
 if (
   inference.candidate_selection.source !== "trusted_server_configuration" ||
-  inference.candidate_selection.allowlist_source !== "config/core-serving.v1.json:candidates" ||
+  inference.candidate_selection.allowlist_source !== "core/current_candidates.py:CORE_SERVING.candidates" ||
   inference.candidate_selection.client_selectable !== false ||
   inference.candidate_selection.benchmark_job_must_select_exactly_one !== true ||
   inference.candidate_selection.production_candidate_selected !== false
 ) throw new Error("benchmark_worker_candidate_selection_must_be_trusted_and_blocked");
 for (const field of [
-  "record_type", "request_id", "correlation_id", "attempt_id", "outcome", "model", "model_revision", "route_id",
+  "record_type", "request_id", "correlation_id", "attempt_id", "outcome", "model", "model_revision", "adapter_sha256", "adapter_bundle_sha256", "route_id",
   "stage_id", "public_response", "worker_lifecycle_id", "measurement_source", "cold_start",
   "time_to_first_token_ms", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count",
   "serving_engine", "endpoint_type", "container_image_digest",
 ]) {
   if (!inference.telemetry.attempt_record_required.includes(field)) throw new Error(`inference_attempt_telemetry_missing:${field}`);
 }
-for (const field of ["record_type", "close_event_id", "worker_lifecycle_id", "billed_lifecycle_ms", "attributed_idle_timeout_ms"]) {
+for (const field of ["record_type", "close_event_id", "worker_lifecycle_id", "adapter_sha256", "adapter_bundle_sha256", "billed_lifecycle_ms", "attributed_idle_timeout_ms"]) {
   if (!inference.telemetry.lifecycle_close_record_required.includes(field)) throw new Error(`inference_lifecycle_telemetry_missing:${field}`);
 }
 if (inference.telemetry.lifecycle_close_source !== "trusted_runtime_shutdown_observation") throw new Error("trusted_lifecycle_close_required");
@@ -108,7 +105,7 @@ if (
   inference.trusted_execution_context.source !== "server_router_and_stage_store_only" ||
   inference.trusted_execution_context.logical_request_id_source !== "server_generated_uuid4_once_per_route_execution" ||
   inference.trusted_execution_context.logical_request_id_format !== "kova-exec-{uuid4}" ||
-  inference.trusted_execution_context.benchmark_candidate_id_source !== "trusted_server_configuration_allowlisted_in_core_serving" ||
+  inference.trusted_execution_context.benchmark_candidate_id_source !== "trusted_server_configuration_allowlisted_in_current_candidates" ||
   inference.trusted_execution_context.prior_stage_outputs !== "exact_declared_core_dag_dependencies_only" ||
   inference.trusted_execution_context.artifact_trust !== "server_recorded_untrusted_model_output" ||
   inference.trusted_execution_context.trusted_token_recount_after_binding !== true ||
@@ -126,9 +123,11 @@ if (
   inference.streaming.positive_completion_usage_required_for_success !== true ||
   inference.runtime_identity.source !== "server_provider_runtime" ||
   inference.runtime_identity.required.join(",") !==
-    "loaded_model,loaded_model_revision,worker_lifecycle_id,gpu_type_id,gpu_count,serving_engine,endpoint_type,container_image_digest" ||
+    "loaded_model,loaded_model_revision,loaded_adapter_sha256,loaded_adapter_bundle_sha256,worker_lifecycle_id,gpu_type_id,gpu_count,serving_engine,endpoint_type,container_image_digest" ||
   inference.runtime_identity.loaded_model_must_match_selected_pinned_candidate !== true ||
   inference.runtime_identity.loaded_revision_must_match_selected_pinned_candidate !== true ||
+  inference.runtime_identity.loaded_adapter_must_match_selected_pinned_candidate !== true ||
+  inference.runtime_identity.loaded_adapter_bundle_must_match_selected_pinned_candidate !== true ||
   inference.runtime_identity.validated_before_and_after_each_attempt !== true ||
   inference.runtime_identity.lifecycle_close_must_match_pinned_candidate !== true ||
   inference.telemetry.attempt_outcomes.join(",") !== "success,failed,quarantined" ||
@@ -146,29 +145,42 @@ if (
 if (
   hardware.schema_version !== 2 || hardware.status !== "candidate_aware_benchmark_required" ||
   hardware.engine !== "kova-core" ||
-  hardware.candidate_source !== "config/core-serving.v1.json:candidates" ||
+  hardware.candidate_source !== "core/current_candidates.py:CORE_SERVING.candidates" ||
   hardware.selected_candidate_id !== null || hardware.selected_provider_hardware_id !== null ||
   hardware.provider_inventory_snapshot !== null || hardware.provider_price_snapshot !== null ||
   hardware.inventory_must_be_refreshed_at_benchmark_time !== true ||
   hardware.paid_benchmark_authorized !== false || hardware.deployment_authorized !== false ||
   hardware.production_routing_authorized !== false
 ) throw new Error("candidate_aware_hardware_benchmark_must_stay_unselected_and_blocked");
-if (hardware.candidate_matrices.length !== coreServing.candidates.length) {
+const activeHardware = JSON.parse(execFileSync("python3", ["-E", "-S", "-B", "-c", `
+import json
+from core.current_candidates import CORE_SERVING
+from training.three_family_contract import ROOT, load_json, validate_lineage_and_manifests
+print(json.dumps({'candidates': CORE_SERVING['candidates'],
+  'snapshot_bytes': validate_lineage_and_manifests(),
+  'compatibility': load_json(ROOT / 'config/kova-t4-compatibility.v1.json')}))
+`], { cwd: fileURLToPath(new URL("..", import.meta.url)), encoding: "utf8" }));
+const gpu = activeHardware.compatibility.device;
+if (JSON.stringify(hardware.planned_probe_hardware) !== JSON.stringify({
+  region: "eastus", vm_size: "Standard_NC4as_T4_v3", device: gpu.exact_name,
+  vram_bytes: gpu.vram_bytes,
+})) throw new Error("hardware_probe_must_match_active_t4_contract");
+if (hardware.candidate_matrices.length !== activeHardware.candidates.length ||
+    new Set(hardware.candidate_matrices.map((matrix) => matrix.candidate_id)).size !== activeHardware.candidates.length) {
   throw new Error("every_core_candidate_requires_a_hardware_matrix");
 }
-for (const servingCandidate of coreServing.candidates) {
+for (const servingCandidate of activeHardware.candidates) {
   const matrix = hardware.candidate_matrices.find((item) => item.candidate_id === servingCandidate.id);
+  const minimumVram = Math.ceil(activeHardware.compatibility.families[servingCandidate.id].estimated_peak_vram_bytes / (1024 ** 3));
+  const gpuVram = gpu.vram_bytes / (1024 ** 3);
   if (
     !matrix || matrix.model !== servingCandidate.model || matrix.model_revision !== servingCandidate.revision ||
-    matrix.published_weight_bytes !== servingCandidate.stored_bytes ||
-    matrix.minimum_benchmark_vram_gb !== servingCandidate.minimum_benchmark_vram_gb ||
+    matrix.pinned_snapshot_bytes !== activeHardware.snapshot_bytes[servingCandidate.id] ||
+    matrix.minimum_benchmark_vram_gb !== minimumVram ||
     matrix.selected_provider_hardware_id !== null || matrix.compatibility_verified !== false ||
     matrix.benchmark_complete !== false || !Array.isArray(matrix.eligible_vram_tiers_gb) ||
-    matrix.eligible_vram_tiers_gb.length === 0 ||
-    matrix.eligible_vram_tiers_gb[0] !== matrix.minimum_benchmark_vram_gb ||
-    matrix.eligible_vram_tiers_gb.some((tier) =>
-      !Number.isInteger(tier) || tier < matrix.minimum_benchmark_vram_gb
-    )
+    matrix.eligible_vram_tiers_gb.length !== 1 ||
+    matrix.eligible_vram_tiers_gb[0] !== gpuVram || gpuVram < minimumVram
   ) throw new Error(`invalid_hardware_matrix:${servingCandidate.id}`);
 }
 
@@ -203,7 +215,9 @@ if (
   ultra.hidden_chain_of_thought_exposed !== false
 ) throw new Error("both_runpod_engines_must_be_unselected_scale_to_zero_and_blocked");
 if (
-  coreServing.status !== "source_only_selection_blocked" || coreServing.engine !== "kova-core" ||
+  coreServing.status !== "superseded_non_authoritative_history" ||
+  coreServing.superseded_by !== "config/kova-three-family-pilot.v1.json" ||
+  coreServing.must_not_drive_current_routing !== true || coreServing.engine !== "kova-core" ||
   coreServing.provider !== "runpod_serverless" || coreServing.endpoint_name_reserved !== "kova-core" ||
   coreServing.endpoint_deployed !== false || coreServing.selected_serving_engine !== null ||
   coreServing.selected_candidate_id !== null || coreServing.selected_gpu !== null ||
@@ -304,11 +318,25 @@ if (
   coreContainer.weights.immutable_cached_artifact_present !== false ||
   coreContainer.weights.cache_warmth_verified !== false
 ) throw new Error("core_container_weights_must_stay_uncached_and_selection_blocked");
+const ultraMinimumEntitlements = ultraPlan.minimum_entitlement_by_surface;
+const ultraFamiliesByPolicy = (surface, tier) =>
+  Object.entries(currentPolicy.entitlements[surface][tier])
+    .filter(([, levels]) => levels.includes("ultra"))
+    .map(([family]) => family).sort().join(",");
 if (
   ultraPlan.status !== "source_only" || ultraPlan.engine !== "kova-ultra" ||
   ultraPlan.provider !== "runpod_serverless" || ultraPlan.worker_type !== "flex" ||
   ultraPlan.endpoint_name_reserved !== "kova-ultra" || ultraPlan.endpoint_deployed !== false ||
-  ultraPlan.active_workers !== 0 || ultraPlan.required_entitlement !== "pro" ||
+  ultraPlan.active_workers !== 0 || Object.hasOwn(ultraPlan, "required_entitlement") ||
+  !ultraMinimumEntitlements ||
+  Object.keys(ultraMinimumEntitlements).sort().join(",") !== "chat,work" ||
+  ultraMinimumEntitlements.chat !== "pro" || ultraMinimumEntitlements.work !== "plus" ||
+  ultraFamiliesByPolicy("chat", "free") !== "" ||
+  ultraFamiliesByPolicy("chat", "plus") !== "" ||
+  ultraFamiliesByPolicy("chat", "pro") !== "cosmo,orion" ||
+  ultraFamiliesByPolicy("work", "free") !== "" ||
+  ultraFamiliesByPolicy("work", "plus") !== "cosmo,nova,orion" ||
+  ultraFamiliesByPolicy("work", "pro") !== "cosmo,nova,orion" ||
   ultraPlan.minimum_specialists !== 2 || ultraPlan.maximum_specialists !== 5 ||
   ultraPlan.maximum_debate_rounds !== 1 || ultraPlan.selected_model !== null ||
   ultraPlan.required_stages.join(",") !== "specialists,disagreement_check,judge,conditional_debate,synthesis" ||
@@ -327,7 +355,7 @@ if (
 if (surface.chat_modes.map((mode) => mode.id).join(",") !== expectedChatModes.join(",")) throw new Error("six_ordered_chat_modes_required");
 if (
   surface.chat_modes.map((mode) => mode.display_name).join(",") !==
-  "Kova 5.6 Cosmo,Kova 5.6 Orion,Kova 5.6 Nova,Nova Extra High,Nova Max,Kova Ultra"
+  "Kova Cosmo,Kova Orion,Kova Nova,Nova Extra High,Nova Max,Kova Ultra"
 ) throw new Error("product_surface_kova_names_invalid");
 if (surface.chat_modes.slice(0, 5).some((mode) => mode.engine !== "kova-core")) throw new Error("auto_through_max_must_use_core");
 if (surface.chat_modes.find((mode) => mode.id === "ultra").engine !== "kova-ultra") throw new Error("ultra_must_change_engine");
@@ -336,7 +364,7 @@ for (const id of ["high", "extra-high", "max", "ultra"]) {
   if (surface.chat_modes.find((mode) => mode.id === id).activity_updates !== true) throw new Error(`deep_mode_requires_activity:${id}`);
 }
 if (surface.chat_modes.some((mode) => mode.deployment_ready !== false)) throw new Error("all_chat_modes_must_stay_blocked");
-if (surface.work_families.map((family) => family.display_name).join(",") !== "Kova 5.6 Cosmo,Kova 5.6 Orion,Kova 5.6 Nova") {
+if (surface.work_families.map((family) => family.display_name).join(",") !== "Kova Cosmo,Kova Orion,Kova Nova") {
   throw new Error("three_kova_work_families_required");
 }
 if (surface.work_efforts.length !== 6 || surface.work_families.length * surface.work_efforts.length !== 18) {
@@ -391,14 +419,52 @@ if (activity.rules.must_follow_real_runtime_or_tool_event !== true || activity.r
   throw new Error("activity_must_be_truthfully_grounded");
 }
 if (!activity.required_fields.includes("grounding_operation_id")) throw new Error("activity_runtime_grounding_id_required");
-if (completion.baseline_percent !== 0 || completion.current_verified_percent !== 22 || completion.live_model_routes !== 0 || completion.target_model_routes !== 25) {
+const canonicalProductRoutes = 1 + ["chat", "work"].reduce((count, surfaceName) =>
+  count + Object.values(currentPolicy.entitlements[surfaceName].pro).reduce(
+    (surfaceCount, levels) => surfaceCount + levels.length, 0,
+  ), 0,
+);
+if (
+  completion.baseline_percent !== 0 || completion.current_verified_percent !== 22 ||
+  completion.live_model_routes !== 0 || canonicalProductRoutes !== 31 ||
+  completion.target_canonical_product_routes !== canonicalProductRoutes ||
+  completion.target_route_contracts_including_compatibility_aliases !== 37 ||
+  Object.hasOwn(completion, "target_model_routes")
+) {
   throw new Error("completion_progress_contract_mismatch");
 }
+const trainedFamilyWeightsCriterion = "cosmo_orion_and_nova_each_have_distinct_pinned_base_weights_and_distinct_verified_trained_adapters";
 if (
-  evaluations.status !== "all_routes_blocked" || evaluations.target_routes !== 25 ||
+  !Array.isArray(completion.definition_of_100_percent) ||
+  completion.definition_of_100_percent.filter((criterion) => criterion === trainedFamilyWeightsCriterion).length !== 1 ||
+  completion.definition_of_100_percent.includes("cosmo_orion_and_nova_are_truthfully_described_as_compute_profiles_not_separate_foundation_weights")
+) throw new Error("completion_family_weight_contract_mismatch");
+const completionClaims = [
+  ["definition_of_100_percent", "non_ultra_routes_select_family_pinned_trained_models_on_core_runtime",
+    "auto_through_max_use_one_benchmark_selected_kova_core_engine"],
+  ["definition_of_100_percent", "selected_inference_runtime_scales_to_zero_without_active_workers",
+    "runpod_flex_scales_to_zero_without_active_workers"],
+  ["definition_of_100_percent", "selected_inference_runtime_billing_and_cost_are_verified_against_measured_usage",
+    "runpod_core_and_ultra_billing_tradeoffs_are_accepted_after_benchmarking"],
+  ["definition_of_100_percent", "azure_gpu_inference_migration_is_verified_before_production_cutover", null],
+  ["current_evidence", "verified_cosmo_qwen3_0_6b_upstream_checkpoint_is_pinned",
+    "verified_cosmo_fp8_upstream_checkpoint_is_pinned"],
+  ["current_evidence", "ultra_chat_requires_pro_and_ultra_work_requires_plus_or_pro_with_remaining_budget",
+    "ultra_direct_requests_require_pro_authorization_and_remaining_budget"],
+];
+if (completionClaims.some(([section, current, stale]) =>
+  !Array.isArray(completion[section]) ||
+  completion[section].filter((claim) => claim === current).length !== 1 ||
+  (stale !== null && completion[section].includes(stale))
+)) throw new Error("completion_current_policy_mismatch");
+if (
+  evaluations.status !== "all_routes_blocked" || evaluations.target_routes !== 37 ||
   evaluations.passing_routes.length !== 0 ||
   evaluations.offline_contract_evidence.status !== "passed" ||
-  evaluations.offline_contract_evidence.route_contracts_checked !== 25 ||
+  evaluations.offline_contract_evidence.route_contracts_checked !== 37 ||
+  evaluations.offline_contract_evidence.engine_split.auto !== 1 ||
+  evaluations.offline_contract_evidence.engine_split.core !== 30 ||
+  evaluations.offline_contract_evidence.engine_split.ultra !== 6 ||
   evaluations.offline_contract_evidence.actual_model_outputs_evaluated !== false ||
   evaluations.offline_contract_evidence.quality_or_factuality_claimed !== false ||
   evaluations.offline_contract_evidence.paid_provider_calls !== 0 ||
@@ -425,7 +491,7 @@ if (catalog.public_profiles.some((profile) => profile.deployment_ready !== false
 }
 if (
   catalog.user_facing_hierarchy.map((mode) => mode.display_name).join(",") !==
-  "Kova Auto,Kova 5.6 Cosmo,Kova 5.6 Orion,Kova 5.6 Nova,Nova Extra High,Nova Max,Kova Ultra"
+  "Kova Auto,Kova Cosmo,Kova Orion,Kova Nova,Nova Extra High,Nova Max,Kova Ultra"
 ) throw new Error("final_kova_mode_hierarchy_required");
 
 console.log("Validated Kova two-engine planning stack; paid execution and production routing remain blocked.");

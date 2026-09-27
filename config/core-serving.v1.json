@@ -1,6 +1,8 @@
 {
   "schema_version": 1,
-  "status": "source_only_selection_blocked",
+  "status": "superseded_non_authoritative_history",
+  "superseded_by": "config/kova-three-family-pilot.v1.json",
+  "must_not_drive_current_routing": true,
   "engine": "kova-core",
   "provider": "runpod_serverless",
   "endpoint_name_reserved": "kova-core",
