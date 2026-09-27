@@ -13,10 +13,11 @@ the historical execution/service implementation.
 schema and regression fixture, not a replacement silently labelled as the old
 36-deterministic/14-human suite. The historical suite digest remains recorded as
 `85d1883bab76f1d94da6a9ec63e9ddeee72e83736b9e84f13297b9d0dfe9a70a`.
-The supplemental source did not include the original cases/golden answers, human
-reviews or a benchmark winner. Recovery has since located the historical case bytes,
-but no case payload, execution code, review or model result is copied into this
-branch. The fixed Phase A denominator remains 40.
+The original supplemental ingester did not include historical cases, golden
+answers, human reviews or a benchmark winner. The later source bridge described
+below includes exact archived case definitions only; no execution code, review
+or model result was recovered as current evaluation evidence. The fixed Phase A
+denominator remains 40.
 
 ## September 26 read-only recovery evidence
 
@@ -40,13 +41,13 @@ thresholds and latency targets are unset. In the isolated historical tree,
 provider calls and release approval false. These are historical source checks,
 not current-integrated evaluation evidence.
 
-An in-memory, read-only case mapping satisfied this supplemental ingester's
-schema. An empty, unverified bundle against the current 37-route manifest
-accounted for all 3,700 case/route/cold-warm units as missing, with zero
-attempts, zero reviews and `phase_b_ready: false`. That mapping drops historical
-category and policy metadata, supplies no reviewed source URLs, and does not
-reconcile the original analyzer with the current policy. It is neither a
-published replacement suite nor an evaluation pass.
+An initial in-memory, read-only case mapping satisfied this supplemental
+ingester's schema. An empty, unverified bundle against the current 37-route
+manifest accounted for all 3,700 case/route/cold-warm units as missing, with
+zero attempts, zero reviews and `phase_b_ready: false`. That mapping does not
+transfer historical category and policy metadata into the ingester's schema,
+supplies no reviewed source URLs, and does not reconcile the original analyzer
+with the current policy. It is not an evaluation pass.
 
 Of 119 tracked files in the recovered historical tree, 101 paths are shared
 with the current Models checkout: 54 match byte-for-byte, 47 differ, and 18
@@ -57,6 +58,28 @@ assumptions and cannot be copied as current evidence. Earlier publication
 restrictions on the specific job API, approved tool execution, and Auto latency
 repair remain in force. A35 and A38 remain open pending a separately reviewed,
 safe integration and exact-head validation.
+
+## September 27 source bridge for archived cases
+
+`evaluations/model-quality-suite.v1.json` now contains the exact historical
+case-file bytes checked against the SHA-256 above. The separate
+`evaluation.historical_suite_bridge` accepts only that pinned file and canonical
+content digest, rejects altered policy metadata, and maps all 50 original
+IDs, prompts, exact JSON answers and manual criteria to this ingester's
+unverified source schema. Its mapped-suite digest is
+`b6fdd7be8734a79d1cec45a5a07672eeac6add1618781aae33c5e5e17d5aae28`.
+The original file retains its categories and unset approval, repetition and
+latency fields; those metadata do not silently become measured thresholds.
+No archived evaluator, job-service code or Auto latency repair is published
+by the bridge. It runs no provider, generated code, tools or reviewer.
+
+`python3 -m evaluation.historical_suite_bridge` reports only pins, counts and
+the 3,700 expected cold/warm units; it does not emit prompts, golden answers
+or a result for those units. A zero-attempt bundle tested against the mapped
+suite keeps all 3,700 missing and Phase B false. This source addition advances
+case provenance and schema reconciliation only. It cannot authenticate real
+attempts, reviews, model behavior, cost/latency evidence or the original
+analyzer, and does not close A35/A38 or change the fixed 30/40 rubric.
 
 ## Implemented source
 
@@ -125,10 +148,11 @@ budget. All unresolved product requirements and independent review gates remain.
 
 ## Reproduction and future integration
 
-Run `python3 -m unittest evaluation.test_quality_evidence -v` and
-`npm run validate:quality:evidence`. A no-argument CLI invocation prints a source-only
-status, without claiming to have evaluated a dataset. For a supplied new-schema
-suite/bundle, use:
+Run `python3 -m unittest evaluation.test_quality_evidence
+evaluation.test_historical_suite_bridge -v`,
+`npm run validate:quality:evidence`, and `npm run validate:historical-suite`.
+No-argument CLI invocations print source-only status, without claiming a
+completed evaluation. For a supplied new-schema suite/bundle, use:
 
 ```
 python3 -m evaluation.quality_evidence SUITE.json BUNDLE.json SUITE_SHA256 SOURCE_COMMIT
@@ -137,13 +161,14 @@ python3 -m evaluation.quality_evidence SUITE.json BUNDLE.json SUITE_SHA256 SOURC
 Both pins are required, input JSON is bounded/strict, invalid Unicode is rejected,
 and CLI validation/read failures do not echo input paths or payloads. No input
 file is modified.
-The two cases in the test fixture are authored regression inputs only. They are
-not a recreated 50-case benchmark and never count as a completed Phase A item.
+The two cases in the ingester's synthetic test fixture are separate from the
+50 exact archived definitions. Neither those fixtures nor the source bridge
+count as a completed Phase A item or measured model evaluation.
 
-The original archive and suite are recovered and verified as noted above. To
-close A35, reconcile the schema, cases, analyzer and golden answers safely with
-the current revision, then rerun the integrated evaluation checks. Add authenticated
-runtime/receipt and review provenance as part of the separately reviewed
-application/live evidence path; this ingestion helper cannot provide those
-attestations itself. A38's
-publication-block exclusions remain controlling throughout reconciliation.
+The original suite is recovered and its case fields are mapped as source. A35
+still needs a safe current-policy reconciliation of the original analyzer,
+golden-answer scoring and category requirements, plus owner-approved thresholds
+and integrated evaluation checks. Authenticated runtime/receipt and review
+provenance require a separately reviewed application/live evidence path; this
+ingestion helper cannot provide those attestations. The prior Auto timing
+publication restriction and A38's job/tool exclusions remain controlling.

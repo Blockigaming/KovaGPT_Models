@@ -1,7 +1,7 @@
 """Provider-free scoring/accounting of supplied, unverified evaluation evidence.
 
-This is a new ingestion schema, not reconstruction of the inaccessible historical
-50-case suite. No generation, retry, tool/code execution or human review is run.
+This is an independent ingestion schema; the archived 50-case source bridge is
+separate. No generation, retry, tool/code execution or human review is run.
 """
 
 from collections import Counter, defaultdict
