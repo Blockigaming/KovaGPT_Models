@@ -18,6 +18,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+HEX128 = re.compile(r"[0-9a-f]{128}\Z")
 FAMILIES = ("kova-cosmo", "kova-orion", "kova-nova")
 LEVELS = ("light", "medium", "high", "extra-high", "max", "ultra")
 FALSE_GATES = (
@@ -34,6 +35,10 @@ MANIFEST_SHA256 = {
     "kova-orion": "d4eb95e29eef9a92445e3b7622d17f066678e5dc0915fd5a3c40189167c5e746",
     "kova-nova": "8fd1bac2209b5f1c4f1412fc1797b29e0bdc4609025bdd176660dd560fa97566",
 }
+# No independent collector or public key has been approved. A guest-provided
+# key must never turn its own JSON measurements into live admission evidence.
+TRUSTED_PROBE_COLLECTOR_PUBLIC_KEY = None
+MAX_PROBE_AGE = timedelta(seconds=60)
 RECIPE_SHA256 = {
     "kova-cosmo": "6f577e521d4ddeff1725f9c660825d6bd08f94d80b06acf6f0721b265236eb3d",
     "kova-orion": "467330ca8e7ee928ae76b88996b70264190512045e2d42c1d54b4262a9456885",
@@ -481,12 +486,51 @@ def validate_live_price_evidence(path: Path, *, admission_scope: str = "three-fa
     }
 
 
+def _verify_probe_attestation(record: dict, measurements: dict) -> None:
+    """Require a recent signature from a separately pinned measurement collector."""
+    need(type(record) is dict and set(record) == {"payload", "signature_ed25519_hex"},
+         "independent compatibility attestation required")
+    payload = record["payload"]
+    need(type(payload) is dict and set(payload) == {
+        "kind", "observed_at_utc", "model_manifests_sha256", "measurements",
+    } and payload["kind"] == "kova_three_family_compatibility_probe_v1" and
+         payload["model_manifests_sha256"] == MANIFEST_SHA256 and
+         payload["measurements"] == measurements,
+         "compatibility attestation differs from pinned source or measurements")
+    key = TRUSTED_PROBE_COLLECTOR_PUBLIC_KEY
+    need(type(key) is bytes and len(key) == 32,
+         "trusted compatibility collector not configured")
+    signature = record["signature_ed25519_hex"]
+    need(type(signature) is str and HEX128.fullmatch(signature),
+         "independent compatibility signature required")
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    try:
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                             ensure_ascii=True, allow_nan=False).encode("ascii")
+        Ed25519PublicKey.from_public_bytes(key).verify(bytes.fromhex(signature), encoded)
+    except (InvalidSignature, ValueError, TypeError, UnicodeError, RecursionError):
+        raise ContractError("untrusted compatibility measurement signature") from None
+    from training.cosmo_lifecycle_authority import AuthorityError, timestamp
+    try:
+        observed = timestamp(payload["observed_at_utc"])
+    except AuthorityError:
+        raise ContractError("invalid compatibility observation time") from None
+    elapsed = datetime.now(timezone.utc) - observed
+    need(timedelta(0) <= elapsed <= MAX_PROBE_AGE,
+         "stale compatibility measurements")
+
+
 def validate_probe_evidence(path: Path, *, require_live_imds: bool = False) -> dict:
-    """Validate probe values, then bind the image to the executing Azure VM."""
-    value = load_json(path, maximum_bytes=64 * 1024)
+    """Check offline shape; live admission also needs independent measurement proof."""
+    record = load_json(path, maximum_bytes=64 * 1024)
+    signed = (require_live_imds and type(record) is dict and
+              set(record) == {"payload", "signature_ed25519_hex"} and
+              type(record.get("payload")) is dict)
+    value = record["payload"].get("measurements") if signed else record
     compat = load_json(ROOT / "config/kova-t4-compatibility.v1.json")
     stack = load_json(ROOT / "config/kova-three-family-training-stack.v1.json")
-    need(set(value) == {
+    need(type(value) is dict and set(value) == {
         "schema_version", "device_name", "compute_capability", "cuda_version",
         "bitsandbytes_four_bit_available", "available_vram_bytes", "free_disk_bytes",
         "family_probes", "azure_vm_image_urn", "azure_vm_resource_id", "azure_vm_id",
@@ -543,11 +587,14 @@ def validate_probe_evidence(path: Path, *, require_live_imds: bool = False) -> d
         need(peak <= available, "measured peak exceeds available VRAM")
         need(measured["maximum_sequence_length"] == expected["maximum_sequence_length"],
              "sequence-length probe mismatch")
+    if require_live_imds:
+        _verify_probe_attestation(record, value)
     return {
         "status": "t4_probe_evidence_valid" if require_live_imds else "untrusted_probe_shape_valid",
         "device_name": value["device_name"],
         "azure_vm_image_urn": value["azure_vm_image_urn"],
         "live_azure_image_verified": require_live_imds,
+        "independent_measurements_verified": require_live_imds,
         "families": list(FAMILIES),
     }
 
