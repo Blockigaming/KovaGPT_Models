@@ -208,15 +208,22 @@ class LocalJobStore:
 
         Stage events are omitted for profiles that disallow activity updates.
         The returned cursor advances over inspected events, including filtered ones.
+        Future cursors and missing persisted events are rejected so reconnects
+        cannot silently miss later events.
         """
         require(type(after) is int and 0 <= after <= 2**53 - 1, "invalid event cursor")
         positive_integer(limit, "event limit", 500)
         with self._transaction() as db:
             job = self._owned(db, owner, job_id)
             spec = self._spec(job)
+            require(after <= job["sequence"], "future event cursor")
             activity = {s.id: s.activity for s in spec.stages}
             rows = db.execute("SELECT sequence,type,stage,occurred_ms FROM events "
                               "WHERE job=? AND sequence>? ORDER BY sequence LIMIT ?", (job_id, after, limit)).fetchall()
+            expected_count = min(job["sequence"] - after, limit)
+            if len(rows) != expected_count or any(row["sequence"] != after + index + 1
+                                                  for index, row in enumerate(rows)):
+                raise ExecutionIntegrityError("event journal sequence gap")
             return {
                 "events": [{"job_id": job_id, "sequence": r["sequence"], "type": r["type"],
                             "stage_id": r["stage"], "occurred_ms": r["occurred_ms"]}

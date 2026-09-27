@@ -237,6 +237,19 @@ class PostgresStoreTests(SyntheticAdapterTestCase):
             with self.subTest(action=action.__name__), self.assertRaises(ExecutionError):
                 action("other-owner", job)
 
+    def test_reopened_postgres_rejects_future_replay_cursor(self):
+        job, _, grant = self.job()
+        cursor = self.store.status(OWNER, job)["sequence"]
+        reopened = self.open()
+        self.addCleanup(reopened.close)
+        with self.assertRaisesRegex(ExecutionError, "future event cursor"):
+            reopened.replay(OWNER, job, after=cursor + 2)
+        self.store.begin(grant, job)
+        self.assertEqual(reopened.replay(OWNER, job, after=cursor)["events"][0]["type"],
+                         "job_resumed")
+        with self.assertRaisesRegex(ExecutionError, "future event cursor"):
+            reopened.replay(OWNER, job, after=cursor + 2)
+
     def test_retention_and_deletion_tombstones_survive_connection_reopen(self):
         job, spec, grant = self.job("instant", key="delete-once")
         LocalRunner(self.store, lambda: grant, ModelFixture().worker()).run(job)
