@@ -863,8 +863,31 @@ def append_ledger_event(state: dict, event: dict, *, expected_sequence: int,
                    if lifecycle["admission_scope"] == "cosmo-only" else
                    Decimal(cost["family_allowances"][family]))
         required = compute + ancillary + Decimal(cost["emergency_cleanup_margin"])
-        need(remaining.is_finite() and required <= remaining <= Decimal("6.0000"),
+        ceiling = (Decimal(cost["combined_hard_ceiling"])
+                   if lifecycle["admission_scope"] == "three-family" else
+                   Decimal(cost["conditional_cosmo_only_pilot"]["hard_ceiling_usd"]))
+        need(remaining.is_finite() and required <= remaining <= ceiling,
              "remaining family budget insufficient")
+        previous_admissions = [item for item in events if item.get("kind") == "cost_admission"]
+        if previous_admissions:
+            previous = previous_admissions[-1]
+            prior_family = previous.get("family")
+            need(prior_family in FAMILIES and
+                 (prior_family == family or
+                  FAMILIES.index(prior_family) + 1 == FAMILIES.index(family)),
+                 "invalid family budget history")
+            try:
+                prior_remaining = Decimal(previous["remaining_budget_usd"])
+            except (KeyError, TypeError, InvalidOperation):
+                raise ContractError("invalid family budget history") from None
+            need(prior_remaining.is_finite(), "invalid family budget history")
+            reserved = (Decimal(cost["family_allowances"][prior_family])
+                        if prior_family != family else Decimal(0))
+            # The immutable ledger carries the last admitted balance. Without
+            # independently verified actual spend, a prior family's compute
+            # allowance cannot be credited back to a later grant.
+            need(remaining <= prior_remaining - reserved,
+                 "cumulative family budget exceeded")
     need(kind != "training_grant" or family in FAMILIES, "training grant requires a family")
     if kind == "family_preserved":
         need(family in FAMILIES and family in state.get("family_order", []),
