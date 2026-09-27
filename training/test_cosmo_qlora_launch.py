@@ -91,14 +91,14 @@ class LaunchTests(unittest.TestCase):
         planned = launch.proposal()
         self.assertEqual((planned["train_records"], planned["validation_records"]), (27, 15))
         self.assertFalse(planned["paid_actions_enabled"])
-        self.assertEqual(planned["all_in_ceiling_usd"], "3.3000")
+        self.assertEqual(planned["all_in_ceiling_usd"], "12.0000")
         self.assertEqual(planned["minimum_signed_allocation_seconds"], 5400)
         assessed = self.check()
         self.assertEqual(assessed["worst_case_all_in_usd"], "3.2498")
         self.assertEqual(assessed["signed_allocation_seconds"], 7140)
         self.assertFalse(assessed["paid_actions_enabled"])
 
-    def test_shorter_signed_window_fits_only_when_compute_reservation_covers_it(self):
+    def test_signed_window_uses_shared_ceiling_and_still_requires_cleanup_lead(self):
         payload = deepcopy(self.payload)
         payload["account_compute_hourly_usd"] = "0.5260"
         payload["allocation_deadline_utc"] = "2026-09-24T13:30:00Z"
@@ -106,16 +106,14 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(result["signed_allocation_seconds"], 5400)
         self.assertEqual(result["worst_case_all_in_usd"], "3.2454")
         payload["allocation_deadline_utc"] = "2026-09-24T13:42:00Z"
-        with self.assertRaisesRegex(launch.LaunchRejected, "complete signed cost"):
-            self.check(payload)
+        self.assertLess(self.check(payload)["signed_allocation_seconds"], 7200)
         payload["allocation_deadline_utc"] = "2026-09-24T13:43:00Z"
-        with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-            self.check(payload)
+        self.assertEqual(self.check(payload)["signed_allocation_seconds"], 6180)
         payload["allocation_deadline_utc"] = "2026-09-24T13:29:59Z"
         with self.assertRaisesRegex(launch.LaunchRejected, "90-120 minute"):
             self.check(payload)
         payload["allocation_deadline_utc"] = "2026-09-24T13:30:00Z"
-        payload["account_compute_hourly_usd"] = "0.6001"
+        payload["account_compute_hourly_usd"] = "6.4001"
         with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
             self.check(payload)
 
@@ -167,7 +165,7 @@ class LaunchTests(unittest.TestCase):
             elif change == "negative":
                 extras["tax_and_other_fees"] = "-0.0010"
             else:
-                extras["controller_registry_and_logs"] = "0.2000"
+                extras["controller_registry_and_logs"] = "9.0000"
             with self.subTest(change=change), self.assertRaises(launch.LaunchRejected):
                 self.check(payload)
 
@@ -206,7 +204,7 @@ class LaunchTests(unittest.TestCase):
     def test_retailability_budget_quotas_identity_and_watchdog_fail_closed(self):
         edits = (
             ("account_meter_source", "azure_retail_price_api"),
-            ("account_compute_hourly_usd", "0.4600"),
+            ("account_compute_hourly_usd", "5.0000"),
             ("source_commit", "e" * 40),
             ("dataset_sha256", "a" * 64),
             ("model_revision", "a" * 40),
@@ -360,7 +358,7 @@ class LaunchTests(unittest.TestCase):
                        "grant_id": "one-and-only", "azure_identity_token_sha256": token_sha,
                        "issued_at_utc": "2026-09-24T12:01:00Z",
                        "expires_at_utc": "2026-09-24T13:15:00Z",
-                       "training_runs_consumed": runs, "all_in_reserved_usd": "3.3000",
+                       "training_runs_consumed": runs, "all_in_reserved_usd": "12.0000",
                        "watchdog_healthy": True, "cleanup_scope_verified": True,
                        "deployment_authorized": False}
             return {"payload": payload,

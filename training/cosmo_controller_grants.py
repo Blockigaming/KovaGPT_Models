@@ -49,7 +49,7 @@ class GrantIssuer:
         need(type(request["schema_version"]) is int and request["schema_version"] == 1 and
              request["kind"] == "kova_cosmo_qlora_training_grant_request" and
              type(request["training_runs_limit"]) is int and request["training_runs_limit"] == 1 and
-             request["all_in_ceiling_usd"] == "3.3000" and
+             request["all_in_ceiling_usd"] == "12.0000" and
              type(request["request_nonce"]) is str and
              re.fullmatch(r"[0-9a-f]{64}", request["request_nonce"]), "invalid grant bounds or nonce")
         context = self.ledger.context
@@ -152,7 +152,7 @@ class GrantIssuer:
              "runtime evidence expired during independent verification")
         payload = {"schema_version": 1, "kind": "kova_cosmo_qlora_training_grant",
             "issuer": authority.ISSUER, "source_commit": commit, "subscription_id": subscription,
-            **bound, "all_in_ceiling_usd": "3.3000", "request_nonce": request["request_nonce"],
+            **bound, "all_in_ceiling_usd": "12.0000", "request_nonce": request["request_nonce"],
             "ledger_sequence": request["preflight_ledger_sequence"] + 1,
             "ledger_commit_id": str(uuid.uuid4()), "ledger_append_only": True,
             "ledger_status": "grant_committed_before_response", "grant_id": str(uuid.uuid4()),

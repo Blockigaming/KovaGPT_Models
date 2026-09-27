@@ -1,4 +1,4 @@
-"""Fail-closed source contract for the three-family, six-dollar T4 pilot.
+"""Fail-closed source contract for the three-family, twelve-dollar T4 pilot.
 
 Importing or validating this module performs no network, provider, download,
 training, deployment, or filesystem mutation. Paid execution must use separate
@@ -342,13 +342,13 @@ def validate_compatibility_evaluation_profiles():
 
 def _validated_cost_guard() -> dict:
     cost = load_json(ROOT / "config/kova-three-family-cost-guard.v1.json")
-    need(cost["combined_hard_ceiling"] == "6.0000")
+    need(cost["combined_hard_ceiling"] == "12.0000")
     need(cost["conditional_cosmo_only_pilot"] == {
-        "hard_ceiling_usd": "3.3000", "minimum_allocation_seconds": 5400,
+        "hard_ceiling_usd": "12.0000", "minimum_allocation_seconds": 5400,
         "maximum_allocation_seconds": 7200,
-        "maximum_compute_reservation_usd": "0.9000",
+        "maximum_compute_reservation_usd": "9.6000",
         "other_families_authorized": False,
-    }, "Cosmo-only owner ceiling drift")
+    }, "Cosmo-only path must use the same shared owner ceiling")
     need(cost["emergency_cleanup_margin"] == "1.2500")
     need(type(cost.get("family_allowances")) is dict and
          cost["family_allowances"] == FAMILY_ALLOWANCES,
@@ -388,7 +388,7 @@ def worst_case_total(*, hourly_compute_rate: Decimal, lifecycle_seconds: int = 2
 
 def admit_bootstrap(hourly_compute_rate: Decimal) -> Decimal:
     total = worst_case_total(hourly_compute_rate=hourly_compute_rate)
-    need(total <= Decimal("6.0000"), "live-price worst case exceeds six-dollar ceiling")
+    need(total <= Decimal("12.0000"), "live-price worst case exceeds twelve-dollar ceiling")
     return total
 
 
@@ -413,7 +413,7 @@ def admit_conditional_cosmo_pilot(hourly_compute_rate: Decimal, *,
          Decimal(cost["emergency_cleanup_margin"]) == Decimal(proposal["hard_ceiling_usd"]),
          "Cosmo reservation does not cover the conditional ceiling")
     need(total <= Decimal(proposal["hard_ceiling_usd"]),
-         "Cosmo worst case exceeds conditional $3.30 ceiling")
+         "Cosmo worst case exceeds shared $12 ceiling")
     need(compute <= Decimal(proposal["maximum_compute_reservation_usd"]),
          "Cosmo compute reservation exceeded")
     return total
@@ -468,10 +468,10 @@ def validate_live_price_evidence(path: Path, *, admission_scope: str = "three-fa
     cosmo_total = worst_case_total(hourly_compute_rate=rate, lifecycle_seconds=7200)
     if admission_scope == "cosmo-only":
         total = admit_conditional_cosmo_pilot(rate)
-        ceiling = "3.3000"
+        ceiling = "12.0000"
     else:
         total = admit_bootstrap(rate)
-        ceiling = "6.0000"
+        ceiling = "12.0000"
     return {
         "status": "live_price_admitted",
         "admission_scope": admission_scope,
@@ -479,10 +479,10 @@ def validate_live_price_evidence(path: Path, *, admission_scope: str = "three-fa
         "worst_case_total_usd": str(total),
         "hard_ceiling_usd": ceiling,
         "conditional_cosmo_only_worst_case_usd": str(cosmo_total),
-        "conditional_cosmo_only_hard_ceiling_usd": "3.3000",
-        "conditional_cosmo_only_eligible": cosmo_total <= Decimal("3.3000"),
+        "conditional_cosmo_only_hard_ceiling_usd": "12.0000",
+        "conditional_cosmo_only_eligible": cosmo_total <= Decimal("12.0000"),
         "conditional_cosmo_only_maximum_allocation_seconds": 7200,
-        "conditional_cosmo_only_compute_reservation_usd": "0.9000",
+        "conditional_cosmo_only_compute_reservation_usd": "9.6000",
     }
 
 
@@ -620,7 +620,7 @@ def validate_cost_lifecycle_operator():
     need(tuple(pilot["families"]) == FAMILIES and tuple(pilot["sequential_order"]) == FAMILIES)
     need(pilot["single_shared_vm"]["sku"] == "Standard_NC4as_T4_v3")
     need(pilot["single_shared_vm"]["public_ip_allowed"] is False)
-    need(pilot["combined_hard_ceiling_usd"] == "6.0000")
+    need(pilot["combined_hard_ceiling_usd"] == "12.0000")
     need(pilot["single_shared_vm"]["ubuntu_image_version"] == "24.04.202609040",
          "exact East US Ubuntu image version mismatch")
     vm_template = (ROOT / "infra/three-family-pilot-vm.bicep").read_text(encoding="utf-8")
@@ -808,7 +808,7 @@ def _verify_cleanup_receipt(event: dict, *, expected_sequence: int,
         final_cost = Decimal(payload["final_cost_usd"])
     except (KeyError, TypeError, ValueError, InvalidOperation):
         raise ContractError("invalid cleanup timestamps or final cost") from None
-    ceiling = Decimal("3.3000" if lifecycle["admission_scope"] == "cosmo-only" else "6.0000")
+    ceiling = Decimal("12.0000")
     need(pilot_deleted <= verified and watchdog_deleted <= verified and
          now - timedelta(minutes=5) <= verified <= now and
          final_cost.is_finite() and 0 <= final_cost <= ceiling,

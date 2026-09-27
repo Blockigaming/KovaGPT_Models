@@ -109,7 +109,7 @@ class ControllerLedgerTests(unittest.TestCase):
             "expires_at_utc": "2026-09-24T12:05:00Z"}
         self.cost = {"kind": "cost_admission", "family": "kova-cosmo",
             "account_price_verified": True, "quote_sha256": "a" * 64,
-            "remaining_budget_usd": "3.3000", "observed_at_utc": "2026-09-24T12:00:00Z",
+            "remaining_budget_usd": "12.0000", "observed_at_utc": "2026-09-24T12:00:00Z",
             "expires_at_utc": "2026-09-24T12:05:00Z"}
         payload = {"schema_version": 1, "kind": "kova_cosmo_qlora_training_grant",
             "issuer": authority.ISSUER, "source_commit": self.context["source_commit"],
@@ -127,7 +127,7 @@ class ControllerLedgerTests(unittest.TestCase):
             "allocation_deadline_utc": "2026-09-24T13:30:00Z",
             "watchdog_cleanup_trigger_utc": "2026-09-24T13:15:00Z",
             "training_runs_consumed": 1, "all_in_reserved_usd": "3.1890",
-            "all_in_ceiling_usd": "3.3000", "watchdog_healthy": True,
+            "all_in_ceiling_usd": "12.0000", "watchdog_healthy": True,
             "cleanup_scope_verified": True, "deployment_authorized": False}
         self.grant = {"kind": "training_grant", "family": "kova-cosmo", "quote_sha256": "a" * 64,
             "request_sha256": "f" * 64, "response_envelope": {"payload": payload,
@@ -223,7 +223,7 @@ class ControllerLedgerTests(unittest.TestCase):
         original = self.io.body
         lines = original.splitlines(keepends=True)
         changed = json.loads(lines[-1])
-        changed["payload"]["event"]["remaining_budget_usd"] = "6.0000"
+        changed["payload"]["event"]["remaining_budget_usd"] = "12.0001"
         for bad in (original[:-1], b"".join(lines[::-1]),
                     b"".join(lines[:-1]) + authority.canonical(changed) + b"\n",
                     b"".join(lines[1:])):

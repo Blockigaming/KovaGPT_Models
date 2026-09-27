@@ -1,5 +1,24 @@
 # Cosmo 42-record pilot: launch review
 
+## Current owner budget decision — 2026-09-27
+
+The selected run is **one shared, sequential Cosmo → Orion → Nova lifecycle**
+with a **$12 total maximum for the three one-time training pilots**. There is
+no separate $3.30 limit on Cosmo. The three-family cost guard and the older
+Cosmo-only quote/grant schema now both use $12 as an upper boundary; do not
+run the standalone Cosmo-only lifecycle in addition to the selected shared
+lifecycle under the same authorization. The Cosmo-only analysis and $3.30
+worksheet below are historical and superseded. Hosting after training needs
+its own budget. The $0.526/hour subscription-specific T4 price is a verified
+compute meter, but controller hosting, protected evidence retention, archive,
+tax and other charges still need an independently signed all-in quote before
+any GPU resource is created. A $12 Azure budget alert cannot stop consumption.
+
+The three-family runner remains source-only: its `--execute` option fails
+closed. **No paid training or model deployment has begun.**
+
+## Historical Cosmo-only worksheet (superseded)
+
 **Status: source-only. Paid execution is disabled.** The first pilot is Cosmo
 only; Orion, Nova, deployment, and production routing are outside this release.
 This document is an approval worksheet, not an authorization to spend.

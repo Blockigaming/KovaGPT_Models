@@ -28,7 +28,7 @@ MAX_QUOTE_AGE = timedelta(minutes=10)
 MAX_ALLOCATION_SECONDS = 7200
 MIN_ALLOCATION_SECONDS = 5400
 MIN_CLEANUP_LEAD = timedelta(minutes=15)
-CEILING = Decimal("3.3000")
+CEILING = Decimal("12.0000")
 ADDITIONAL_COST_CATEGORIES = frozenset({
     "controller_runtime", "controller_registry_and_logs",
     "protected_evidence_retention", "external_archive_and_receipts",

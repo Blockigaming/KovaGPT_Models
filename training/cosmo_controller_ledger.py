@@ -312,8 +312,8 @@ class ControllerLedger:
                  payload["ledger_status"] == "grant_committed_before_response" and
                  payload["watchdog_healthy"] is True and payload["cleanup_scope_verified"] is True and
                  payload["deployment_authorized"] is False and
-                 payload["all_in_ceiling_usd"] == "3.3000" and
-                 0 < authority.money(payload["all_in_reserved_usd"]) <= authority.money("3.3000"),
+                 payload["all_in_ceiling_usd"] == "12.0000" and
+                 0 < authority.money(payload["all_in_reserved_usd"]) <= authority.money("12.0000"),
                  "grant controls or reservation invalid")
             issued = authority.timestamp(payload["issued_at_utc"])
             expires = authority.timestamp(payload["expires_at_utc"])

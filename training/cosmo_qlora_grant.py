@@ -204,7 +204,7 @@ def acquire_training_grant(*, quote: Path, source_commit: str,
             "azure_instance_identity_token_expires_at_utc": token_expiry,
             "allocation_deadline_utc": admission["allocation_deadline_utc"],
             "watchdog_cleanup_trigger_utc": admission["watchdog_cleanup_trigger_utc"],
-            "training_runs_limit": 1, "all_in_ceiling_usd": "3.3000",
+            "training_runs_limit": 1, "all_in_ceiling_usd": "12.0000",
             "request_nonce": nonce,
             "requested_at_utc": request_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         }

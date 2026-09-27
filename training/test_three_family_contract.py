@@ -696,53 +696,55 @@ class ThreeFamilyContractTests(unittest.TestCase):
                         snapshot_verifier.main([*args, "--root", str(root)])
                 verify.assert_not_called()
 
-    def test_six_dollar_bootstrap_uses_live_rate_and_60_second_rounding(self):
-        self.assertLessEqual(contract.admit_bootstrap(Decimal("0.526")), Decimal("6.0000"))
-        with self.assertRaisesRegex(contract.ContractError, "six-dollar"):
-            contract.admit_bootstrap(Decimal("1.00"))
+    def test_shared_twelve_dollar_bootstrap_uses_live_rate_and_60_second_rounding(self):
+        self.assertLessEqual(contract.admit_bootstrap(Decimal("0.526")), Decimal("12.0000"))
+        with self.assertRaisesRegex(contract.ContractError, "twelve-dollar"):
+            contract.admit_bootstrap(Decimal("2.00"))
         with self.assertRaises(contract.ContractError):
             contract.admit_bootstrap(Decimal("-0.01"))
         with self.assertRaises(contract.ContractError):
             contract.admit_bootstrap(Decimal("NaN"))
 
-    def test_conditional_cosmo_only_limit_is_enforced_separately(self):
+    def test_cosmo_only_path_cannot_raise_the_shared_limit(self):
         self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.400")),
                          Decimal("3.2000"))
         self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.450")),
                          Decimal("3.3000"))
+        self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("4.8000")),
+                         Decimal("12.0000"))
         with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-            contract.admit_conditional_cosmo_pilot(Decimal("0.4501"))
+            contract.admit_conditional_cosmo_pilot(Decimal("4.8001"))
         self.assertEqual(contract.worst_case_total(hourly_compute_rate=Decimal("0.526"),
                          lifecycle_seconds=7200), Decimal("3.4520"))
         self.assertEqual(contract.admit_conditional_cosmo_pilot(
             Decimal("0.526"), lifecycle_seconds=5400), Decimal("3.1890"))
         self.assertEqual(contract.admit_conditional_cosmo_pilot(
             Decimal("0.526"), lifecycle_seconds=6120), Decimal("3.2942"))
-        with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-            contract.admit_conditional_cosmo_pilot(Decimal("0.526"), lifecycle_seconds=6180)
+        self.assertEqual(contract.admit_conditional_cosmo_pilot(
+            Decimal("0.526"), lifecycle_seconds=6180), Decimal("3.3030"))
         for invalid in (0, 5399, 7201, True, "5400"):
             with self.subTest(invalid=invalid), self.assertRaisesRegex(
                     contract.ContractError, "Cosmo allocation window"):
                 contract.admit_conditional_cosmo_pilot(Decimal("0.526"),
                                                        lifecycle_seconds=invalid)
-        with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-            contract.admit_conditional_cosmo_pilot(Decimal("0.526"))
-        self.assertLessEqual(contract.admit_bootstrap(Decimal("0.60")), Decimal("6.0000"))
-        with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-            contract.admit_conditional_cosmo_pilot(Decimal("0.60"))
+        self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.526")),
+                         Decimal("3.4520"))
+        self.assertLessEqual(contract.admit_bootstrap(Decimal("0.60")), Decimal("12.0000"))
+        self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.60")),
+                         Decimal("3.6000"))
         original = contract.load_json
         cost = original(contract.ROOT / "config/kova-three-family-cost-guard.v1.json")
-        for update in ({"hard_ceiling_usd": "6.0000"},
+        for update in ({"hard_ceiling_usd": "12.0001"},
                        {"minimum_allocation_seconds": 1},
                        {"maximum_allocation_seconds": 21600},
-                       {"maximum_compute_reservation_usd": "1.2500"},
+                       {"maximum_compute_reservation_usd": "9.6001"},
                        {"other_families_authorized": True}):
             altered = deepcopy(cost)
             altered["conditional_cosmo_only_pilot"].update(update)
             def fake_load(path, **kwargs):
                 return altered if path.name == "kova-three-family-cost-guard.v1.json" else original(path, **kwargs)
             with self.subTest(update=update), patch.object(contract, "load_json", side_effect=fake_load):
-                with self.assertRaisesRegex(contract.ContractError, "Cosmo-only owner ceiling"):
+                with self.assertRaisesRegex(contract.ContractError, "same shared owner ceiling"):
                     contract.admit_conditional_cosmo_pilot(Decimal("0.400"))
 
     def test_cost_guard_rejects_understated_or_nonfinite_ancillary_bounds(self):
@@ -784,31 +786,32 @@ class ThreeFamilyContractTests(unittest.TestCase):
             admitted = contract.validate_live_price_evidence(path)
             self.assertEqual(admitted["status"], "live_price_admitted")
             self.assertEqual(admitted["conditional_cosmo_only_worst_case_usd"], "3.4520")
-            self.assertFalse(admitted["conditional_cosmo_only_eligible"])
-            with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-                contract.validate_live_price_evidence(path, admission_scope="cosmo-only")
+            self.assertTrue(admitted["conditional_cosmo_only_eligible"])
+            self.assertEqual(admitted["hard_ceiling_usd"], "12.0000")
+            self.assertEqual(contract.validate_live_price_evidence(
+                path, admission_scope="cosmo-only")["hard_ceiling_usd"], "12.0000")
             value = json.loads(path.read_text())
             value["Items"][0]["retailPrice"] = 0.40
             value["Items"][0]["unitPrice"] = 0.40
             path.write_text(json.dumps(value))
             self.assertEqual(contract.validate_live_price_evidence(
-                path, admission_scope="cosmo-only")["hard_ceiling_usd"], "3.3000")
+                path, admission_scope="cosmo-only")["hard_ceiling_usd"], "12.0000")
             value = json.loads(path.read_text())
             value["Items"][0]["retailPrice"] = 0.60
             value["Items"][0]["unitPrice"] = 0.60
             path.write_text(json.dumps(value))
             full_plan = contract.validate_live_price_evidence(path)
             self.assertEqual(full_plan["admission_scope"], "three-family")
-            self.assertFalse(full_plan["conditional_cosmo_only_eligible"])
-            with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-                contract.validate_live_price_evidence(path, admission_scope="cosmo-only")
+            self.assertTrue(full_plan["conditional_cosmo_only_eligible"])
+            self.assertEqual(contract.validate_live_price_evidence(
+                path, admission_scope="cosmo-only")["hard_ceiling_usd"], "12.0000")
             with self.assertRaisesRegex(contract.ContractError, "scope"):
                 contract.validate_live_price_evidence(path, admission_scope="unspecified")
             value = json.loads(path.read_text())
-            value["Items"][0]["retailPrice"] = 1.0
-            value["Items"][0]["unitPrice"] = 1.0
+            value["Items"][0]["retailPrice"] = 2.0
+            value["Items"][0]["unitPrice"] = 2.0
             path.write_text(json.dumps(value))
-            with self.assertRaisesRegex(contract.ContractError, "six-dollar"):
+            with self.assertRaisesRegex(contract.ContractError, "twelve-dollar"):
                 contract.validate_live_price_evidence(path)
 
     def test_live_price_rejects_discounted_secondary_incomplete_and_ambiguous_meters(self):
@@ -1284,14 +1287,14 @@ class ThreeFamilyContractTests(unittest.TestCase):
         cosmo_state = {"sequence": 1, "terminal": False, "family_order": [],
                        "events": [health("kova-cosmo")], **cosmo}
         with self.assertRaisesRegex(contract.ContractError, "remaining family budget insufficient"):
-            contract.append_ledger_event(cosmo_state, cost("kova-cosmo", "3.2999"),
+            contract.append_ledger_event(cosmo_state, cost("kova-cosmo", "11.9999"),
                                          expected_sequence=1, now=now,
                                          trusted_lifecycle=cosmo)
-        contract.append_ledger_event(cosmo_state, cost("kova-cosmo", "3.3000"),
+        contract.append_ledger_event(cosmo_state, cost("kova-cosmo", "12.0000"),
                                      expected_sequence=1, now=now,
                                      trusted_lifecycle=cosmo)
         with self.assertRaisesRegex(contract.ContractError, "remaining family budget insufficient"):
-            contract.append_ledger_event(cosmo_state, cost("kova-cosmo", "4.0000"),
+            contract.append_ledger_event(cosmo_state, cost("kova-cosmo", "12.0001"),
                                          expected_sequence=1, now=now,
                                          trusted_lifecycle=cosmo)
 
@@ -1335,7 +1338,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
                                                ensure_ascii=True, allow_nan=False).encode("ascii"))
             return {"kind": "cleanup_terminal", "cleanup_receipt": {
                 "payload": value, "signature_ed25519_hex": signature.hex()}}
-        for change in (lambda value: value.update(final_cost_usd="3.3001"),
+        for change in (lambda value: value.update(final_cost_usd="12.0001"),
                        lambda value: value.update(cost_posting_complete=False),
                        lambda value: value.update(pilot_remaining_resources=["disk"]),
                        lambda value: value.update(watchdog_remaining_resources=["logic-app"]),

@@ -82,7 +82,7 @@ class GrantIssuerTests(unittest.TestCase):
             "azure_instance_identity_token_expires_at_utc": "2026-09-24T14:30:00Z",
             "allocation_deadline_utc": runtime["allocation_deadline_utc"],
             "watchdog_cleanup_trigger_utc": runtime["watchdog_cleanup_trigger_utc"],
-            "training_runs_limit": 1, "all_in_ceiling_usd": "3.3000",
+            "training_runs_limit": 1, "all_in_ceiling_usd": "12.0000",
             "request_nonce": "a" * 64, "requested_at_utc": "2026-09-24T12:01:00Z"}
         clean = patch.object(launch, "clean_source_commit", return_value=self.f.context["source_commit"])
         clean.start()
@@ -157,7 +157,7 @@ class GrantIssuerTests(unittest.TestCase):
     def test_guest_cannot_change_source_quote_vm_or_scope(self):
         before = self.f.io.body
         for key, value in (("source_commit", "e" * 40), ("quote_sha256", "e" * 64),
-                           ("lifecycle_id", "another-run"), ("all_in_ceiling_usd", "6.0000"),
+                           ("lifecycle_id", "another-run"), ("all_in_ceiling_usd", "12.0001"),
                            ("azure_instance_identity_token_audience", "api://other-service")):
             with self.subTest(key=key), self.assertRaises(LedgerRejected):
                 self.issuer.issue({**self.request, key: value})
