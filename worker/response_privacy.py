@@ -1,4 +1,4 @@
-"""Reject private reasoning and decoded-token side channels at the Azure boundary.
+"""Reject private reasoning and decoded-token side channels at worker boundaries.
 
 This is not a reasoning-to-answer converter. Visible answers and numeric usage
 are left intact; a provider that ignores suppression is rejected, not silently

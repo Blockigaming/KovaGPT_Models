@@ -74,6 +74,69 @@ class ResponseIntegrityTests(unittest.TestCase):
             with self.subTest(index=index), self.assertRaises(ValueError):
                 stream([{"choices": [{**delta, "index": index}]}])
 
+    def test_generic_stream_rejects_private_fields_and_closes_source(self):
+        for location, field in (("root", "reasoning_details"),
+                                ("choice", "token_ids"),
+                                ("delta", "reasoning"),
+                                ("usage_frame", "prompt_logprobs")):
+            chunk = {"choices": [{"delta": {"content": "public"}}]}
+            if location == "root":
+                chunk[field] = "private-marker"
+            elif location == "choice":
+                chunk["choices"][0][field] = ["private-marker"]
+            elif location == "delta":
+                chunk["choices"][0]["delta"][field] = "private-marker"
+            else:
+                chunk = {"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                         field: ["private-marker"]}
+            closed = []
+            def fragments():
+                try:
+                    yield chunk
+                finally:
+                    closed.append(True)
+            with self.subTest(location=location, field=field):
+                with self.assertRaises(ValueError) as caught:
+                    stream(fragments())
+                self.assertNotIn("private-marker", str(caught.exception))
+                self.assertEqual(closed, [True])
+
+    def test_generic_nonstream_rejects_private_metadata(self):
+        for location, field in (("root", "reasoning_details"),
+                                ("choice", "token_ids"),
+                                ("message", "reasoning")):
+            value = response()
+            target = (value if location == "root" else value["choices"][0]
+                      if location == "choice" else value["choices"][0]["message"])
+            target[field] = "private-marker"
+            with self.subTest(location=location, field=field):
+                with self.assertRaises(ValueError) as caught:
+                    sanitize_engine_response("fixture", value)
+                self.assertNotIn("private-marker", str(caught.exception))
+
+    def test_nonstream_consumer_rejects_private_response_before_returning(self):
+        value = response()
+        value["reasoning_details"] = "private-marker"
+        with self.assertRaises(ValueError) as caught:
+            consume_engine_response(value, expect_stream=False, clock_ns=lambda: 0,
+                                    started_ns=0, timing_state={"time_to_first_token_ms": None})
+        self.assertNotIn("private-marker", str(caught.exception))
+
+    def test_stream_checks_nested_provider_objects_after_mapping(self):
+        class ProviderObject:
+            def __init__(self, value):
+                self.value = value
+
+            def model_dump(self):
+                return self.value
+
+        chunks = [{"choices": [ProviderObject({"delta": ProviderObject({
+            "content": "public", "reasoning": "private-marker",
+        })})]}]
+        with self.assertRaises(ValueError) as caught:
+            stream(chunks)
+        self.assertNotIn("private-marker", str(caught.exception))
+
     def test_duplicate_nonnull_usage_chunks_cannot_overwrite_cost_evidence(self):
         usage = {"prompt_tokens": 100, "completion_tokens": 30}
         chunks = [{"choices": [{"delta": {"content": "answer"}, "finish_reason": "stop"}]},
