@@ -1016,6 +1016,49 @@ class ThreeFamilyContractTests(unittest.TestCase):
             with self.assertRaisesRegex(contract.ContractError, "unexpected GPU"):
                 contract.validate_probe_evidence(path)
 
+    def test_cost_admission_cannot_reuse_a_previous_family_reservation(self):
+        from datetime import datetime, timezone
+        now = datetime(2026, 9, 24, 12, 1, tzinfo=timezone.utc)
+        lifecycle = {
+            "lifecycle_id": "three-family-pilot", "ledger_id": "ledger-first",
+            "admission_scope": "three-family",
+            "pilot_resource_group_id": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/kova-pilot",
+            "watchdog_resource_group_id": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/kova-watchdog",
+        }
+        def health(family):
+            return {"kind": "watchdog_health", "family": family, "healthy": True,
+                    "rule_id": "tested-rule", "observed_at_utc": "2026-09-24T12:00:00Z",
+                    "expires_at_utc": "2026-09-24T12:05:00Z"}
+        def cost(family, remaining):
+            return {"kind": "cost_admission", "family": family,
+                    "account_price_verified": True, "quote_sha256": "a" * 64,
+                    "remaining_budget_usd": remaining,
+                    "observed_at_utc": "2026-09-24T12:00:00Z",
+                    "expires_at_utc": "2026-09-24T12:05:00Z"}
+        state = {"sequence": 0, "terminal": False, "family_order": [], "events": [],
+                 **lifecycle}
+        state = contract.append_ledger_event(state, health("kova-cosmo"),
+                                             expected_sequence=0, now=now)
+        state = contract.append_ledger_event(state, cost("kova-cosmo", "3.6500"),
+                                             expected_sequence=1, now=now,
+                                             trusted_lifecycle=lifecycle)
+        second_health = contract.append_ledger_event(state, health("kova-cosmo"),
+                                                     expected_sequence=2, now=now)
+        with self.assertRaisesRegex(contract.ContractError, "cumulative family budget"):
+            contract.append_ledger_event(second_health, cost("kova-cosmo", "6.0000"),
+                                         expected_sequence=3, now=now,
+                                         trusted_lifecycle=lifecycle)
+        state = contract.append_ledger_event(state,
+                    {"kind": "training_grant", "family": "kova-cosmo"},
+                    expected_sequence=2, now=now)
+        state = contract.append_ledger_event(state, health("kova-orion"),
+                                             expected_sequence=3, now=now)
+        # Orion may not reclaim Cosmo's reserved $1.25 after a $3.65 admission.
+        with self.assertRaisesRegex(contract.ContractError, "cumulative family budget"):
+            contract.append_ledger_event(state, cost("kova-orion", "3.9000"),
+                                         expected_sequence=4, now=now,
+                                         trusted_lifecycle=lifecycle)
+
     def test_ledger_assigns_sequence_and_rejects_stale_duplicate_out_of_order(self):
         from datetime import datetime, timedelta, timezone
         now = datetime(2026, 9, 24, 12, 1, tzinfo=timezone.utc)
@@ -1029,7 +1072,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
             return {"kind": "watchdog_health", "family": family, "healthy": True,
                     "rule_id": "tested-rule", "observed_at_utc": "2026-09-24T12:00:00Z",
                     "expires_at_utc": "2026-09-24T12:05:00Z"}
-        def cost(family, remaining="3.6500"):
+        def cost(family, remaining="6.0000"):
             return {"kind": "cost_admission", "family": family,
                     "account_price_verified": True, "quote_sha256": "a" * 64,
                     "remaining_budget_usd": remaining,
@@ -1122,7 +1165,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
             contract.append_ledger_event(state, cost("kova-orion", "3.3000"),
                                          expected_sequence=5, now=now,
                                          trusted_lifecycle=lifecycle)
-        state = contract.append_ledger_event(state, cost("kova-orion", "3.9000"),
+        state = contract.append_ledger_event(state, cost("kova-orion", "4.7500"),
                                              expected_sequence=5, now=now,
                                              trusted_lifecycle=lifecycle)
         with self.assertRaisesRegex(contract.ContractError, "stale admission"):
@@ -1131,6 +1174,16 @@ class ThreeFamilyContractTests(unittest.TestCase):
         state = contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-orion"},
                                              expected_sequence=6, now=now)
         self.assertEqual(state["family_order"], ["kova-cosmo", "kova-orion"])
+        nova_health = contract.append_ledger_event(state, health("kova-nova"),
+                                                   expected_sequence=7, now=now)
+        with self.assertRaisesRegex(contract.ContractError, "cumulative family budget"):
+            contract.append_ledger_event(nova_health, cost("kova-nova", "6.0000"),
+                                         expected_sequence=8, now=now,
+                                         trusted_lifecycle=lifecycle)
+        with self.assertRaisesRegex(contract.ContractError, "remaining family budget insufficient"):
+            contract.append_ledger_event(nova_health, cost("kova-nova", "3.2500"),
+                                         expected_sequence=8, now=now,
+                                         trusted_lifecycle=lifecycle)
         with self.assertRaises(contract.ContractError):
             contract.append_ledger_event(state, cost("kova-nova"), expected_sequence=1, now=now)
         with self.assertRaises(contract.ContractError):
@@ -1147,6 +1200,10 @@ class ThreeFamilyContractTests(unittest.TestCase):
         contract.append_ledger_event(cosmo_state, cost("kova-cosmo", "3.3000"),
                                      expected_sequence=1, now=now,
                                      trusted_lifecycle=cosmo)
+        with self.assertRaisesRegex(contract.ContractError, "remaining family budget insufficient"):
+            contract.append_ledger_event(cosmo_state, cost("kova-cosmo", "4.0000"),
+                                         expected_sequence=1, now=now,
+                                         trusted_lifecycle=cosmo)
 
     def test_terminal_ledger_rejects_post_cleanup_events(self):
         from datetime import datetime, timezone
