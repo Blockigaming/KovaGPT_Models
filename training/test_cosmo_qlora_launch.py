@@ -94,7 +94,7 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(planned["all_in_ceiling_usd"], "12.0000")
         self.assertEqual(planned["minimum_signed_allocation_seconds"], 5400)
         assessed = self.check()
-        self.assertEqual(assessed["worst_case_all_in_usd"], "3.2498")
+        self.assertEqual(assessed["worst_case_all_in_usd"], "5.2998")
         self.assertEqual(assessed["signed_allocation_seconds"], 7140)
         self.assertFalse(assessed["paid_actions_enabled"])
 
@@ -104,7 +104,7 @@ class LaunchTests(unittest.TestCase):
         payload["allocation_deadline_utc"] = "2026-09-24T13:30:00Z"
         result = self.check(payload)
         self.assertEqual(result["signed_allocation_seconds"], 5400)
-        self.assertEqual(result["worst_case_all_in_usd"], "3.2454")
+        self.assertEqual(result["worst_case_all_in_usd"], "5.2954")
         payload["allocation_deadline_utc"] = "2026-09-24T13:42:00Z"
         self.assertLess(self.check(payload)["signed_allocation_seconds"], 7200)
         payload["allocation_deadline_utc"] = "2026-09-24T13:43:00Z"
@@ -121,12 +121,12 @@ class LaunchTests(unittest.TestCase):
         payload = deepcopy(self.payload)
         payload['account_compute_hourly_usd'] = '0.5260'
         payload['allocation_deadline_utc'] = '2026-09-24T13:30:00Z'
-        payload['category_upper_bounds_usd']['nat_gateway_data_processed'] = '0.2525'
+        payload['category_upper_bounds_usd']['nat_gateway_data_processed'] = '0.7990'
         result = self.check(payload)
-        self.assertEqual(result['worst_case_all_in_usd'], '3.2454')
+        self.assertEqual(result['worst_case_all_in_usd'], '5.2954')
         self.assertFalse(result['paid_actions_enabled'])
-        for key, excess in (('nat_gateway_data_processed', '0.3251'), ('managed_disks', '0.1001'),
-                            ('public_ip_and_network', '0.0251'), ('nat_gateway_hours', '0.1501')):
+        for key, excess in (('nat_gateway_data_processed', '2.0001'), ('managed_disks', '0.2501'),
+                            ('public_ip_and_network', '0.0501'), ('nat_gateway_hours', '0.3501')):
             bad = deepcopy(payload)
             bad['category_upper_bounds_usd'][key] = excess
             with self.subTest(category=key), self.assertRaisesRegex(launch.LaunchRejected, 'category reservation'):

@@ -45,10 +45,10 @@ RECIPE_SHA256 = {
     "kova-nova": "46d44da0bcbcfc4fe15454059bbaba2c7e104e8d079348998e5075ee1fee3088",
 }
 COST_CATEGORY_BOUNDS = {
-    "managed_disks": "0.1000", "snapshots": "0.0000",
+    "managed_disks": "0.2500", "snapshots": "0.0000",
     "storage_capacity": "0.1000", "storage_transactions": "0.1000",
-    "network_transfer": "0.1000", "public_ip_and_network": "0.0250",
-    "nat_gateway_hours": "0.1500", "nat_gateway_data_processed": "0.3250",
+    "network_transfer": "0.1000", "public_ip_and_network": "0.0500",
+    "nat_gateway_hours": "0.3500", "nat_gateway_data_processed": "2.0000",
     "logic_app_executions": "0.0500",
     "shutdown_delay": "0.1000", "failed_allocation_attempts": "0.1000",
 }
@@ -346,7 +346,7 @@ def _validated_cost_guard() -> dict:
     need(cost["conditional_cosmo_only_pilot"] == {
         "hard_ceiling_usd": "12.0000", "minimum_allocation_seconds": 5400,
         "maximum_allocation_seconds": 7200,
-        "maximum_compute_reservation_usd": "9.6000",
+        "maximum_compute_reservation_usd": "7.5500",
         "other_families_authorized": False,
     }, "Cosmo-only path must use the same shared owner ceiling")
     need(cost["emergency_cleanup_margin"] == "1.2500")
@@ -482,7 +482,7 @@ def validate_live_price_evidence(path: Path, *, admission_scope: str = "three-fa
         "conditional_cosmo_only_hard_ceiling_usd": "12.0000",
         "conditional_cosmo_only_eligible": cosmo_total <= Decimal("12.0000"),
         "conditional_cosmo_only_maximum_allocation_seconds": 7200,
-        "conditional_cosmo_only_compute_reservation_usd": "9.6000",
+        "conditional_cosmo_only_compute_reservation_usd": "7.5500",
     }
 
 

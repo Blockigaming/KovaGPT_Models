@@ -17,6 +17,22 @@ any GPU resource is created. A $12 Azure budget alert cannot stop consumption.
 The three-family runner remains source-only: its `--execute` option fails
 closed. **No paid training or model deployment has begun.**
 
+The 2026-09-27 transfer audit corrects an understated reservation. Pinned
+Qwen model downloads total 13,659,581,269 bytes for all three families; the
+pinned wheel archive adds roughly 4,091,454,718 bytes. At the subscription's
+$0.045/GB NAT data meter, their combined 17,751,035,987-byte transfer alone
+costs about $0.80 before retries and other downloads. The current shared
+guard therefore reserves $2.00 for NAT data, $0.35 for NAT hours, $0.05 for
+public IP/network and $0.25 for managed disks. All ancillary categories sum
+to $3.20. Six hours at the captured $0.526/hour VM meter plus ancillary
+categories and $1.25 emergency cleanup reserve total **$7.606**; the nominal
+unallocated space is **$4.394** below $12. These are reservations, not a
+guaranteed invoice or a signed all-in quote. The earlier $5.556 estimate is
+superseded. Verify account charges for the controller, 30-day protected
+retention, archive, taxes and transfers outside the NAT path before allocating
+a GPU. The Azure what-if checks on 2026-09-27 succeeded for the isolated VM
+and watchdog templates, but created no resources and proved no GPU capacity.
+
 ## Historical Cosmo-only worksheet (superseded)
 
 **Status: source-only. Paid execution is disabled.** The first pilot is Cosmo

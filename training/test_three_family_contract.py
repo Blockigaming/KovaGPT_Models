@@ -707,37 +707,37 @@ class ThreeFamilyContractTests(unittest.TestCase):
 
     def test_cosmo_only_path_cannot_raise_the_shared_limit(self):
         self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.400")),
-                         Decimal("3.2000"))
+                         Decimal("5.2500"))
         self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.450")),
-                         Decimal("3.3000"))
-        self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("4.8000")),
+                         Decimal("5.3500"))
+        self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("3.7750")),
                          Decimal("12.0000"))
         with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-            contract.admit_conditional_cosmo_pilot(Decimal("4.8001"))
+            contract.admit_conditional_cosmo_pilot(Decimal("3.7751"))
         self.assertEqual(contract.worst_case_total(hourly_compute_rate=Decimal("0.526"),
-                         lifecycle_seconds=7200), Decimal("3.4520"))
+                         lifecycle_seconds=7200), Decimal("5.5020"))
         self.assertEqual(contract.admit_conditional_cosmo_pilot(
-            Decimal("0.526"), lifecycle_seconds=5400), Decimal("3.1890"))
+            Decimal("0.526"), lifecycle_seconds=5400), Decimal("5.2390"))
         self.assertEqual(contract.admit_conditional_cosmo_pilot(
-            Decimal("0.526"), lifecycle_seconds=6120), Decimal("3.2942"))
+            Decimal("0.526"), lifecycle_seconds=6120), Decimal("5.3442"))
         self.assertEqual(contract.admit_conditional_cosmo_pilot(
-            Decimal("0.526"), lifecycle_seconds=6180), Decimal("3.3030"))
+            Decimal("0.526"), lifecycle_seconds=6180), Decimal("5.3530"))
         for invalid in (0, 5399, 7201, True, "5400"):
             with self.subTest(invalid=invalid), self.assertRaisesRegex(
                     contract.ContractError, "Cosmo allocation window"):
                 contract.admit_conditional_cosmo_pilot(Decimal("0.526"),
                                                        lifecycle_seconds=invalid)
         self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.526")),
-                         Decimal("3.4520"))
+                         Decimal("5.5020"))
         self.assertLessEqual(contract.admit_bootstrap(Decimal("0.60")), Decimal("12.0000"))
         self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.60")),
-                         Decimal("3.6000"))
+                         Decimal("5.6500"))
         original = contract.load_json
         cost = original(contract.ROOT / "config/kova-three-family-cost-guard.v1.json")
         for update in ({"hard_ceiling_usd": "12.0001"},
                        {"minimum_allocation_seconds": 1},
                        {"maximum_allocation_seconds": 21600},
-                       {"maximum_compute_reservation_usd": "9.6001"},
+                       {"maximum_compute_reservation_usd": "7.5501"},
                        {"other_families_authorized": True}):
             altered = deepcopy(cost)
             altered["conditional_cosmo_only_pilot"].update(update)
@@ -785,7 +785,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
             }]}))
             admitted = contract.validate_live_price_evidence(path)
             self.assertEqual(admitted["status"], "live_price_admitted")
-            self.assertEqual(admitted["conditional_cosmo_only_worst_case_usd"], "3.4520")
+            self.assertEqual(admitted["conditional_cosmo_only_worst_case_usd"], "5.5020")
             self.assertTrue(admitted["conditional_cosmo_only_eligible"])
             self.assertEqual(admitted["hard_ceiling_usd"], "12.0000")
             self.assertEqual(contract.validate_live_price_evidence(
@@ -1132,13 +1132,13 @@ class ThreeFamilyContractTests(unittest.TestCase):
                  **lifecycle}
         state = contract.append_ledger_event(state, health("kova-cosmo"),
                                              expected_sequence=0, now=now)
-        state = contract.append_ledger_event(state, cost("kova-cosmo", "3.6500"),
+        state = contract.append_ledger_event(state, cost("kova-cosmo", "10.0000"),
                                              expected_sequence=1, now=now,
                                              trusted_lifecycle=lifecycle)
         second_health = contract.append_ledger_event(state, health("kova-cosmo"),
                                                      expected_sequence=2, now=now)
         with self.assertRaisesRegex(contract.ContractError, "cumulative family budget"):
-            contract.append_ledger_event(second_health, cost("kova-cosmo", "6.0000"),
+            contract.append_ledger_event(second_health, cost("kova-cosmo", "10.0001"),
                                          expected_sequence=3, now=now,
                                          trusted_lifecycle=lifecycle)
         state = contract.append_ledger_event(state,
@@ -1146,9 +1146,9 @@ class ThreeFamilyContractTests(unittest.TestCase):
                     expected_sequence=2, now=now)
         state = contract.append_ledger_event(state, health("kova-orion"),
                                              expected_sequence=3, now=now)
-        # Orion may not reclaim Cosmo's reserved $1.25 after a $3.65 admission.
+        # Orion may not reclaim Cosmo's reserved $1.25 after a $10 admission.
         with self.assertRaisesRegex(contract.ContractError, "cumulative family budget"):
-            contract.append_ledger_event(state, cost("kova-orion", "3.9000"),
+            contract.append_ledger_event(state, cost("kova-orion", "9.0000"),
                                          expected_sequence=4, now=now,
                                          trusted_lifecycle=lifecycle)
 
@@ -1165,7 +1165,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
             return {"kind": "watchdog_health", "family": family, "healthy": True,
                     "rule_id": "tested-rule", "observed_at_utc": "2026-09-24T12:00:00Z",
                     "expires_at_utc": "2026-09-24T12:05:00Z"}
-        def cost(family, remaining="6.0000"):
+        def cost(family, remaining="10.0000"):
             return {"kind": "cost_admission", "family": family,
                     "account_price_verified": True, "quote_sha256": "a" * 64,
                     "remaining_budget_usd": remaining,
@@ -1258,7 +1258,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
             contract.append_ledger_event(state, cost("kova-orion", "3.3000"),
                                          expected_sequence=5, now=now,
                                          trusted_lifecycle=lifecycle)
-        state = contract.append_ledger_event(state, cost("kova-orion", "4.7500"),
+        state = contract.append_ledger_event(state, cost("kova-orion", "8.7500"),
                                              expected_sequence=5, now=now,
                                              trusted_lifecycle=lifecycle)
         with self.assertRaisesRegex(contract.ContractError, "stale admission"):
@@ -1270,7 +1270,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
         nova_health = contract.append_ledger_event(state, health("kova-nova"),
                                                    expected_sequence=7, now=now)
         with self.assertRaisesRegex(contract.ContractError, "cumulative family budget"):
-            contract.append_ledger_event(nova_health, cost("kova-nova", "6.0000"),
+            contract.append_ledger_event(nova_health, cost("kova-nova", "7.2501"),
                                          expected_sequence=8, now=now,
                                          trusted_lifecycle=lifecycle)
         with self.assertRaisesRegex(contract.ContractError, "remaining family budget insufficient"):
