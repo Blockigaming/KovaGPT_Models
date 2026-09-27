@@ -22,6 +22,6 @@
     {"id":18,"name":"confirm_zero_residual_resources","dry_run":"read_only_inventory"},
     {"id":19,"name":"reconcile_final_charge","dry_run":"validate_charge_schema"}
   ],
-  "paid_execution_statement":"I authorize creating the bounded Azure pilot resources and spending up to $6 total to perform the guarded compatibility probes and attempt the Cosmo, Orion, and Nova identity-adapter runs. No production deployment is authorized.",
+  "paid_execution_statement":"Owner authorized up to $12 total across the three one-time Cosmo, Orion, and Nova training pilots. This source plan still requires an independently priced and controlled launch. No production deployment is authorized.",
   "resource_creation_authorized":false,"spending_authorized":false,"training_authorized":false,"deployment_authorized":false
 }

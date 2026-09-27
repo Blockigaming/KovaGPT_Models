@@ -33,6 +33,21 @@ retention, archive, taxes and transfers outside the NAT path before allocating
 a GPU. The Azure what-if checks on 2026-09-27 succeeded for the isolated VM
 and watchdog templates, but created no resources and proved no GPU capacity.
 
+On 2026-09-27, the exact pinned Hugging Face revisions of all three base
+models were downloaded into a **free, ephemeral Azure Cloud Shell**. The
+existing offline verifier returned `verified: true` for Cosmo (9 files,
+1,519,207,673 bytes), Orion (11 files, 4,079,448,540 bytes), and Nova
+(12 files, 8,060,925,056 bytes). Their temporary directories reported
+`protected_for_loading: false`; they are neither preserved adapters nor
+ready-to-train mounts and will disappear when the Cloud Shell session ends.
+No GPU, training, adapter, production deployment or paid pilot resource exists.
+`python3 -m training.pinned_snapshot_download --family kova-cosmo
+--destination /absolute/new/snapshot` prints the pinned download plan;
+adding `--execute` fetches only the manifest's files into a new directory,
+checks bytes and SHA-256 for each, then publishes that directory atomically.
+It does not create a VM, grant, watchdog or spending control. On a paid VM its
+network transfer must fit the independently admitted cost and deadline.
+
 ## Historical Cosmo-only worksheet (superseded)
 
 **Status: source-only. Paid execution is disabled.** The first pilot is Cosmo
