@@ -9,6 +9,7 @@ from core.adapter import bind_core_operation, build_core_plan
 from core.current_candidates import CORE_SERVING
 from core.identity import load_runtime_identity
 from router.policy import CHAT_POLICIES, WORK_EFFORTS, WORK_FAMILY_POLICIES, resolve_route
+from worker.response_privacy import require_private_reasoning_absent
 
 
 ALLOWED_EFFORTS = frozenset(("low", "medium", "xhigh"))
@@ -302,6 +303,7 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
     )
     if not expect_stream:
         normalized = _mapping(response, "non-stream engine response must be an object")
+        require_private_reasoning_absent(normalized)
         finished_ns = clock_ns()
         return normalized, finished_ns
 
@@ -321,6 +323,7 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
     try:
         for raw_chunk in chunks:
             chunk = _mapping(raw_chunk, "stream chunk must be an object")
+            require_private_reasoning_absent(chunk)
             if chunk.get("usage") is not None:
                 _require(usage is None, "stream returned duplicate usage evidence")
                 usage = _mapping(chunk["usage"], "stream usage must be an object")
@@ -329,9 +332,11 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
             for raw_choice in choices:
                 _require(finish_reason is None, "stream returned a choice after its terminal finish reason")
                 choice = _mapping(raw_choice, "stream choice must be an object")
+                require_private_reasoning_absent(choice)
                 _require(type(choice.get("index", 0)) is int and choice.get("index", 0) == 0,
                          "stream returned an unexpected choice index")
                 delta = _mapping(choice.get("delta"), "stream choice missing delta")
+                require_private_reasoning_absent(delta)
                 reason = choice.get("finish_reason")
                 _require(reason is None or isinstance(reason, str), "invalid stream finish_reason")
                 if reason is not None:
@@ -454,6 +459,7 @@ def _sanitized_tool_calls(value):
 
 def sanitize_engine_response(request_id, response):
     _require(isinstance(response, dict), "engine response must be an object")
+    require_private_reasoning_absent(response)
     choices = response.get("choices")
     _require(isinstance(choices, list) and len(choices) == 1, "engine response must contain exactly one choice")
     first = choices[0]
