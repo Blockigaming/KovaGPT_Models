@@ -7,6 +7,7 @@ required before this module can download or load the pinned model.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 import json
 import os
 from pathlib import Path
@@ -61,6 +62,12 @@ def completion_tokens(tokenizer, row: dict, max_length: int) -> tuple[list[int],
         row["prompt"] + row["completion"], tokenize=True,
         add_generation_prompt=False, return_tensors=None,
     )
+    # Transformers 5 returns BatchEncoding for tokenize=True even without
+    # tensors. Earlier versions returned bare token lists.
+    if isinstance(prompt, Mapping):
+        prompt = prompt.get("input_ids")
+    if isinstance(full, Mapping):
+        full = full.get("input_ids")
     need(type(prompt) is list and type(full) is list)
     need(0 < len(prompt) < len(full) <= max_length)
     need(full[:len(prompt)] == prompt)
