@@ -155,7 +155,9 @@ class ModelArtifactTests(unittest.TestCase):
                                  "local_artifact_bytes_verified")
 
     def test_adapter_base_must_match_trusted_family_even_with_a_reviewed_manifest(self):
-        for base in ("Other/Model", "Qwen/Qwen3-1.7B", "/external/verified-snapshot", "", None):
+        for base in ("Other/Model", "Qwen/Qwen3-1.7B", "relative/snapshot",
+                     "/external/../verified-snapshot", "/external//snapshot",
+                     "/snapshot\x00other", "/", "", None):
             value = json.loads(self.files["adapter_config.json"])
             value["base_model_name_or_path"] = base
             self.change_metadata("adapter_config.json", json.dumps(value).encode())
@@ -167,6 +169,20 @@ class ModelArtifactTests(unittest.TestCase):
         self.change_metadata("adapter_config.json", json.dumps(value).encode())
         with self.assertRaisesRegex(artifact.ModelArtifactError, "adapter base model differs"):
             self.verify()
+
+    def test_trainer_local_base_path_uses_the_pinned_bundle_identity(self):
+        # PEFT writes the absolute training snapshot path into adapter_config.
+        # The reviewed bundle pins the packaged base files and revision; the
+        # old training path is metadata and must not become a serving path.
+        for index, candidate in enumerate(CATALOG["candidates"]):
+            if index == 1:
+                self.use_sharded_weights()
+            value = json.loads(self.files["adapter_config.json"])
+            value["base_model_name_or_path"] = "/external/verified-snapshot"
+            self.change_metadata("adapter_config.json", json.dumps(value).encode())
+            with self.subTest(candidate=candidate["id"]):
+                self.assertEqual(self.verify(self.snapshot(index))["status"],
+                                 "local_artifact_bytes_verified")
 
     def test_missing_or_mismatched_reviewed_manifest_pin_is_rejected(self):
         for digest in (None, "", "0" * 64, "A" * 64, "sha256:" + "a" * 64):
