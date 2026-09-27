@@ -47,6 +47,30 @@ adding `--execute` fetches only the manifest's files into a new directory,
 checks bytes and SHA-256 for each, then publishes that directory atomically.
 It does not create a VM, grant, watchdog or spending control. On a paid VM its
 network transfer must fit the independently admitted cost and deadline.
+The two hash-pinned Python 3.12 training locks installed successfully in that
+free Cloud Shell. A real `transformers==5.17.0` Qwen tokenizer check exposed
+that `apply_chat_template` returns a `BatchEncoding` rather than the bare list
+assumed by the previous loss-mask probe. The corrected source at `aef58b2`
+accepts its `input_ids`; a repeat with all 27 training and 15 validation rows
+passed the completion-mask check and constructed `trl==1.13.0` `SFTConfig`.
+This is a CPU-side API check; it has not exercised T4 quantization or training.
+The full hash-verified Cosmo checkpoint also loaded from local files on CPU
+with `trust_remote_code=False`: 596,049,920 parameters and no missing LoRA
+target modules from the approved recipe. It produced no trained adapter.
+
+The isolated evidence group now contains storage account `kova42c1a27`.
+Deployment succeeded on 2026-09-27; live readback confirms HTTPS-only access,
+TLS 1.2 minimum, no anonymous Blob access, no Shared Key access, and 30-day
+`Unlocked` policies on the empty `cosmo-ledger` and `cosmo-adapters` containers.
+It holds no adapter or ledger yet. Do not lock retention or claim preservation
+until the independent controller, data permissions, archive and all-in cost
+admission have been verified. A requested deployment of the watchdog, which
+would grant its managed identity Contributor on the pilot and watchdog groups,
+was rejected by automatic approval review before execution: the owner had
+approved the $12 spending scope broadly but had not specifically authorized
+these IAM permissions and resource-group scopes. Do not route around that
+rejection. The pilot group was empty at the attempted deployment, and no
+watchdog or GPU exists.
 
 ## Historical Cosmo-only worksheet (superseded)
 
