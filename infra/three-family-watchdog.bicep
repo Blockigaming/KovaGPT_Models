@@ -55,7 +55,9 @@ resource workflow 'Microsoft.Logic/workflows@2019-05-01' = if (provisionWatchdog
             }
           }
           conditions: [
-            '@greaterOrEquals(ticks(utcNow()), ticks(parameters(\'deadlineUtc\')))'
+            {
+              expression: '@greaterOrEquals(ticks(utcNow()), ticks(parameters(\'deadlineUtc\')))'
+            }
           ]
         }
       }
