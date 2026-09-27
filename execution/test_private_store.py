@@ -298,6 +298,16 @@ class PrivateStoreTests(SyntheticAdapterTestCase):
                                            current_attempt, "after cancel")
         self.assertNotIn("hidden", json.dumps(self.store.replay(OWNER, public_job)))
 
+        split_job = self.store.create(permitted, "seven-fragment-marker", instant)
+        split_runner, split_epoch = self.store.begin(permitted, split_job)
+        split_attempt, _ = self.store.claim(permitted, split_job, split_runner, split_epoch, public_stage)
+        for char in "</think":
+            self.store.append_public_delta(permitted, split_job, split_runner, split_epoch,
+                                           public_stage, split_attempt, char)
+        with self.assertRaisesRegex(ExecutionError, "invalid public answer fragment"):
+            self.store.append_public_delta(permitted, split_job, split_runner, split_epoch,
+                                           public_stage, split_attempt, ">")
+
     def test_public_fragment_key_rotation_retention_and_deletion(self):
         spec = make_spec("instant")
         grant = grant_for(spec)
