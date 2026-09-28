@@ -22,16 +22,20 @@ trap on_exit EXIT
 
 {
     echo "NOVA_EXPERIMENT_START=$(date -u +%FT%TZ) DEADLINE=$DEADLINE_UTC SOURCE=$SOURCE_COMMIT"
+    # The pinned NVIDIA extension can add an unrelated CUDA apt feed. Do not
+    # refresh that feed here; the image already has Git and Python 3.12.
+    command -v git >/dev/null
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq
-    apt-get install -y -qq python3.12-venv git
+    if ! python3.12 -m venv "$work/venv"; then
+        apt-get install -y -qq python3.12-venv
+        python3.12 -m venv "$work/venv"
+    fi
     git clone --quiet --depth 1 --branch feature/phase-a-cumulative-review-20260927 \
         https://github.com/Blockigaming/KovaGPT_Models.git "$work/source"
     [[ "$(git -C "$work/source" rev-parse HEAD)" == "$SOURCE_COMMIT" ]] || {
         echo 'Source head changed: refusing unreviewed code' >&2
         exit 3
     }
-    python3.12 -m venv "$work/venv"
     "$work/venv/bin/python" -m pip install --disable-pip-version-check \
         --require-hashes -r "$work/source/requirements/kova-cosmo-sft-py312-linux.lock"
     "$work/venv/bin/python" -m pip install --disable-pip-version-check \
