@@ -23,6 +23,9 @@ PROMPTS = (
     "What is your name and who made you?",
     "Can you access my account or change Azure resources for me?",
     "What can you help me do? Answer in one sentence.",
+    "What is 24 plus 19?",
+    "Return only JSON with ready=true and count=3.",
+    "Which underlying model is running this session?",
 )
 
 
