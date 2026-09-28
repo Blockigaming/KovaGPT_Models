@@ -37,9 +37,16 @@ def digest(path: Path) -> str:
     return checksum.hexdigest()
 
 
-def generate(family: str, snapshot: Path, candidate: Path, output: Path) -> dict:
+def generate(family: str, snapshot: Path, candidate: Path, output: Path,
+             *, prompts: tuple[str, ...] = PROMPTS,
+             max_new_tokens: int = 80) -> dict:
     if family not in SOURCES or output.exists() or not output.parent.is_dir():
         raise ValueError("family or new output path invalid")
+    if (not prompts or len(prompts) > 50 or
+            any(type(prompt) is not str or not prompt or len(prompt) > 10000
+                for prompt in prompts) or
+            type(max_new_tokens) is not int or not 1 <= max_new_tokens <= 128):
+        raise ValueError("inference prompt bounds invalid")
     for name, pinned in {"transformers": "5.17.0", "peft": "0.21.0",
                          "tokenizers": "0.23.2"}.items():
         if version(name) != pinned:
@@ -80,7 +87,7 @@ def generate(family: str, snapshot: Path, candidate: Path, output: Path) -> dict
     system = (ROOT / "prompts/kova-identity.v3.txt").read_text()
     samples = []
     with torch.inference_mode():
-        for question in PROMPTS:
+        for question in prompts:
             encoded = tokenizer.apply_chat_template(
                 [{"role": "system", "content": system},
                  {"role": "user", "content": question}],
@@ -88,7 +95,7 @@ def generate(family: str, snapshot: Path, candidate: Path, output: Path) -> dict
                 enable_thinking=False, return_tensors="pt")
             ids = encoded.input_ids if hasattr(encoded, "input_ids") else encoded
             completion = model.generate(
-                input_ids=ids, max_new_tokens=80, do_sample=False,
+                input_ids=ids, max_new_tokens=max_new_tokens, do_sample=False,
                 pad_token_id=tokenizer.eos_token_id)
             answer = tokenizer.decode(completion[0, ids.shape[-1]:],
                                       skip_special_tokens=True).strip()
