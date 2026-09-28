@@ -25,9 +25,13 @@ from training.snapshot_verifier import verify_snapshot
 
 ROOT = Path(__file__).resolve().parents[1]
 FAMILY = "kova-nova"
+FAMILY_LIMITS = {
+    "kova-cosmo": (1024, 4, 1800),
+    "kova-orion": (1024, 4, 2700),
+    "kova-nova": (768, 8, 4500),
+}
 ACCOUNT = "kova42c1a27"
 CONTAINER = "cosmo-adapters"
-BLOB = "gpu-experimental/2026-09-28/kova-nova/adapter.zip"
 PRESERVATION_LEAD = timedelta(minutes=12)
 
 
@@ -48,7 +52,7 @@ def digest(path: Path) -> str:
     return h.hexdigest()
 
 
-def put_with_vm_identity(archive: Path, archive_sha256: str) -> str:
+def put_with_vm_identity(archive: Path, archive_sha256: str, blob: str) -> str:
     # Azure IMDS is link-local. The bearer token is never logged or stored.
     metadata_url = ("http://169.254.169.254/metadata/identity/oauth2/token"
                     "?api-version=2018-02-01&resource=https%3A%2F%2Fstorage.azure.com%2F")
@@ -57,7 +61,7 @@ def put_with_vm_identity(archive: Path, archive_sha256: str) -> str:
     with direct.open(token_request, timeout=15) as response:
         token = json.load(response)["access_token"]
     url = (f"https://{ACCOUNT}.blob.core.windows.net/{CONTAINER}/"
-           + urllib.parse.quote(BLOB, safe="/"))
+           + urllib.parse.quote(blob, safe="/"))
     payload = archive.read_bytes()
     if not payload or len(payload) > 128 * 1024 * 1024:
         raise ValueError("adapter archive exceeds bounded Blob PUT")
@@ -77,9 +81,10 @@ def put_with_vm_identity(archive: Path, archive_sha256: str) -> str:
 
 
 def execute(snapshot: Path, output: Path, deadline_utc: str,
-            source_commit: str) -> dict:
+            source_commit: str, family: str = FAMILY) -> dict:
     end = deadline(deadline_utc)
-    if (sys.version_info[:2] != (3, 12) or not snapshot.is_dir() or
+    if (family not in FAMILY_LIMITS or sys.version_info[:2] != (3, 12) or
+            not snapshot.is_dir() or
             output.exists() or output.is_symlink() or not output.parent.is_dir() or
             len(source_commit) != 40 or any(c not in "0123456789abcdef" for c in source_commit)):
         raise ValueError("pinned Python, snapshot, new output and source SHA required")
@@ -98,10 +103,10 @@ def execute(snapshot: Path, output: Path, deadline_utc: str,
     hardware = verify_nvidia_t4(torch)
     approved.verify_four_bit_runtime(torch, bnb)
     lineage = contract.load_json(ROOT / "config/kova-private-lineage.v1.json")
-    model_family = lineage["families"][FAMILY]
-    verify_snapshot(snapshot, contract._pinned_manifest(FAMILY, model_family))
-    recipe = contract.load_json(ROOT / "config/kova-nova-qlora.v1.json")
-    if (recipe["family"] != FAMILY or recipe["dataset"] !=
+    model_family = lineage["families"][family]
+    verify_snapshot(snapshot, contract._pinned_manifest(family, model_family))
+    recipe = contract.load_json(ROOT / f"config/{family}-qlora.v1.json")
+    if (recipe["family"] != family or recipe["dataset"] !=
             "config/kova-three-family-dataset.v2.json" or
             recipe["method"] != "four_bit_qlora_lora_sft" or
             recipe["quantization"] != {"bits": 4, "type": "nf4",
@@ -109,10 +114,17 @@ def execute(snapshot: Path, output: Path, deadline_utc: str,
                                         "compute_dtype": "float16"}):
         raise ValueError("Nova recipe mismatch")
     train, validation = approved.prepared_rows()
+    sequence_length, accumulation, max_training_seconds = FAMILY_LIMITS[family]
+    training = recipe["training"]
+    if (training["maximum_optimizer_steps"] != 7 or
+            training["maximum_sequence_length"] != sequence_length or
+            training["gradient_accumulation_steps"] != accumulation or
+            training["maximum_elapsed_seconds"] != max_training_seconds):
+        raise ValueError("bounded training config mismatch")
     tokenizer = AutoTokenizer.from_pretrained(str(snapshot), local_files_only=True,
                                                trust_remote_code=False)
     for row in train + validation:
-        completion_tokens(tokenizer, row, 768)
+        completion_tokens(tokenizer, row, sequence_length)
     torch.manual_seed(42)
     torch.cuda.manual_seed_all(42)
     quant = BitsAndBytesConfig(load_in_4bit=True,
@@ -134,20 +146,15 @@ def execute(snapshot: Path, output: Path, deadline_utc: str,
 
     class DeadlineStop(TrainerCallback):
         def on_step_end(self, args, state, control, **kwargs):
-            if (time.monotonic() - started >= 2700 or
+            if (time.monotonic() - started >= min(2700, max_training_seconds) or
                     datetime.now(timezone.utc) + PRESERVATION_LEAD >= end):
                 control.should_training_stop = True
             return control
 
-    training = recipe["training"]
-    if (training["maximum_optimizer_steps"] != 7 or
-            training["maximum_sequence_length"] != 768 or
-            training["gradient_accumulation_steps"] != 8):
-        raise ValueError("Nova bounded training config mismatch")
     settings = SFTConfig(
         output_dir=str(output / "checkpoints"), max_steps=7, num_train_epochs=1,
-        per_device_train_batch_size=1, gradient_accumulation_steps=8,
-        learning_rate=training["learning_rate"], max_length=768,
+        per_device_train_batch_size=1, gradient_accumulation_steps=accumulation,
+        learning_rate=training["learning_rate"], max_length=sequence_length,
         # NF4 matmuls still compute in float16. Keep adapter optimization
         # outside AMP: this T4 stack exposes BF16 gradients that GradScaler
         # cannot unscale on CUDA capability 7.5.
@@ -174,7 +181,8 @@ def execute(snapshot: Path, output: Path, deadline_utc: str,
     hashes = {name: digest(adapter / name) for name in
               ("adapter_config.json", "adapter_model.safetensors")}
     receipt = {
-        "kind": "kova_nova_gpu_t4_nf4_lora_experiment",
+        "kind": f"{family.replace('-', '_')}_gpu_t4_nf4_lora_experiment",
+        "family": family,
         "status": "complete" if result.global_step == 7 else "partial",
         "source_commit": source_commit,
         "base_revision": model_family["immutable_revision"],
@@ -198,14 +206,16 @@ def execute(snapshot: Path, output: Path, deadline_utc: str,
         z.write(output / "receipt.json", "receipt.json")
     archive_sha256 = digest(archive)
     receipt["archive_sha256"] = archive_sha256
-    receipt["azure_blob"] = BLOB
-    receipt["azure_etag"] = put_with_vm_identity(archive, archive_sha256)
+    blob = f"gpu-experimental/2026-09-28/{family}/adapter.zip"
+    receipt["azure_blob"] = blob
+    receipt["azure_etag"] = put_with_vm_identity(archive, archive_sha256, blob)
     return receipt
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--family", choices=sorted(FAMILY_LIMITS), default=FAMILY)
     parser.add_argument("--snapshot", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--deadline-utc")
@@ -213,14 +223,14 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if not args.execute:
         print(json.dumps({"status": "experimental_gpu_preparation_only",
-                          "family": FAMILY, "watchdog_required": True,
+                          "family": args.family, "watchdog_required": True,
                           "signed_controller_pilot": False}))
         return 0
     if not all((args.snapshot, args.output, args.deadline_utc,
                 args.source_commit)):
         parser.error("snapshot, new output, deadline and source commit required")
     print(json.dumps(execute(args.snapshot, args.output, args.deadline_utc,
-                             args.source_commit), sort_keys=True))
+                             args.source_commit, args.family), sort_keys=True))
     return 0
 
 
