@@ -9,6 +9,8 @@ unselected and disabled. CPU tests never install or execute a real vLLM model.
 import asyncio
 from dataclasses import dataclass
 import hashlib
+from importlib.metadata import PackageNotFoundError, version
+import json
 import math
 import os
 from time import monotonic
@@ -82,13 +84,110 @@ def _environment_guard(root):
 
 
 class NativeVllm:
-    """Block native allocation until the trained adapter is loaded on every request."""
+    """Own one verified base and one trained LoRA, with no base-only handoff."""
     def __init__(self, root, artifact, policy):
         need(type(policy) is LoaderPolicy and policy.enabled
              and policy.model_loading_authorized and policy.gpu_execution_authorized)
-        # The former base-only path never applied the verified adapter. A
-        # manifest digest alone cannot make the native engine serve it.
-        raise ServingRuntimeError("native trained adapter loading is unavailable")
+        need(type(artifact) is dict and type(root) is str and os.path.isabs(root)
+             and os.path.normpath(root) == root and artifact.get("candidate_id") == policy.candidate_id
+             and type(artifact.get("model")) is str and type(artifact.get("revision")) is str
+             and type(artifact.get("adapter_sha256")) is str
+             and type(artifact.get("manifest_sha256")) is str)
+        try:
+            need(version("vllm") == SUPPORTED_VLLM_VERSION)
+        except PackageNotFoundError:
+            raise ServingRuntimeError("supported native runtime unavailable") from None
+
+        # The startup verifier has already hashed this file on a protected RO
+        # mount. Bound the second read and reject a changed configuration before
+        # constructing an engine. No adapter or model path comes from a request.
+        config_path = os.path.join(root, "adapter_config.json")
+        try:
+            fd = os.open(config_path, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                encoded = os.read(fd, 8193)
+            finally:
+                os.close(fd)
+            need(0 < len(encoded) <= 8192)
+            adapter_config = json.loads(encoded)
+            rank = adapter_config["r"]
+            need(type(rank) is int and 1 <= rank <= 64
+                 and adapter_config["peft_type"] == "LORA"
+                 and adapter_config["task_type"] == "CAUSAL_LM")
+        except (OSError, ValueError, KeyError, TypeError):
+            raise ServingRuntimeError("verified adapter configuration unavailable") from None
+
+        from vllm.engine.arg_utils import AsyncEngineArgs
+        from vllm.lora.request import LoRARequest
+        from vllm.v1.engine.async_llm import AsyncLLM
+
+        args = AsyncEngineArgs(
+            model=root, tokenizer=root, revision=artifact["revision"],
+            tokenizer_revision=artifact["revision"], served_model_name=[artifact["model"]],
+            load_format="safetensors", trust_remote_code=False,
+            max_model_len=policy.context_tokens, max_num_seqs=policy.maximum_sequences,
+            gpu_memory_utilization=policy.gpu_memory_utilization, tensor_parallel_size=1,
+            enable_prefix_caching=False, disable_log_stats=True, enable_log_requests=False,
+            enable_lora=True, max_loras=1, max_cpu_loras=1, max_lora_rank=rank,
+        )
+        self._lora = LoRARequest(artifact["model"], 1, root)
+        self._native = AsyncLLM.from_engine_args(args)
+        self._policy, self._root, self._artifact, self._rank = policy, root, artifact, rank
+        self._loaded = False
+        self._closed = False
+        self.engine = _TrainedAdapterEngine(self)
+
+    def observed_configuration(self):
+        need(not self._closed)
+        model = self._native.model_config
+        lora = self._native.vllm_config.lora_config
+        scheduler = self._native.scheduler_config
+        need(model.model == self._root and model.tokenizer == self._root
+             and model.revision == self._artifact["revision"]
+             and model.tokenizer_revision == self._artifact["revision"]
+             and model.served_model_name == [self._artifact["model"]]
+             and model.max_model_len == self._policy.context_tokens
+             and model.trust_remote_code is False and lora is not None
+             and lora.max_loras == 1 and lora.max_lora_rank == self._rank
+             and scheduler.max_num_seqs == self._policy.maximum_sequences)
+        return {"model_path": model.model, "tokenizer_path": model.tokenizer,
+                "model_revision": model.revision, "tokenizer_revision": model.tokenizer_revision,
+                "adapter_sha256": self._artifact["adapter_sha256"],
+                "adapter_bundle_sha256": self._artifact["manifest_sha256"],
+                "served_model_names": model.served_model_name,
+                "context_tokens": model.max_model_len, "trust_remote_code": model.trust_remote_code}
+
+    async def health(self):
+        need(not self._closed)
+        if not self._loaded:
+            need(await self._native.add_lora(self._lora) is True)
+            self._loaded = True
+        need(await self._native.list_loras() == {self._lora.lora_int_id})
+        await self._native.check_health()
+
+    def close(self):
+        if not self._closed:
+            self._native.shutdown(timeout=self._policy.shutdown_timeout_seconds)
+            self._closed = True
+            self._loaded = False
+
+
+class _TrainedAdapterEngine:
+    """Expose inference with the pinned LoRA on every request, never raw vLLM."""
+    def __init__(self, backend):
+        self._backend = backend
+
+    async def generate(self, prompt, sampling_params, request_id):
+        backend = self._backend
+        await backend.health()
+        async for result in backend._native.generate(
+                prompt, sampling_params, request_id, lora_request=backend._lora):
+            need(not backend._closed)
+            yield result
+
+    async def abort(self, request_id):
+        need(not self._backend._closed)
+        return await self._backend._native.abort(request_id)
 
 
 class ServingRuntime:
