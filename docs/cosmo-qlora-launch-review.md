@@ -17,6 +17,18 @@ any GPU resource is created. A $12 Azure budget alert cannot stop consumption.
 The three-family runner remains source-only: its `--execute` option fails
 closed. **No paid training or model deployment has begun.**
 
+**Experimental Cosmo CPU adapter, 2026-09-28:** The public GitHub Actions
+[run 36367369377](https://github.com/Blockigaming/KovaGPT_Models/actions/runs/36367369377)
+completed 7/7 FP32 LoRA optimizer steps against the approved 27 training
+records and produced an adapter for the pinned Qwen3-0.6B revision. Its
+15 validation records were reserved but have not been scored. The receipt,
+adapter hashes, archive digest and exact source are recorded in
+`docs/cosmo-cpu-candidate-20260928.md`. The compact adapter and receipt are
+preserved separately from the seven-day workflow artifact. This is **one
+trained experimental candidate, zero of three selected Azure T4 QLoRA pilots,
+and zero production routes**. It does not change Phase A's 30/40 verification
+or the Phase B hold.
+
 The 2026-09-27 transfer audit corrects an understated reservation. Pinned
 Qwen model downloads total 13,659,581,269 bytes for all three families; the
 pinned wheel archive adds roughly 4,091,454,718 bytes. At the subscription's
@@ -40,7 +52,8 @@ existing offline verifier returned `verified: true` for Cosmo (9 files,
 (12 files, 8,060,925,056 bytes). Their temporary directories reported
 `protected_for_loading: false`; they are neither preserved adapters nor
 ready-to-train mounts and will disappear when the Cloud Shell session ends.
-No GPU, training, adapter, production deployment or billable pilot compute exists.
+No GPU, paid training, production deployment or billable pilot compute exists;
+the separately recorded CPU adapter was trained on 2026-09-28.
 `python3 -m training.pinned_snapshot_download --family kova-cosmo
 --destination /absolute/new/snapshot` prints the pinned download plan;
 adding `--execute` fetches only the manifest's files into a new directory,
@@ -56,7 +69,8 @@ passed the completion-mask check and constructed `trl==1.13.0` `SFTConfig`.
 This is a CPU-side API check; it has not exercised T4 quantization or training.
 The full hash-verified Cosmo checkpoint also loaded from local files on CPU
 with `trust_remote_code=False`: 596,049,920 parameters and no missing LoRA
-target modules from the approved recipe. It produced no trained adapter.
+target modules from the approved recipe. That earlier check produced no adapter;
+the later CPU experiment is recorded above.
 
 The isolated evidence group now contains storage account `kova42c1a27`.
 Deployment succeeded on 2026-09-27; live readback confirms HTTPS-only access,
