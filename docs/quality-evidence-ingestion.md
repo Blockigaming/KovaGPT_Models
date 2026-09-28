@@ -59,6 +59,30 @@ restrictions on the specific job API, approved tool execution, and Auto latency
 repair remain in force. A35 and A38 remain open pending a separately reviewed,
 safe integration and exact-head validation.
 
+## September 28 reproducible source inventory
+
+`python3 -m release.historical_checkpoint_audit PATH_TO_ORIGINAL_ZIP` now
+checks the exact archived ZIP SHA-256, all 152 manifest entries and their
+bytes, member names and types, then compares every saved `Model_Source/` file
+to the current source tree without unpacking or importing archived code. The
+original archive gives **53 identical, 49 changed, 17 historical-only** paths
+against the September 28 Models review checkout. The prior 54/47/18 result
+above was measured against an older checkout; its original archive pin has
+not changed. Four isolated tests exercise classification, content tampering,
+path traversal and duplicate members. CI can test the scanner without
+publishing the historical archive.
+
+The 17 uncarried paths include the old job-service and admission implementation
+and its tests, the old evaluator and its tests, completion checks and source
+documents. Their absence is explicit in the scanner's JSON output. Some
+current features cover related behavior, but no path name or passing test
+proves that the old behavior was safely integrated. In particular the earlier
+job-service publication restriction still applies; the scanner carries no
+historical implementation or file contents into the review. Its
+`a38_reconciled: false` and `phase_b_ready: false` fields are intentional.
+This read-only audit improves A38's reproducibility; **A35/A38 and the fixed
+30/40 Phase A count remain open**.
+
 ## September 27 source bridge for archived cases
 
 `evaluations/model-quality-suite.v1.json` now contains the exact historical
