@@ -12,10 +12,24 @@ worksheet below are historical and superseded. Hosting after training needs
 its own budget. The $0.526/hour subscription-specific T4 price is a verified
 compute meter, but controller hosting, protected evidence retention, archive,
 tax and other charges still need an independently signed all-in quote before
-any GPU resource is created. A $12 Azure budget alert cannot stop consumption.
+the selected QLoRA lifecycle is started. A $12 Azure budget alert cannot stop
+consumption.
 
 The three-family runner remains source-only: its `--execute` option fails
-closed. **No paid training or model deployment has begun.**
+closed. **No selected paid training or model deployment has begun.**
+
+**Bounded GPU hardware probe, 2026-09-28:** An independently watched private
+`Standard_NC4as_T4_v3` VM was actually provisioned, with no inbound public IP.
+The pinned NVIDIA extension succeeded; a live `nvidia-smi` readback reported
+Tesla T4, driver 580.178.04 and 16,384 MiB. The watchdog was enabled with a
+2026-09-28 05:11:48 UTC deadline and exactly two group-scoped Contributor
+assignments. The intended container-scoped VM write grant was not available,
+so no training or adapter upload was attempted on this VM. The pilot group
+and watchdog control group were both deleted; Azure `group exists` returned
+`false` for each at **03:28:33 UTC**. Provisioning and the brief hardware
+probe were billable even though no GPU training occurred. A separate free CPU
+Nova experiment and offline inference samples for the completed Cosmo/Orion
+adapters are running in GitHub Actions; they are not selected Azure pilots.
 
 **Experimental Cosmo CPU adapter, 2026-09-28:** The public GitHub Actions
 [run 36367369377](https://github.com/Blockigaming/KovaGPT_Models/actions/runs/36367369377)
