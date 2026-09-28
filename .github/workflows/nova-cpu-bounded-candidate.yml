@@ -1,0 +1,46 @@
+name: Train bounded Nova CPU adapter
+
+on:
+  push:
+    branches: [feature/phase-a-cumulative-review-20260927]
+    paths:
+      - .github/workflows/nova-cpu-bounded-candidate.yml
+      - training/nova_cpu_bounded_candidate.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  train:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 165
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install hash-pinned CPU stack and dataset imports
+        run: |
+          python -m pip install --require-hashes -r requirements/cosmo-loss-mask-py312-linux-cpu.lock
+          sed -n '/^cffi==/p;/^cryptography==/p;/^pycparser==/p' requirements/kova-cosmo-sft-py312-linux.lock > "$RUNNER_TEMP/cosmo-imports.lock"
+          python -m pip install --require-hashes -r "$RUNNER_TEMP/cosmo-imports.lock"
+      - name: Download and hash-verify pinned Qwen3-4B
+        run: python -m training.pinned_snapshot_download --family kova-nova --destination "$RUNNER_TEMP/nova-base" --execute
+      - name: Train short experimental CPU adapter
+        env:
+          CUDA_VISIBLE_DEVICES: ''
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+          WANDB_DISABLED: 'true'
+        run: python -m training.nova_cpu_bounded_candidate --execute --snapshot "$RUNNER_TEMP/nova-base" --output "$RUNNER_TEMP/nova-candidate"
+      - name: Preserve adapter and receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-cpu-bounded-candidate
+          path: |
+            ${{ runner.temp }}/nova-candidate/adapter/
+            ${{ runner.temp }}/nova-candidate/receipt.json
+          if-no-files-found: warn
+          retention-days: 7
