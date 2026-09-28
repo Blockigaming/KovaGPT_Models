@@ -1,0 +1,40 @@
+name: One bounded Cosmo CPU candidate
+
+on:
+  push:
+    branches: [feature/phase-a-cumulative-review-20260927]
+    paths:
+      - .github/workflows/cosmo-cpu-candidate.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  train:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install hash-pinned CPU training stack
+        run: python -m pip install --require-hashes -r requirements/cosmo-loss-mask-py312-linux-cpu.lock
+      - name: Download and verify immutable Cosmo base
+        run: python -m training.pinned_snapshot_download --family kova-cosmo --destination "$RUNNER_TEMP/kova-cosmo-base" --execute
+      - name: Train and receipt experimental adapter
+        env:
+          CUDA_VISIBLE_DEVICES: ''
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+          WANDB_DISABLED: 'true'
+        run: python -m training.cosmo_cpu_candidate --execute --snapshot "$RUNNER_TEMP/kova-cosmo-base" --output "$RUNNER_TEMP/kova-cosmo-candidate"
+      - name: Preserve candidate and receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cosmo-cpu-lora-candidate
+          path: ${{ runner.temp }}/kova-cosmo-candidate/
+          if-no-files-found: warn
+          retention-days: 7
