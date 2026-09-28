@@ -122,6 +122,29 @@ class ExperimentalArchiveTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "archive rejected"):
                 candidate.inspect_archive(self.family, alias)
 
+    def test_pinned_quality_suite_scores_all_cases_and_holds_human_reviews(self):
+        from evaluation.historical_suite_bridge import load_archived_suite
+        cases = load_archived_suite()["cases"]
+        samples = [{"prompt": case["prompt"], "completion": "not the requested JSON"}
+                   for case in cases]
+        exact = next(index for index, case in enumerate(cases)
+                     if case["evaluation"]["kind"] == "exact_json")
+        samples[exact]["completion"] = json.dumps(cases[exact]["evaluation"]["expected"])
+        hidden = next(index for index, case in enumerate(cases)
+                      if case["evaluation"]["kind"] == "review_required")
+        samples[hidden]["completion"] = "<think>private reasoning</think>"
+        report = candidate._quality_results(cases, samples)
+        self.assertEqual(report["case_count"], 50)
+        self.assertEqual(report["result_counts"], {
+            "exact_json_pass": 1, "exact_json_fail": 35,
+            "private_output_blocked": 1, "pending_human_review": 13,
+        })
+        self.assertIsNone(report["cases"][hidden]["answer"])
+        self.assertFalse(report["phase_a_item_closed"])
+        samples[exact]["prompt"] = "other case"
+        with self.assertRaisesRegex(ValueError, "archive rejected"):
+            candidate._quality_results(cases, samples)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,7 @@ an already downloaded pinned snapshot, and a pinned offline T4 runtime.
 from __future__ import annotations
 
 import argparse
+from collections import Counter, defaultdict
 import hashlib
 from io import BytesIO
 import json
@@ -156,9 +157,41 @@ def inspect_archive(family: str, archive_path: Path) -> tuple[dict, dict[str, by
     return receipt, contents
 
 
-def generate(family: str, archive_path: Path, snapshot: Path, output: Path) -> dict:
+def _quality_results(cases: list[dict], samples: list[dict]) -> dict:
+    """Score the exact archived prompts; leave rubric answers for human review."""
+    from evaluation.cpu_candidate_quality import score_case
+    from evaluation.historical_suite_bridge import HISTORICAL_CONTENT_SHA256
+
+    _require(len(cases) == len(samples) == 50)
+    counts = Counter()
+    categories = defaultdict(Counter)
+    results = []
+    for case, sample in zip(cases, samples):
+        _require(sample["prompt"] == case["prompt"])
+        result, safe_answer = score_case(case, sample["completion"])
+        counts[result] += 1
+        categories[case["category"]][result] += 1
+        results.append({"case_id": case["id"], "category": case["category"],
+                        "result": result, "answer": safe_answer,
+                        "review_criteria": case["evaluation"].get("criteria", [])})
+    return {"suite_sha256": HISTORICAL_CONTENT_SHA256,
+            "case_count": len(cases), "result_counts": dict(counts),
+            "category_counts": {key: dict(value) for key, value in categories.items()},
+            "cases": results, "release_thresholds_approved": False,
+            "live_routes_verified": 0, "phase_a_item_closed": False}
+
+
+def generate(family: str, archive_path: Path, snapshot: Path, output: Path,
+             *, quality_suite: bool = False) -> dict:
     _require(not output.exists() and not output.is_symlink() and output.parent.is_dir())
     receipt, contents = inspect_archive(family, archive_path)
+    if quality_suite:
+        from evaluation.historical_suite_bridge import load_archived_suite
+        cases = load_archived_suite()["cases"]
+        prompts = tuple(case["prompt"] for case in cases)
+    else:
+        cases = []
+        prompts = PROMPTS
     lineage = contract.load_json(ROOT / "config/kova-private-lineage.v1.json")
     verify_snapshot(snapshot, contract._pinned_manifest(family, lineage["families"][family]))
     _require(all(os.environ.get(name) == "1" for name in
@@ -196,7 +229,7 @@ def generate(family: str, archive_path: Path, snapshot: Path, output: Path) -> d
         system = (ROOT / "prompts/kova-identity.v3.txt").read_text()
         samples = []
         with torch.inference_mode():
-            for question in PROMPTS:
+            for question in prompts:
                 encoded = tokenizer.apply_chat_template(
                     [{"role": "system", "content": system},
                      {"role": "user", "content": question}],
@@ -204,18 +237,27 @@ def generate(family: str, archive_path: Path, snapshot: Path, output: Path) -> d
                     enable_thinking=False, return_tensors="pt")
                 ids = encoded.input_ids if hasattr(encoded, "input_ids") else encoded
                 generated = model.generate(input_ids=ids.to("cuda:0"),
-                                           max_new_tokens=80, do_sample=False,
+                                           max_new_tokens=128 if quality_suite else 80,
+                                           do_sample=False,
                                            pad_token_id=tokenizer.eos_token_id)
                 samples.append({"prompt": question, "completion": tokenizer.decode(
                     generated[0, ids.shape[-1]:], skip_special_tokens=True).strip()})
-    report = {"kind": "experimental_t4_offline_inference_samples",
+    report = {"kind": ("experimental_t4_quality_50_cases" if quality_suite else
+                       "experimental_t4_offline_inference_samples"),
               "family": family, "archive_sha256": ARCHIVES[family][1],
               "training_commit": receipt["source_commit"],
               "base_revision": receipt["base_revision"],
               "adapter_sha256": receipt["adapter_sha256"],
-              "samples": samples, "human_quality_review_complete": False,
+              "human_quality_review_complete": False,
               "signed_controller_pilot": False, "production_routing_approved": False}
-    with output.open("x") as stream:
+    if quality_suite:
+        report.update(_quality_results(cases, samples))
+        report["generation"] = {"do_sample": False, "enable_thinking": False,
+                                "max_new_tokens": 128}
+    else:
+        report["samples"] = samples
+    descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
         json.dump(report, stream, sort_keys=True, indent=2)
         stream.write("\n")
     return report
@@ -228,11 +270,13 @@ def main(argv=None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--verify-only", action="store_true")
     mode.add_argument("--generate", action="store_true")
+    parser.add_argument("--quality-suite", action="store_true",
+                        help="generate and score all 50 pinned quality cases")
     parser.add_argument("--snapshot", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     if args.verify_only:
-        if args.snapshot is not None or args.output is not None:
+        if args.snapshot is not None or args.output is not None or args.quality_suite:
             parser.error("verify-only accepts only family and archive")
         receipt, _ = inspect_archive(args.family, args.archive)
         print(json.dumps({"status": "experimental_archive_verified",
@@ -243,8 +287,14 @@ def main(argv=None) -> int:
         return 0
     if args.snapshot is None or args.output is None:
         parser.error("generate requires local snapshot and new output")
-    print(json.dumps(generate(args.family, args.archive, args.snapshot, args.output),
-                     sort_keys=True))
+    report = generate(args.family, args.archive, args.snapshot, args.output,
+                      quality_suite=args.quality_suite)
+    if args.quality_suite:
+        print(json.dumps({"family": args.family, "case_count": report["case_count"],
+                          "result_counts": report["result_counts"],
+                          "human_quality_review_complete": False}, sort_keys=True))
+    else:
+        print(json.dumps(report, sort_keys=True))
     return 0
 
 
