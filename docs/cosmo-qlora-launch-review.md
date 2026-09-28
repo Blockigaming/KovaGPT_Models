@@ -20,8 +20,10 @@ closed. **No paid training or model deployment has begun.**
 **Experimental Cosmo CPU adapter, 2026-09-28:** The public GitHub Actions
 [run 36367369377](https://github.com/Blockigaming/KovaGPT_Models/actions/runs/36367369377)
 completed 7/7 FP32 LoRA optimizer steps against the approved 27 training
-records and produced an adapter for the pinned Qwen3-0.6B revision. Its
-15 validation records were reserved but have not been scored. The receipt,
+records and produced an adapter for the pinned Qwen3-0.6B revision. A separate
+CPU run measured held-out completion loss on its 15 reserved records: 2.76193386
+for the base and 1.48700863 for the adapter, over 318 completion tokens. No
+human quality verdict has been made. The receipt,
 adapter hashes, archive digest and exact source are recorded in
 `docs/cosmo-cpu-candidate-20260928.md`. The compact adapter and receipt are
 preserved separately from the seven-day workflow artifact. This is **one

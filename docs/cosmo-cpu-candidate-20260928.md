@@ -29,9 +29,25 @@ artifact collection. The original workflow ZIP also contains checkpoints;
 the compact copy contains only the adapter files, README and receipt. The
 original model weights are not redistributed in either adapter archive.
 
+## Held-out loss measurement
+
+[Evaluation run 36368599939](https://github.com/Blockigaming/KovaGPT_Models/actions/runs/36368599939)
+loaded the exact pinned base and the hash-matched saved adapter at source
+`1a3e2e82fb59e167cf79940a3053d6602210f35b`. It scored all 15 reserved
+validation records using the same completion labels for each variant, 318
+completion tokens in total. Token-weighted mean loss was **2.76193386** for
+the base and **1.48700863** for the adapter, a difference of **−1.27492524**.
+The report archive digest is
+`db375e9fde5177cc714ad044d4b6693e2e859a4dbff2c7c855e8a1cd524eb58f`;
+the extracted `KovaGPT-Cosmo-heldout-evaluation-2026-09-28.json` digest is
+`8a53082cccd3bccf25496202aa05016a290c574eee3893bfd8adebc34745d3b4`
+and the report is preserved in the KovaGPT artifact collection. It includes
+all 15 per-case losses and the adapter file hashes. This is a small, synthetic
+held-out loss comparison, not a behavioral benchmark or a human quality pass.
+
 **Scope:** This is one actual trained **experimental CPU candidate**. The
-selected Azure T4 four-bit QLoRA run, Orion and Nova training, measured
-held-out evaluation, human review, independent spending/cleanup authority,
+selected Azure T4 four-bit QLoRA run, Orion and Nova training, full behavioral
+evaluation, human review, independent spending/cleanup authority,
 deployment and live routing remain outstanding. Phase A remains **30/40**;
 Phase B remains **NOT READY**. It is not evidence that the adapter improves
 quality, and it is not authorized as a production model.
