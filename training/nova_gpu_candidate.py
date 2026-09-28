@@ -148,7 +148,10 @@ def execute(snapshot: Path, output: Path, deadline_utc: str,
         output_dir=str(output / "checkpoints"), max_steps=7, num_train_epochs=1,
         per_device_train_batch_size=1, gradient_accumulation_steps=8,
         learning_rate=training["learning_rate"], max_length=768,
-        completion_only_loss=True, packing=False, fp16=True, bf16=False,
+        # NF4 matmuls still compute in float16. Keep adapter optimization
+        # outside AMP: this T4 stack exposes BF16 gradients that GradScaler
+        # cannot unscale on CUDA capability 7.5.
+        completion_only_loss=True, packing=False, fp16=False, bf16=False,
         gradient_checkpointing=True, optim="adamw_torch",
         save_strategy="no",
         report_to="none", push_to_hub=False, seed=42)
