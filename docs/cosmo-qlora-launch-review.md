@@ -40,7 +40,7 @@ existing offline verifier returned `verified: true` for Cosmo (9 files,
 (12 files, 8,060,925,056 bytes). Their temporary directories reported
 `protected_for_loading: false`; they are neither preserved adapters nor
 ready-to-train mounts and will disappear when the Cloud Shell session ends.
-No GPU, training, adapter, production deployment or paid pilot resource exists.
+No GPU, training, adapter, production deployment or billable pilot compute exists.
 `python3 -m training.pinned_snapshot_download --family kova-cosmo
 --destination /absolute/new/snapshot` prints the pinned download plan;
 adding `--execute` fetches only the manifest's files into a new directory,
@@ -64,13 +64,24 @@ TLS 1.2 minimum, no anonymous Blob access, no Shared Key access, and 30-day
 `Unlocked` policies on the empty `cosmo-ledger` and `cosmo-adapters` containers.
 It holds no adapter or ledger yet. Do not lock retention or claim preservation
 until the independent controller, data permissions, archive and all-in cost
-admission have been verified. A requested deployment of the watchdog, which
-would grant its managed identity Contributor on the pilot and watchdog groups,
-was rejected by automatic approval review before execution: the owner had
-approved the $12 spending scope broadly but had not specifically authorized
-these IAM permissions and resource-group scopes. Do not route around that
-rejection. The pilot group was empty at the attempted deployment, and no
-watchdog or GPU exists.
+admission have been verified.
+
+**Watchdog live test, 2026-09-28:** After the owner explicitly approved
+Contributor for `kova-pilot-watchdog-c1a27` only on the pilot and control
+resource groups, Azure assigned exactly those two group-scoped roles. The first
+empty-group test fired after its deadline and deleted the pilot group. Its
+subsequent GET returned 403 because deleting the group removed that group's
+role assignment, so the initial safe gate left the control group intact; the
+operator deleted that residual group after independently confirming the pilot
+group was absent. The source gate now allows self-cleanup when the GET is 403
+**and** the group DELETE action both succeeded and completed with HTTP 200.
+In a second live empty-group test, the corrected workflow deleted the pilot
+group and its own control group automatically after the 00:07 UTC deadline.
+At 00:08:53 UTC, both approved groups returned `exists=false`. The controller's
+readback expectation was updated to match the actual Logic App trigger shape.
+This proves the bounded empty-group cleanup path and scoped IAM; it does not
+prove behavior against a live VM, controller admission, artifact preservation,
+an all-in $12 cost bound, or training. No watchdog or GPU remains deployed.
 
 ## Historical Cosmo-only worksheet (superseded)
 
