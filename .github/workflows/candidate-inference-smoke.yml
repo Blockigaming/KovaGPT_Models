@@ -1,0 +1,61 @@
+name: Generate experimental adapter samples
+
+on:
+  push:
+    branches: [feature/phase-a-cumulative-review-20260927]
+    paths:
+      - .github/workflows/candidate-inference-smoke.yml
+      - training/candidate_inference_smoke.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  infer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - family: kova-cosmo
+            run: 36367369377
+            artifact: cosmo-cpu-lora-candidate
+          - family: kova-orion
+            run: 36368479166
+            artifact: orion-cpu-lora-candidate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned CPU inference stack
+        run: |
+          python -m pip install --require-hashes -r requirements/cosmo-loss-mask-py312-linux-cpu.lock
+          sed -n '/^cffi==/p;/^cryptography==/p;/^pycparser==/p' requirements/kova-cosmo-sft-py312-linux.lock > "$RUNNER_TEMP/cosmo-imports.lock"
+          python -m pip install --require-hashes -r "$RUNNER_TEMP/cosmo-imports.lock"
+      - name: Retrieve immutable trained adapter
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/candidate
+          run-id: ${{ matrix.run }}
+          github-token: ${{ github.token }}
+      - name: Download and hash-verify immutable base
+        run: python -m training.pinned_snapshot_download --family "${{ matrix.family }}" --destination "$RUNNER_TEMP/base" --execute
+      - name: Generate samples with verified adapter
+        env:
+          CUDA_VISIBLE_DEVICES: ''
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+        run: python -m training.candidate_inference_smoke --family "${{ matrix.family }}" --snapshot "$RUNNER_TEMP/base" --candidate "$RUNNER_TEMP/candidate" --output "$RUNNER_TEMP/${{ matrix.family }}-samples.json"
+      - name: Preserve diagnostic samples
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.family }}-inference-samples
+          path: ${{ runner.temp }}/${{ matrix.family }}-samples.json
+          if-no-files-found: warn
+          retention-days: 7
