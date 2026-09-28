@@ -77,10 +77,16 @@ the later CPU experiment is recorded above.
 The isolated evidence group now contains storage account `kova42c1a27`.
 Deployment succeeded on 2026-09-27; live readback confirms HTTPS-only access,
 TLS 1.2 minimum, no anonymous Blob access, no Shared Key access, and 30-day
-`Unlocked` policies on the empty `cosmo-ledger` and `cosmo-adapters` containers.
-It holds no adapter or ledger yet. Do not lock retention or claim preservation
-until the independent controller, data permissions, archive and all-in cost
-admission have been verified.
+`Unlocked` policies on `cosmo-ledger` and `cosmo-adapters`. On 2026-09-28,
+the two **experimental CPU adapter ZIPs** were uploaded under
+`cpu-experimental/2026-09-28/` in `cosmo-adapters`; their downloaded readbacks
+matched the local SHA-256 digests. Their sizes, ETags and hashes are recorded
+in the Cosmo and Orion CPU candidate documents. A temporary user Blob Data
+Contributor role limited to that container was removed after readback, and
+an exact-scope role query returned `[]`. No ledger, locked retention,
+independent controller or selected paid QLoRA adapter exists. Do not claim
+protected preservation until the independent controller, retention lock,
+archive and all-in cost admission have been verified.
 
 **Watchdog live test, 2026-09-28:** After the owner explicitly approved
 Contributor for `kova-pilot-watchdog-c1a27` only on the pilot and control

@@ -29,6 +29,20 @@ artifact collection. The original workflow ZIP also contains checkpoints;
 the compact copy contains only the adapter files, README and receipt. The
 original model weights are not redistributed in either adapter archive.
 
+## Azure experimental copy
+
+The compact ZIP was uploaded to private storage account `kova42c1a27`,
+container `cosmo-adapters`, blob
+`cpu-experimental/2026-09-28/kova-cosmo/adapter.zip`. Live list readback
+reported 40,429,945 bytes and ETag `0x8DF1D0A4139774F`. A separate download
+from Azure yielded SHA-256
+`0ccc774899d87eb6261d0f3e82f6bd2e74577205624e4e54bfa2d4afb5f08f54`,
+exactly matching the saved compact ZIP. The temporary Blob Data Contributor
+assignment on this container was then removed; an exact-scope role query
+returned `[]`. The container's 30-day retention policy remains **Unlocked**,
+so this is an Azure experimental copy, not a controller-attested protected
+pilot artifact or a deployed model.
+
 ## Held-out loss measurement
 
 [Evaluation run 36368599939](https://github.com/Blockigaming/KovaGPT_Models/actions/runs/36368599939)

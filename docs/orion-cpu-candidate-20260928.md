@@ -27,6 +27,19 @@ and receipt; its SHA-256 is
 The compact file is preserved in the KovaGPT artifact collection beyond the
 seven-day workflow retention. Base weights are not included.
 
+## Azure experimental copy
+
+The compact ZIP was uploaded to private storage account `kova42c1a27`,
+container `cosmo-adapters`, blob
+`cpu-experimental/2026-09-28/kova-orion/adapter.zip`. Live list readback
+reported 69,790,187 bytes and ETag `0x8DF1D0A4AB9A334`. A separate download
+from Azure yielded SHA-256
+`66cc456e49d6fa137bf406cced50f8c74fe0010d2c755866f7bfca68edb96b17`,
+exactly matching the saved compact ZIP. The temporary Blob Data Contributor
+assignment on this container was then removed; an exact-scope role query
+returned `[]`. The 30-day retention policy is **Unlocked**, so this copy is
+neither controller-attested protected evidence nor a deployed model.
+
 ## Held-out loss measurement
 
 [Evaluation run 36369706634](https://github.com/Blockigaming/KovaGPT_Models/actions/runs/36369706634)
