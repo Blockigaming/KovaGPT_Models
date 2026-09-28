@@ -1,0 +1,51 @@
+name: Measure Orion candidate held-out loss
+
+on:
+  push:
+    branches: [feature/phase-a-cumulative-review-20260927]
+    paths:
+      - .github/workflows/orion-cpu-eval.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install hash-pinned CPU stack and dataset dependencies
+        run: |
+          python -m pip install --require-hashes -r requirements/cosmo-loss-mask-py312-linux-cpu.lock
+          sed -n '/^cffi==/p;/^cryptography==/p;/^pycparser==/p' requirements/kova-cosmo-sft-py312-linux.lock > "$RUNNER_TEMP/cosmo-imports.lock"
+          python -m pip install --require-hashes -r "$RUNNER_TEMP/cosmo-imports.lock"
+      - name: Download immutable verified Orion training artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: orion-cpu-lora-candidate
+          path: ${{ runner.temp }}/orion-candidate
+          run-id: 36368479166
+          github-token: ${{ github.token }}
+      - name: Download and verify immutable Orion base
+        run: python -m training.pinned_snapshot_download --family kova-orion --destination "$RUNNER_TEMP/kova-orion-base" --execute
+      - name: Measure held-out completion loss on both variants
+        env:
+          CUDA_VISIBLE_DEVICES: ''
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+          WANDB_DISABLED: 'true'
+        run: python -m training.cosmo_cpu_evaluate_candidate --family kova-orion --snapshot "$RUNNER_TEMP/kova-orion-base" --candidate "$RUNNER_TEMP/orion-candidate" --output "$RUNNER_TEMP/orion-heldout-loss.json"
+      - name: Preserve measured report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orion-cpu-heldout-loss
+          path: ${{ runner.temp }}/orion-heldout-loss.json
+          if-no-files-found: warn
+          retention-days: 7

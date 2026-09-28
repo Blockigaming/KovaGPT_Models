@@ -1,4 +1,4 @@
-"""Measure held-out completion loss for the actual experimental Cosmo adapter.
+"""Measure held-out completion loss for a verified experimental CPU adapter.
 
 This is a CPU research measurement, not a quality approval or production gate.
 The 15 declared validation examples stay out of training.
@@ -19,10 +19,17 @@ from training.cosmo_runtime_probe import completion_tokens
 from training.snapshot_verifier import verify_snapshot
 
 ROOT = Path(__file__).resolve().parents[1]
-TRAINING_COMMIT = "19ed0a9ce007f6d90ccb3dbec39daef852dc601c"
+TRAINING_RUNS = {
+    "kova-cosmo": ("19ed0a9ce007f6d90ccb3dbec39daef852dc601c", 36367369377),
+    "kova-orion": ("50f8b9a00851eda52e5112f8944882171d0b7dfd", 36368479166),
+}
 
 
-def measure(snapshot: Path, candidate: Path, output: Path) -> dict:
+def measure(snapshot: Path, candidate: Path, output: Path,
+            *, family_name: str = "kova-cosmo") -> dict:
+    if family_name not in TRAINING_RUNS:
+        raise ValueError("unrecognized CPU training lineage")
+    training_commit, training_run_id = TRAINING_RUNS[family_name]
     if output.exists() or not output.parent.is_dir():
         raise ValueError("new output path required")
     for name, expected in {"transformers": "5.17.0", "peft": "0.21.0",
@@ -34,14 +41,14 @@ def measure(snapshot: Path, candidate: Path, output: Path) -> dict:
         raise ValueError("CPU-only PyTorch required")
     torch.set_num_threads(4)
     lineage = contract.load_json(ROOT / "config/kova-private-lineage.v1.json")
-    family = lineage["families"]["kova-cosmo"]
-    verify_snapshot(snapshot, contract._pinned_manifest("kova-cosmo", family))
+    family = lineage["families"][family_name]
+    verify_snapshot(snapshot, contract._pinned_manifest(family_name, family))
     receipt = json.loads((candidate / "receipt.json").read_text())
     approved_digest = contract.load_json(ROOT / "config/kova-three-family-dataset.v2.json")["dataset_sha256"]
-    if (receipt.get("kind") != "kova_cosmo_cpu_fp32_lora_experiment" or
+    if (receipt.get("kind") != f"{family_name.replace('-', '_')}_cpu_fp32_lora_experiment" or
             receipt.get("status") != "complete" or
             receipt.get("optimizer_steps") != 7 or
-            receipt.get("source_commit") != TRAINING_COMMIT or
+            receipt.get("source_commit") != training_commit or
             receipt.get("base_revision") != family["immutable_revision"] or
             receipt.get("dataset_sha256") != approved_digest or
             receipt.get("train_records") != 27 or
@@ -97,9 +104,10 @@ def measure(snapshot: Path, candidate: Path, output: Path) -> dict:
     if base_tokens != adapted_tokens:
         raise ValueError("variant token mismatch")
     report = {
-        "kind": "kova_cosmo_cpu_fp32_lora_heldout_loss",
-        "training_run_id": 36367369377,
-        "source_commit": TRAINING_COMMIT,
+        "kind": f"{family_name.replace('-', '_')}_cpu_fp32_lora_heldout_loss",
+        "family": family_name,
+        "training_run_id": training_run_id,
+        "source_commit": training_commit,
         "dataset_sha256": approved_digest,
         "base_revision": family["immutable_revision"],
         "adapter_sha256": receipt["adapter_sha256"],
@@ -123,8 +131,11 @@ def main() -> None:
     parser.add_argument("--snapshot", type=Path, required=True)
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--family", choices=tuple(TRAINING_RUNS),
+                        default="kova-cosmo")
     args = parser.parse_args()
-    print(json.dumps(measure(args.snapshot, args.candidate, args.output), sort_keys=True))
+    print(json.dumps(measure(args.snapshot, args.candidate, args.output,
+                             family_name=args.family), sort_keys=True))
 
 
 if __name__ == "__main__":
