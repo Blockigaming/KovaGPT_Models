@@ -121,7 +121,7 @@ def watchdog_definition(vm_id, pilot_group_id, watchdog_group_id):
     self_delete = action("DELETE", watchdog_group_id + "?api-version=2022-09-01")
     self_delete["runAfter"] = {}
     gated_self_delete = {"type": "If",
-        "expression": "@equals(actions('check_pilot_absent')?['outputs']?['statusCode'], 404)",
+        "expression": "@or(equals(actions('check_pilot_absent')?['outputs']?['statusCode'], 404), and(equals(actions('check_pilot_absent')?['outputs']?['statusCode'], 403), equals(actions('delete_pilot_group')?['status'], 'Succeeded'), equals(actions('delete_pilot_group')?['outputs']?['statusCode'], 200)))",
         "actions": {"delete_watchdog_group": self_delete}, "else": {"actions": {}},
         "runAfter": {"check_pilot_absent": ["Succeeded", "Failed"]}}
     return {"$schema": "https://schema.management.azure.com/schemas/2016-06-01/Microsoft.Logic.json#",

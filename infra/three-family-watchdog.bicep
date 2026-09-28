@@ -94,7 +94,9 @@ resource workflow 'Microsoft.Logic/workflows@2019-05-01' = if (provisionWatchdog
         }
         check_pilot_absent: {
           // ARM may accept DELETE with HTTP 202 while resources still exist.
-          // A 404 on this exact group is the only self-cleanup gate.
+          // After group deletion, this group's Contributor grant can disappear,
+          // so GET may return 403 instead of 404. The final gate also accepts
+          // that case only after ARM has returned a completed DELETE (200).
           type: 'Http'
           operationOptions: 'DisableAsyncPattern'
           inputs: {
@@ -115,7 +117,7 @@ resource workflow 'Microsoft.Logic/workflows@2019-05-01' = if (provisionWatchdog
         }
         delete_watchdog_if_pilot_absent: {
           type: 'If'
-          expression: '@equals(actions(\'check_pilot_absent\')?[\'outputs\']?[\'statusCode\'], 404)'
+          expression: '@or(equals(actions(\'check_pilot_absent\')?[\'outputs\']?[\'statusCode\'], 404), and(equals(actions(\'check_pilot_absent\')?[\'outputs\']?[\'statusCode\'], 403), equals(actions(\'delete_pilot_group\')?[\'status\'], \'Succeeded\'), equals(actions(\'delete_pilot_group\')?[\'outputs\']?[\'statusCode\'], 200)))'
           actions: {
             delete_watchdog_group: {
               type: 'Http'
