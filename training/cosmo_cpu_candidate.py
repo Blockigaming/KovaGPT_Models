@@ -1,4 +1,4 @@
-"""Train one experimental Cosmo LoRA adapter on a free CPU runner.
+"""Train a bounded experimental small-family LoRA adapter on a free CPU runner.
 
 This is a bounded, public-dataset experiment. It does not release the selected
 Azure T4 QLoRA pilot, count as a paid grant, or authorize production routing.
@@ -25,8 +25,10 @@ ROOT = Path(__file__).resolve().parents[1]
 MAX_TRAINING_SECONDS = 3600
 
 
-def execute(snapshot: Path, output: Path) -> dict:
-    plan = approved.source_plan()
+def execute(snapshot: Path, output: Path, *, family: str = "kova-cosmo") -> dict:
+    if family not in ("kova-cosmo", "kova-orion"):
+        raise ValueError("only verified small-family CPU experiments supported")
+    plan = approved.source_plan() if family == "kova-cosmo" else None
     if (sys.version_info[:2] != (3, 12) or not snapshot.is_dir() or
             output.exists() or not output.parent.is_dir() or
             output.is_symlink()):
@@ -40,8 +42,7 @@ def execute(snapshot: Path, output: Path) -> dict:
         raise ValueError("pinned CPU PyTorch required")
     torch.set_num_threads(min(os.cpu_count() or 1, 4))
     lineage = contract.load_json(ROOT / "config/kova-private-lineage.v1.json")
-    manifest = contract._pinned_manifest(
-        "kova-cosmo", lineage["families"]["kova-cosmo"])
+    manifest = contract._pinned_manifest(family, lineage["families"][family])
     verify_snapshot(snapshot, manifest)
 
     from datasets import Dataset
@@ -53,8 +54,13 @@ def execute(snapshot: Path, output: Path) -> dict:
         str(snapshot), local_files_only=True, trust_remote_code=False)
     train, validation = approved.prepared_rows()
     approved.validate_token_masks(tokenizer, train + validation, 1024)
-    recipe = contract.load_json(ROOT / "config/kova-cosmo-qlora.v1.json")
+    recipe = contract.load_json(ROOT / f"config/{family}-qlora.v1.json")
+    if recipe["family"] != family or recipe["dataset"] != "config/kova-three-family-dataset.v2.json" or recipe["method"] != "four_bit_qlora_lora_sft":
+        raise ValueError("family training recipe differs from approved plan")
     lora = recipe["lora"]
+    training = recipe["training"]
+    if training["maximum_sequence_length"] != 1024 or training["maximum_optimizer_steps"] != 7 or not training["completion_only_masking"]:
+        raise ValueError("small-family CPU recipe bounds changed")
     torch.manual_seed(42)
     model = AutoModelForCausalLM.from_pretrained(
         str(snapshot), local_files_only=True, trust_remote_code=False,
@@ -73,9 +79,10 @@ def execute(snapshot: Path, output: Path) -> dict:
 
     settings = SFTConfig(
         output_dir=str(output / "checkpoints"),
-        max_steps=7, num_train_epochs=1,
+        max_steps=training["maximum_optimizer_steps"], num_train_epochs=1,
         per_device_train_batch_size=1, gradient_accumulation_steps=4,
-        learning_rate=1e-4, max_length=1024, completion_only_loss=True,
+        learning_rate=training["learning_rate"], max_length=1024,
+        completion_only_loss=True,
         packing=False, fp16=False, bf16=False, optim="adamw_torch",
         save_strategy="steps", save_steps=1, save_total_limit=1,
         report_to="none", push_to_hub=False, seed=42,
@@ -90,18 +97,19 @@ def execute(snapshot: Path, output: Path) -> dict:
         eval_dataset=Dataset.from_list(validation), callbacks=[StopAtDeadline()],
     )
     result = trainer.train()
-    if result.global_step < 1 or result.global_step > 7:
+    if result.global_step < 1 or result.global_step > training["maximum_optimizer_steps"]:
         raise ValueError("no bounded optimizer step completed")
     adapter = output / "adapter"
     trainer.model.save_pretrained(adapter, safe_serialization=True)
     files = {name: hashlib.sha256((adapter / name).read_bytes()).hexdigest()
              for name in ("adapter_config.json", "adapter_model.safetensors")}
     receipt = {
-        "kind": "kova_cosmo_cpu_fp32_lora_experiment",
-        "status": "complete" if result.global_step == 7 else "partial",
+        "kind": f"{family.replace('-', '_')}_cpu_fp32_lora_experiment",
+        "status": "complete" if result.global_step == training["maximum_optimizer_steps"] else "partial",
+        "family": family,
         "source_commit": os.environ.get("GITHUB_SHA", "local"),
-        "base_revision": plan["model_revision"],
-        "dataset_sha256": plan["dataset_sha256"],
+        "base_revision": lineage["families"][family]["immutable_revision"],
+        "dataset_sha256": (plan or contract.load_json(ROOT / "config/kova-three-family-dataset.v2.json"))["dataset_sha256"],
         "train_records": len(train), "validation_records": len(validation),
         "optimizer_steps": result.global_step,
         "training_seconds": round(time.monotonic() - started, 2),
@@ -118,17 +126,19 @@ def execute(snapshot: Path, output: Path) -> dict:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--family", choices=("kova-cosmo", "kova-orion"),
+                        default="kova-cosmo")
     parser.add_argument("--snapshot", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     if not args.execute:
         print(json.dumps({"status": "ready_for_free_cpu_experiment",
-                          "family": "kova-cosmo", "maximum_optimizer_steps": 7,
+                          "family": args.family, "maximum_optimizer_steps": 7,
                           "azure_qlora_release_approved": False}))
         return 0
     if not args.snapshot or not args.output:
         parser.error("--snapshot and --output required")
-    print(json.dumps(execute(args.snapshot, args.output), sort_keys=True))
+    print(json.dumps(execute(args.snapshot, args.output, family=args.family), sort_keys=True))
     return 0
 
 
