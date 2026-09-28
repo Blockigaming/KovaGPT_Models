@@ -43,6 +43,36 @@ production performance test. The Cosmo and Orion CPU experiments previously
 completed on GitHub Actions remain separate candidates with different
 precision and loss numbers.
 
+## Offline answer samples for independent review
+
+`training/gpu_candidate_inference_smoke.py` accepts one of the already preserved
+experimental ZIPs and the corresponding predownloaded, pinned base snapshot.
+It first verifies the independently read back archive hash and byte length,
+the four exact ZIP members, the seven-step training receipt, the 27/15 data
+split, source commit, base revision, dataset hash, PEFT configuration and
+both internal adapter file hashes. `--verify-only` needs neither weights nor a
+GPU. `--generate` additionally verifies every byte of the local base inventory
+and uses the pinned offline NF4/T4 stack to generate six fixed answers with the
+adapted model. It never fetches an adapter or base from Azure/Hugging Face.
+
+```sh
+python3 -m training.gpu_candidate_inference_smoke --verify-only \
+  --family kova-cosmo --archive /private/experiment/adapter.zip
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+  python3 -m training.gpu_candidate_inference_smoke --generate \
+  --family kova-cosmo --archive /private/experiment/adapter.zip \
+  --snapshot /private/pinned/kova-cosmo \
+  --output /private/reviews/cosmo-samples.json
+```
+
+Repeat with `kova-orion` and `kova-nova` and their own archive and snapshot.
+The ZIPs are in the private evidence container; this new source path has been
+tested with synthetic ZIP fixtures only. It has **not** produced GPU answers,
+selected a pilot, conducted human review, started hosting, or changed the
+30/40 Phase A checkpoint. Any later GPU use still needs current cost and
+resource authorization. The fixed sample answers are for a reviewer to inspect,
+not a production serving endpoint.
+
 ## Execution and boundary
 
 The first Nova CPU bounded run ended at its time limit with zero completed
