@@ -61,7 +61,9 @@ two Contributor grants: the pilot group and its control group, with a
 training and evaluation. The pilot group was deleted and
 `az group exists` returned `false`; the watchdog control group was then
 deleted and independently returned `false`. The separate evidence storage
-account retains the experimental blobs. Azure's final invoice is pending.
+account retains the experimental blobs. The exact container-level role
+assignment for the deleted VM identity was removed; a subsequent full role
+query for that principal returned `[]`. Azure's final invoice is pending.
 
 These are **3/3 experimental T4-trained adapters**, **0/3 selected
 signed-controller pilots**, and **zero live production routes**. The Phase A
