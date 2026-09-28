@@ -26,8 +26,8 @@ MAX_TRAINING_SECONDS = 3600
 
 
 def execute(snapshot: Path, output: Path, *, family: str = "kova-cosmo") -> dict:
-    if family not in ("kova-cosmo", "kova-orion"):
-        raise ValueError("only verified small-family CPU experiments supported")
+    if family not in ("kova-cosmo", "kova-orion", "kova-nova"):
+        raise ValueError("unknown bounded CPU experiment family")
     plan = approved.source_plan() if family == "kova-cosmo" else None
     if (sys.version_info[:2] != (3, 12) or not snapshot.is_dir() or
             output.exists() or not output.parent.is_dir() or
@@ -53,18 +53,25 @@ def execute(snapshot: Path, output: Path, *, family: str = "kova-cosmo") -> dict
     tokenizer = AutoTokenizer.from_pretrained(
         str(snapshot), local_files_only=True, trust_remote_code=False)
     train, validation = approved.prepared_rows()
-    approved.validate_token_masks(tokenizer, train + validation, 1024)
     recipe = contract.load_json(ROOT / f"config/{family}-qlora.v1.json")
     if recipe["family"] != family or recipe["dataset"] != "config/kova-three-family-dataset.v2.json" or recipe["method"] != "four_bit_qlora_lora_sft":
         raise ValueError("family training recipe differs from approved plan")
     lora = recipe["lora"]
     training = recipe["training"]
-    if training["maximum_sequence_length"] != 1024 or training["maximum_optimizer_steps"] != 7 or not training["completion_only_masking"]:
-        raise ValueError("small-family CPU recipe bounds changed")
+    max_length = 768 if family == "kova-nova" else 1024
+    if (training["maximum_sequence_length"] != max_length or
+            training["maximum_optimizer_steps"] != 7 or
+            training["gradient_accumulation_steps"] not in (4, 8) or
+            not training["completion_only_masking"]):
+        raise ValueError("CPU recipe bounds changed")
+    from training.cosmo_runtime_probe import completion_tokens
+    for row in train + validation:
+        completion_tokens(tokenizer, row, max_length)
     torch.manual_seed(42)
     model = AutoModelForCausalLM.from_pretrained(
         str(snapshot), local_files_only=True, trust_remote_code=False,
-        dtype=torch.float32, attn_implementation="sdpa")
+        dtype=torch.bfloat16 if family == "kova-nova" else torch.float32,
+        low_cpu_mem_usage=True, attn_implementation="sdpa")
     if not all(any(name.endswith("." + target) for name, _ in model.named_modules())
                for target in lora["target_modules"]):
         raise ValueError("pinned LoRA target missing")
@@ -73,17 +80,20 @@ def execute(snapshot: Path, output: Path, *, family: str = "kova-cosmo") -> dict
 
     class StopAtDeadline(TrainerCallback):
         def on_step_end(self, args, state, control, **kwargs):
-            if time.monotonic() - started >= MAX_TRAINING_SECONDS:
+            if time.monotonic() - started >= (7200 if family == "kova-nova"
+                                                 else MAX_TRAINING_SECONDS):
                 control.should_training_stop = True
             return control
 
     settings = SFTConfig(
         output_dir=str(output / "checkpoints"),
         max_steps=training["maximum_optimizer_steps"], num_train_epochs=1,
-        per_device_train_batch_size=1, gradient_accumulation_steps=4,
-        learning_rate=training["learning_rate"], max_length=1024,
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=training["gradient_accumulation_steps"],
+        learning_rate=training["learning_rate"], max_length=max_length,
         completion_only_loss=True,
         packing=False, fp16=False, bf16=False, optim="adamw_torch",
+        gradient_checkpointing=family == "kova-nova",
         save_strategy="steps", save_steps=1, save_total_limit=1,
         report_to="none", push_to_hub=False, seed=42,
     )
@@ -104,7 +114,7 @@ def execute(snapshot: Path, output: Path, *, family: str = "kova-cosmo") -> dict
     files = {name: hashlib.sha256((adapter / name).read_bytes()).hexdigest()
              for name in ("adapter_config.json", "adapter_model.safetensors")}
     receipt = {
-        "kind": f"{family.replace('-', '_')}_cpu_fp32_lora_experiment",
+        "kind": f"{family.replace('-', '_')}_cpu_{'bf16' if family == 'kova-nova' else 'fp32'}_lora_experiment",
         "status": "complete" if result.global_step == training["maximum_optimizer_steps"] else "partial",
         "family": family,
         "source_commit": os.environ.get("GITHUB_SHA", "local"),
@@ -126,7 +136,8 @@ def execute(snapshot: Path, output: Path, *, family: str = "kova-cosmo") -> dict
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute", action="store_true")
-    parser.add_argument("--family", choices=("kova-cosmo", "kova-orion"),
+    parser.add_argument("--family", choices=("kova-cosmo", "kova-orion",
+                                             "kova-nova"),
                         default="kova-cosmo")
     parser.add_argument("--snapshot", type=Path)
     parser.add_argument("--output", type=Path)
