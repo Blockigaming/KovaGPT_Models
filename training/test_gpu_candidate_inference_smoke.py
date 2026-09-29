@@ -104,6 +104,23 @@ class ExperimentalArchiveTests(unittest.TestCase):
                     else 7 if key == "optimizer_steps" else False)
                     for key in change}}
 
+    def test_exact_nova_receipt_without_family_is_accepted_only_for_nova(self):
+        self.family = "kova-nova"
+        self.source = candidate.ARCHIVES[self.family][2]
+        self.config["r"] = 8
+        self.config["lora_alpha"] = 16
+        self.receipt.pop("family")
+        self.receipt["kind"] = "kova_nova_gpu_t4_nf4_lora_experiment"
+        self.receipt["source_commit"] = self.source
+        self.receipt["base_revision"] = contract.load_json(
+            candidate.ROOT / "config/kova-private-lineage.v1.json"
+        )["families"][self.family]["immutable_revision"]
+        with self.write_archive():
+            candidate.inspect_archive(self.family, self.archive)
+        self.receipt["family"] = "kova-orion"
+        with self.write_archive(), self.assertRaisesRegex(ValueError, "archive rejected"):
+            candidate.inspect_archive(self.family, self.archive)
+
     def test_recipe_drift_and_unsafe_members_rejected_even_with_rehashed_zip(self):
         self.config["r"] = 32
         with self.write_archive(), self.assertRaisesRegex(ValueError, "archive rejected"):

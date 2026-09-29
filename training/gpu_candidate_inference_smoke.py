@@ -122,7 +122,10 @@ def inspect_archive(family: str, archive_path: Path) -> tuple[dict, dict[str, by
     recipe = contract.load_json(ROOT / f"config/{family}-qlora.v1.json")
     dataset = contract.load_json(ROOT / "config/kova-three-family-dataset.v2.json")
     hashes = receipt.get("adapter_sha256")
-    _require(receipt.get("family") == family
+    # The pinned Nova experiment's receipt predates the `family` field.
+    # Its exact ZIP digest, family-specific kind, source and base are still pinned.
+    _require((receipt.get("family") == family or
+              (family == "kova-nova" and "family" not in receipt))
              and receipt.get("kind") == f"{family.replace('-', '_')}_gpu_t4_nf4_lora_experiment"
              and receipt.get("status") == "complete"
              and receipt.get("source_commit") == source_commit
