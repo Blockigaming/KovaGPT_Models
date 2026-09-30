@@ -44,8 +44,10 @@ def probe(directory):
     results = []
     for split, rows in (("train", train), ("validation", validation)):
         for index, row in enumerate(rows):
-            prompt = template.render(messages=row["prompt"], add_generation_prompt=True)
-            full = template.render(messages=row["prompt"] + row["completion"], add_generation_prompt=False)
+            prompt = template.render(messages=row["prompt"], add_generation_prompt=True,
+                                     **row["chat_template_kwargs"])
+            full = template.render(messages=row["prompt"] + row["completion"], add_generation_prompt=False,
+                                   **row["chat_template_kwargs"])
             prompt_ids = tokenizer.encode(prompt, add_special_tokens=False).ids
             full_ids = tokenizer.encode(full, add_special_tokens=False).ids
             if full_ids[:len(prompt_ids)] != prompt_ids:

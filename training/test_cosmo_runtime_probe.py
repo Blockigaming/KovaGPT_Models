@@ -30,7 +30,8 @@ class FakeModel:
 
 class FakeTokenizer:
     def apply_chat_template(self, messages, *, add_generation_prompt,
-                            return_tensors, tokenize):
+                            return_tensors, tokenize, enable_thinking):
+        assert enable_thinking is False
         self.last = (messages, return_tensors, tokenize)
         return [1, 2, 3] if add_generation_prompt else [1, 2, 3, 4, 5]
 

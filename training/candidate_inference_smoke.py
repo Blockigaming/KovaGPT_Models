@@ -13,6 +13,8 @@ from pathlib import Path
 
 from training import three_family_contract as contract
 from training.snapshot_verifier import verify_snapshot
+from evaluation.completion_evidence import generation_evidence, validate_budget
+from training.template_policy import CHAT_TEMPLATE_KWARGS
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = {
@@ -39,7 +41,8 @@ def digest(path: Path) -> str:
 
 def generate(family: str, snapshot: Path, candidate: Path, output: Path,
              *, prompts: tuple[str, ...] = PROMPTS,
-             max_new_tokens: int = 80) -> dict:
+             max_new_tokens: int = 80,
+             token_budgets: tuple[int, ...] | None = None) -> dict:
     if family not in SOURCES or output.exists() or not output.parent.is_dir():
         raise ValueError("family or new output path invalid")
     if (not prompts or len(prompts) > 50 or
@@ -47,6 +50,11 @@ def generate(family: str, snapshot: Path, candidate: Path, output: Path,
                 for prompt in prompts) or
             type(max_new_tokens) is not int or not 1 <= max_new_tokens <= 128):
         raise ValueError("inference prompt bounds invalid")
+    budgets = token_budgets if token_budgets is not None else (max_new_tokens,) * len(prompts)
+    if type(budgets) is not tuple or len(budgets) != len(prompts):
+        raise ValueError("per-prompt output budgets required")
+    for budget in budgets:
+        validate_budget(budget)
     for name, pinned in {"transformers": "5.17.0", "peft": "0.21.0",
                          "tokenizers": "0.23.2"}.items():
         if version(name) != pinned:
@@ -74,7 +82,7 @@ def generate(family: str, snapshot: Path, candidate: Path, output: Path,
                 for name, sha in hashes.items())):
         raise ValueError("adapter bytes do not match training receipt")
 
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
     from peft import PeftModel
     tokenizer = AutoTokenizer.from_pretrained(str(snapshot), local_files_only=True,
                                                trust_remote_code=False)
@@ -85,26 +93,39 @@ def generate(family: str, snapshot: Path, candidate: Path, output: Path,
                                       local_files_only=True)
     model.eval()
     system = (ROOT / "prompts/kova-identity.v3.txt").read_text()
+    generation_config = GenerationConfig(
+        do_sample=False, num_beams=1, num_return_sequences=1,
+        eos_token_id=tokenizer.eos_token_id, pad_token_id=tokenizer.eos_token_id)
+    profile = {
+        "decoder": generation_config.to_dict(),
+        "system_prompt_sha256": hashlib.sha256(system.encode()).hexdigest(),
+        "chat_template_sha256": hashlib.sha256(tokenizer.chat_template.encode()).hexdigest(),
+        "chat_template_kwargs": dict(CHAT_TEMPLATE_KWARGS),
+    }
     samples = []
     with torch.inference_mode():
-        for question in prompts:
+        for question, budget in zip(prompts, budgets, strict=True):
             encoded = tokenizer.apply_chat_template(
                 [{"role": "system", "content": system},
                  {"role": "user", "content": question}],
                 tokenize=True, add_generation_prompt=True,
-                enable_thinking=False, return_tensors="pt")
+                return_tensors="pt", **CHAT_TEMPLATE_KWARGS)
             ids = encoded.input_ids if hasattr(encoded, "input_ids") else encoded
             completion = model.generate(
-                input_ids=ids, max_new_tokens=max_new_tokens, do_sample=False,
-                pad_token_id=tokenizer.eos_token_id)
-            answer = tokenizer.decode(completion[0, ids.shape[-1]:],
+                input_ids=ids, max_new_tokens=budget, generation_config=generation_config)
+            tokens = completion[0, ids.shape[-1]:].tolist()
+            evidence = generation_evidence(tokens, max_new_tokens=budget,
+                                           eos_token_id=tokenizer.eos_token_id)
+            answer = tokenizer.decode(tokens,
                                       skip_special_tokens=True).strip()
-            samples.append({"prompt": question, "completion": answer})
+            samples.append({"prompt": question, "completion": answer,
+                            "completion_evidence": evidence})
     report = {
         "kind": "experimental_adapter_offline_inference_samples",
         "family": family, "training_commit": SOURCES[family],
         "base_revision": family_spec["immutable_revision"],
         "adapter_sha256": hashes, "samples": samples,
+        "generation_profile": profile,
         "human_quality_review_complete": False,
         "production_routing_approved": False,
     }

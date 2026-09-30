@@ -91,7 +91,8 @@ class QloraTrainingTests(unittest.TestCase):
                 self.too_long = too_long
 
             def apply_chat_template(self, messages, *, tokenize, add_generation_prompt,
-                                    return_tensors):
+                                    return_tensors, enable_thinking):
+                assert enable_thinking is False
                 self.calls += 1
                 if add_generation_prompt:
                     return [1, 2]

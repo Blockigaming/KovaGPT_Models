@@ -61,7 +61,8 @@ def prepared_rows() -> tuple[list[dict], list[dict]]:
             need(row["split"] == "validation", "training includes a provenance fixture")
             prompt[0] = {"role": "system", "content": system + "\nTrusted test runtime: " +
                          json.dumps(row["trusted_runtime"], sort_keys=True)}
-        prepared = {"prompt": prompt, "completion": [row["messages"][1]]}
+        from training.template_policy import template_row
+        prepared = template_row(prompt, [row["messages"][1]])
         (train if row["split"] == "train" else validation).append(prepared)
     need(len(train) == 27 and len(validation) == 15,
          "42-record approved split mismatch")

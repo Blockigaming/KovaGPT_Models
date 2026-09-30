@@ -164,7 +164,8 @@ def prepare_sft_rows() -> tuple[list[dict], list[dict]]:
     for row in rows:
         messages = format_messages(prompt, row)
         target = train_rows if row["split"] == "train" else eval_rows
-        target.append({"prompt": messages[:-1], "completion": messages[-1:]})
+        from training.template_policy import template_row
+        target.append(template_row(messages[:-1], messages[-1:]))
     return train_rows, eval_rows
 
 

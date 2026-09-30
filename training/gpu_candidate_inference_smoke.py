@@ -171,12 +171,16 @@ def _quality_results(cases: list[dict], samples: list[dict]) -> dict:
     results = []
     for case, sample in zip(cases, samples):
         _require(sample["prompt"] == case["prompt"])
-        result, safe_answer = score_case(case, sample["completion"])
+        from evaluation.completion_evidence import completion_status
+        evidence = sample.get("completion_evidence")
+        result, safe_answer = score_case(case, sample["completion"], evidence)
         counts[result] += 1
         categories[case["category"]][result] += 1
         results.append({"case_id": case["id"], "category": case["category"],
                         "result": result, "answer": safe_answer,
-                        "review_criteria": case["evaluation"].get("criteria", [])})
+                        "review_criteria": case["evaluation"].get("criteria", []),
+                        "completion_evidence": evidence,
+                        "completion_status": completion_status(evidence)})
     return {"suite_sha256": HISTORICAL_CONTENT_SHA256,
             "case_count": len(cases), "result_counts": dict(counts),
             "category_counts": {key: dict(value) for key, value in categories.items()},
@@ -185,16 +189,23 @@ def _quality_results(cases: list[dict], samples: list[dict]) -> dict:
 
 
 def generate(family: str, archive_path: Path, snapshot: Path, output: Path,
-             *, quality_suite: bool = False) -> dict:
+             *, quality_suite: bool = False,
+             manual_max_new_tokens: int | None = None) -> dict:
+    from evaluation.completion_evidence import generation_evidence, output_budgets
+    from training.template_policy import CHAT_TEMPLATE_KWARGS
     _require(not output.exists() and not output.is_symlink() and output.parent.is_dir())
     receipt, contents = inspect_archive(family, archive_path)
     if quality_suite:
         from evaluation.historical_suite_bridge import load_archived_suite
         cases = load_archived_suite()["cases"]
         prompts = tuple(case["prompt"] for case in cases)
+        budgets = output_budgets(cases, manual_max_new_tokens)
     else:
         cases = []
         prompts = PROMPTS
+        if manual_max_new_tokens is not None:
+            raise ValueError("manual output budget requires quality-suite mode")
+        budgets = (80,) * len(prompts)
     lineage = contract.load_json(ROOT / "config/kova-private-lineage.v1.json")
     verify_snapshot(snapshot, contract._pinned_manifest(family, lineage["families"][family]))
     _require(all(os.environ.get(name) == "1" for name in
@@ -205,7 +216,7 @@ def generate(family: str, archive_path: Path, snapshot: Path, output: Path,
     import torch
     import bitsandbytes as bnb
     from peft import PeftModel
-    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, GenerationConfig
     from training.cosmo_hardware import verify_nvidia_t4
 
     verify_nvidia_t4(torch)
@@ -230,21 +241,33 @@ def generate(family: str, archive_path: Path, snapshot: Path, output: Path,
                                           local_files_only=True)
         model.eval()
         system = (ROOT / "prompts/kova-identity.v3.txt").read_text()
+        generation_config = GenerationConfig(
+            do_sample=False, num_beams=1, num_return_sequences=1,
+            eos_token_id=tokenizer.eos_token_id, pad_token_id=tokenizer.eos_token_id)
+        profile = {
+            "decoder": generation_config.to_dict(),
+            "system_prompt_sha256": hashlib.sha256(system.encode()).hexdigest(),
+            "chat_template_sha256": hashlib.sha256(tokenizer.chat_template.encode()).hexdigest(),
+            "chat_template_kwargs": dict(CHAT_TEMPLATE_KWARGS),
+        }
         samples = []
         with torch.inference_mode():
-            for question in prompts:
+            for question, budget in zip(prompts, budgets, strict=True):
                 encoded = tokenizer.apply_chat_template(
                     [{"role": "system", "content": system},
                      {"role": "user", "content": question}],
                     tokenize=True, add_generation_prompt=True,
-                    enable_thinking=False, return_tensors="pt")
+                    return_tensors="pt", **CHAT_TEMPLATE_KWARGS)
                 ids = encoded.input_ids if hasattr(encoded, "input_ids") else encoded
                 generated = model.generate(input_ids=ids.to("cuda:0"),
-                                           max_new_tokens=128 if quality_suite else 80,
-                                           do_sample=False,
-                                           pad_token_id=tokenizer.eos_token_id)
+                                           max_new_tokens=budget,
+                                           generation_config=generation_config)
+                tokens = generated[0, ids.shape[-1]:].tolist()
+                evidence = generation_evidence(tokens, max_new_tokens=budget,
+                                               eos_token_id=tokenizer.eos_token_id)
                 samples.append({"prompt": question, "completion": tokenizer.decode(
-                    generated[0, ids.shape[-1]:], skip_special_tokens=True).strip()})
+                    tokens, skip_special_tokens=True).strip(),
+                    "completion_evidence": evidence})
     report = {"kind": ("experimental_t4_quality_50_cases" if quality_suite else
                        "experimental_t4_offline_inference_samples"),
               "family": family, "archive_sha256": ARCHIVES[family][1],
@@ -252,11 +275,13 @@ def generate(family: str, archive_path: Path, snapshot: Path, output: Path,
               "base_revision": receipt["base_revision"],
               "adapter_sha256": receipt["adapter_sha256"],
               "human_quality_review_complete": False,
+              "generation_profile": profile, "completion_evidence_authenticated": False,
               "signed_controller_pilot": False, "production_routing_approved": False}
     if quality_suite:
         report.update(_quality_results(cases, samples))
         report["generation"] = {"do_sample": False, "enable_thinking": False,
-                                "max_new_tokens": 128}
+                                "strict_max_new_tokens": 128,
+                                "manual_max_new_tokens": manual_max_new_tokens}
     else:
         report["samples"] = samples
     descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -277,9 +302,11 @@ def main(argv=None) -> int:
                         help="generate and score all 50 pinned quality cases")
     parser.add_argument("--snapshot", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--manual-max-new-tokens", type=int)
     args = parser.parse_args(argv)
     if args.verify_only:
-        if args.snapshot is not None or args.output is not None or args.quality_suite:
+        if (args.snapshot is not None or args.output is not None or args.quality_suite
+                or args.manual_max_new_tokens is not None):
             parser.error("verify-only accepts only family and archive")
         receipt, _ = inspect_archive(args.family, args.archive)
         print(json.dumps({"status": "experimental_archive_verified",
@@ -290,8 +317,11 @@ def main(argv=None) -> int:
         return 0
     if args.snapshot is None or args.output is None:
         parser.error("generate requires local snapshot and new output")
+    if args.quality_suite != (args.manual_max_new_tokens is not None):
+        parser.error("quality-suite requires an explicit manual output budget")
     report = generate(args.family, args.archive, args.snapshot, args.output,
-                      quality_suite=args.quality_suite)
+                      quality_suite=args.quality_suite,
+                      manual_max_new_tokens=args.manual_max_new_tokens)
     if args.quality_suite:
         print(json.dumps({"family": args.family, "case_count": report["case_count"],
                           "result_counts": report["result_counts"],

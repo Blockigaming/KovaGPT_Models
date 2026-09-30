@@ -54,13 +54,15 @@ def target_inventory(model) -> dict[str, int]:
 
 
 def completion_tokens(tokenizer, row: dict, max_length: int) -> tuple[list[int], list[int]]:
+    from training.template_policy import CHAT_TEMPLATE_KWARGS
+    need(row.get("chat_template_kwargs", CHAT_TEMPLATE_KWARGS) == CHAT_TEMPLATE_KWARGS)
     prompt = tokenizer.apply_chat_template(
         row["prompt"], tokenize=True, add_generation_prompt=True,
-        return_tensors=None,
+        return_tensors=None, **CHAT_TEMPLATE_KWARGS,
     )
     full = tokenizer.apply_chat_template(
         row["prompt"] + row["completion"], tokenize=True,
-        add_generation_prompt=False, return_tensors=None,
+        add_generation_prompt=False, return_tensors=None, **CHAT_TEMPLATE_KWARGS,
     )
     # Transformers 5 returns BatchEncoding for tokenize=True even without
     # tensors. Earlier versions returned bare token lists.

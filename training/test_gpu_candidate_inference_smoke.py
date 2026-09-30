@@ -142,7 +142,10 @@ class ExperimentalArchiveTests(unittest.TestCase):
     def test_pinned_quality_suite_scores_all_cases_and_holds_human_reviews(self):
         from evaluation.historical_suite_bridge import load_archived_suite
         cases = load_archived_suite()["cases"]
-        samples = [{"prompt": case["prompt"], "completion": "not the requested JSON"}
+        from evaluation.completion_evidence import generation_evidence
+        evidence = generation_evidence([7, 2], max_new_tokens=8, eos_token_id=2)
+        samples = [{"prompt": case["prompt"], "completion": "not the requested JSON",
+                    "completion_evidence": evidence}
                    for case in cases]
         exact = next(index for index, case in enumerate(cases)
                      if case["evaluation"]["kind"] == "exact_json")

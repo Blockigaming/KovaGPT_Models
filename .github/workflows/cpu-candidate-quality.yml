@@ -1,13 +1,12 @@
 name: Measure trained CPU candidates against historical quality cases
 
 on:
-  push:
-    branches: [feature/phase-a-cumulative-review-20260927]
-    paths:
-      - .github/workflows/cpu-candidate-quality.yml
-      - evaluation/cpu_candidate_quality.py
-      - training/candidate_inference_smoke.py
   workflow_dispatch:
+    inputs:
+      manual_max_new_tokens:
+        description: Explicit manual-case output budget (1 to 4096); separate run authorization required
+        required: true
+        type: number
 
 permissions:
   contents: read
@@ -51,7 +50,8 @@ jobs:
           CUDA_VISIBLE_DEVICES: ''
           HF_HUB_OFFLINE: '1'
           TRANSFORMERS_OFFLINE: '1'
-        run: python -m evaluation.cpu_candidate_quality --family "${{ matrix.family }}" --snapshot "$RUNNER_TEMP/base" --candidate "$RUNNER_TEMP/candidate" --output "$RUNNER_TEMP/${{ matrix.family }}-quality.json"
+          KOVA_MANUAL_OUTPUT_BUDGET: ${{ inputs.manual_max_new_tokens }}
+        run: python -m evaluation.cpu_candidate_quality --family "${{ matrix.family }}" --snapshot "$RUNNER_TEMP/base" --candidate "$RUNNER_TEMP/candidate" --output "$RUNNER_TEMP/${{ matrix.family }}-quality.json" --manual-max-new-tokens "$KOVA_MANUAL_OUTPUT_BUDGET"
       - name: Preserve measured answer and score evidence
         if: always()
         uses: actions/upload-artifact@v4
