@@ -180,10 +180,12 @@ def probe(directory: Path) -> dict:
                     row = originals[record["probe_id"]]
                     prompt_ids = tokenizer.apply_chat_template(row["prompt"], tokenize=True,
                                                                 add_generation_prompt=True,
-                                                                return_dict=False)
+                                                                return_dict=False,
+                                                                **row["chat_template_kwargs"])
                     full_ids = tokenizer.apply_chat_template(row["prompt"] + row["completion"],
                                                               tokenize=True, add_generation_prompt=False,
-                                                              return_dict=False)
+                                                              return_dict=False,
+                                                              **row["chat_template_kwargs"])
                     boundary = verify_record(record, full_ids, prompt_ids, args.max_length)
                     # Preserve the assistant EOS even if it is also a pad token.
                     require(tokenizer.eos_token_id in record["labels"][boundary:], "completion EOS lost")

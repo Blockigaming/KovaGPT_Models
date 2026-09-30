@@ -696,53 +696,55 @@ class ThreeFamilyContractTests(unittest.TestCase):
                         snapshot_verifier.main([*args, "--root", str(root)])
                 verify.assert_not_called()
 
-    def test_six_dollar_bootstrap_uses_live_rate_and_60_second_rounding(self):
-        self.assertLessEqual(contract.admit_bootstrap(Decimal("0.526")), Decimal("6.0000"))
-        with self.assertRaisesRegex(contract.ContractError, "six-dollar"):
-            contract.admit_bootstrap(Decimal("1.00"))
+    def test_shared_twelve_dollar_bootstrap_uses_live_rate_and_60_second_rounding(self):
+        self.assertLessEqual(contract.admit_bootstrap(Decimal("0.526")), Decimal("12.0000"))
+        with self.assertRaisesRegex(contract.ContractError, "twelve-dollar"):
+            contract.admit_bootstrap(Decimal("2.00"))
         with self.assertRaises(contract.ContractError):
             contract.admit_bootstrap(Decimal("-0.01"))
         with self.assertRaises(contract.ContractError):
             contract.admit_bootstrap(Decimal("NaN"))
 
-    def test_conditional_cosmo_only_limit_is_enforced_separately(self):
+    def test_cosmo_only_path_cannot_raise_the_shared_limit(self):
         self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.400")),
-                         Decimal("3.2000"))
+                         Decimal("5.2500"))
         self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.450")),
-                         Decimal("3.3000"))
+                         Decimal("5.3500"))
+        self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("3.7750")),
+                         Decimal("12.0000"))
         with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-            contract.admit_conditional_cosmo_pilot(Decimal("0.4501"))
+            contract.admit_conditional_cosmo_pilot(Decimal("3.7751"))
         self.assertEqual(contract.worst_case_total(hourly_compute_rate=Decimal("0.526"),
-                         lifecycle_seconds=7200), Decimal("3.4520"))
+                         lifecycle_seconds=7200), Decimal("5.5020"))
         self.assertEqual(contract.admit_conditional_cosmo_pilot(
-            Decimal("0.526"), lifecycle_seconds=5400), Decimal("3.1890"))
+            Decimal("0.526"), lifecycle_seconds=5400), Decimal("5.2390"))
         self.assertEqual(contract.admit_conditional_cosmo_pilot(
-            Decimal("0.526"), lifecycle_seconds=6120), Decimal("3.2942"))
-        with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-            contract.admit_conditional_cosmo_pilot(Decimal("0.526"), lifecycle_seconds=6180)
+            Decimal("0.526"), lifecycle_seconds=6120), Decimal("5.3442"))
+        self.assertEqual(contract.admit_conditional_cosmo_pilot(
+            Decimal("0.526"), lifecycle_seconds=6180), Decimal("5.3530"))
         for invalid in (0, 5399, 7201, True, "5400"):
             with self.subTest(invalid=invalid), self.assertRaisesRegex(
                     contract.ContractError, "Cosmo allocation window"):
                 contract.admit_conditional_cosmo_pilot(Decimal("0.526"),
                                                        lifecycle_seconds=invalid)
-        with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-            contract.admit_conditional_cosmo_pilot(Decimal("0.526"))
-        self.assertLessEqual(contract.admit_bootstrap(Decimal("0.60")), Decimal("6.0000"))
-        with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-            contract.admit_conditional_cosmo_pilot(Decimal("0.60"))
+        self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.526")),
+                         Decimal("5.5020"))
+        self.assertLessEqual(contract.admit_bootstrap(Decimal("0.60")), Decimal("12.0000"))
+        self.assertEqual(contract.admit_conditional_cosmo_pilot(Decimal("0.60")),
+                         Decimal("5.6500"))
         original = contract.load_json
         cost = original(contract.ROOT / "config/kova-three-family-cost-guard.v1.json")
-        for update in ({"hard_ceiling_usd": "6.0000"},
+        for update in ({"hard_ceiling_usd": "12.0001"},
                        {"minimum_allocation_seconds": 1},
                        {"maximum_allocation_seconds": 21600},
-                       {"maximum_compute_reservation_usd": "1.2500"},
+                       {"maximum_compute_reservation_usd": "7.5501"},
                        {"other_families_authorized": True}):
             altered = deepcopy(cost)
             altered["conditional_cosmo_only_pilot"].update(update)
             def fake_load(path, **kwargs):
                 return altered if path.name == "kova-three-family-cost-guard.v1.json" else original(path, **kwargs)
             with self.subTest(update=update), patch.object(contract, "load_json", side_effect=fake_load):
-                with self.assertRaisesRegex(contract.ContractError, "Cosmo-only owner ceiling"):
+                with self.assertRaisesRegex(contract.ContractError, "same shared owner ceiling"):
                     contract.admit_conditional_cosmo_pilot(Decimal("0.400"))
 
     def test_cost_guard_rejects_understated_or_nonfinite_ancillary_bounds(self):
@@ -783,32 +785,33 @@ class ThreeFamilyContractTests(unittest.TestCase):
             }]}))
             admitted = contract.validate_live_price_evidence(path)
             self.assertEqual(admitted["status"], "live_price_admitted")
-            self.assertEqual(admitted["conditional_cosmo_only_worst_case_usd"], "3.4520")
-            self.assertFalse(admitted["conditional_cosmo_only_eligible"])
-            with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-                contract.validate_live_price_evidence(path, admission_scope="cosmo-only")
+            self.assertEqual(admitted["conditional_cosmo_only_worst_case_usd"], "5.5020")
+            self.assertTrue(admitted["conditional_cosmo_only_eligible"])
+            self.assertEqual(admitted["hard_ceiling_usd"], "12.0000")
+            self.assertEqual(contract.validate_live_price_evidence(
+                path, admission_scope="cosmo-only")["hard_ceiling_usd"], "12.0000")
             value = json.loads(path.read_text())
             value["Items"][0]["retailPrice"] = 0.40
             value["Items"][0]["unitPrice"] = 0.40
             path.write_text(json.dumps(value))
             self.assertEqual(contract.validate_live_price_evidence(
-                path, admission_scope="cosmo-only")["hard_ceiling_usd"], "3.3000")
+                path, admission_scope="cosmo-only")["hard_ceiling_usd"], "12.0000")
             value = json.loads(path.read_text())
             value["Items"][0]["retailPrice"] = 0.60
             value["Items"][0]["unitPrice"] = 0.60
             path.write_text(json.dumps(value))
             full_plan = contract.validate_live_price_evidence(path)
             self.assertEqual(full_plan["admission_scope"], "three-family")
-            self.assertFalse(full_plan["conditional_cosmo_only_eligible"])
-            with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-                contract.validate_live_price_evidence(path, admission_scope="cosmo-only")
+            self.assertTrue(full_plan["conditional_cosmo_only_eligible"])
+            self.assertEqual(contract.validate_live_price_evidence(
+                path, admission_scope="cosmo-only")["hard_ceiling_usd"], "12.0000")
             with self.assertRaisesRegex(contract.ContractError, "scope"):
                 contract.validate_live_price_evidence(path, admission_scope="unspecified")
             value = json.loads(path.read_text())
-            value["Items"][0]["retailPrice"] = 1.0
-            value["Items"][0]["unitPrice"] = 1.0
+            value["Items"][0]["retailPrice"] = 2.0
+            value["Items"][0]["unitPrice"] = 2.0
             path.write_text(json.dumps(value))
-            with self.assertRaisesRegex(contract.ContractError, "six-dollar"):
+            with self.assertRaisesRegex(contract.ContractError, "twelve-dollar"):
                 contract.validate_live_price_evidence(path)
 
     def test_live_price_rejects_discounted_secondary_incomplete_and_ambiguous_meters(self):
@@ -993,8 +996,9 @@ class ThreeFamilyContractTests(unittest.TestCase):
                 }},
             }
             with patch.object(authority, "_imds_transport", return_value=metadata):
-                self.assertTrue(contract.validate_probe_evidence(
-                    path, require_live_imds=True)["live_azure_image_verified"])
+                with self.assertRaisesRegex(contract.ContractError,
+                                            "independent compatibility attestation required"):
+                    contract.validate_probe_evidence(path, require_live_imds=True)
             changed_image = deepcopy(metadata)
             changed_image["storageProfile"]["imageReference"]["exactVersion"] = "24.04.OTHER"
             with patch.object(authority, "_imds_transport", return_value=changed_image), \
@@ -1016,6 +1020,138 @@ class ThreeFamilyContractTests(unittest.TestCase):
             with self.assertRaisesRegex(contract.ContractError, "unexpected GPU"):
                 contract.validate_probe_evidence(path)
 
+    def test_live_probe_needs_fresh_independently_signed_measurements(self):
+        from datetime import datetime, timedelta, timezone
+        from training import cosmo_lifecycle_authority as authority
+        measured = {
+            "schema_version": 1, "device_name": "NVIDIA T4",
+            "compute_capability": "7.5", "cuda_version": "12.8",
+            "azure_vm_image_urn": "Canonical:ubuntu-24_04-lts:server:24.04.202609040",
+            "azure_vm_resource_id": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/pilot/providers/Microsoft.Compute/virtualMachines/kova-t4-test",
+            "azure_vm_id": "12345678-1234-1234-1234-123456789abc",
+            "bitsandbytes_four_bit_available": True,
+            "available_vram_bytes": 16000000000, "free_disk_bytes": 40000000000,
+            "family_probes": {
+                "kova-cosmo": {"peak_vram_bytes": 6000000000,
+                               "maximum_sequence_length": 1024, "probe_passed": True},
+                "kova-orion": {"peak_vram_bytes": 9000000000,
+                               "maximum_sequence_length": 1024, "probe_passed": True},
+                "kova-nova": {"peak_vram_bytes": 15000000000,
+                              "maximum_sequence_length": 768, "probe_passed": True},
+            },
+        }
+        live_vm = {"resourceId": measured["azure_vm_resource_id"],
+                   "vmId": measured["azure_vm_id"], "location": "eastus",
+                   "vmSize": "Standard_NC4as_T4_v3", "storageProfile": {
+                       "imageReference": {"publisher": "Canonical", "offer": "ubuntu-24_04-lts",
+                                          "sku": "server", "exactVersion": "24.04.202609040"}}}
+        collector = Ed25519PrivateKey.generate()
+        observed = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        def sign(values=measured, *, timestamp=observed, manifests=None, signer=collector):
+            payload = {"kind": "kova_three_family_compatibility_probe_v1",
+                       "observed_at_utc": timestamp,
+                       "model_manifests_sha256": (contract.MANIFEST_SHA256 if manifests is None
+                                                  else manifests),
+                       "measurements": values}
+            signature = signer.sign(json.dumps(payload, sort_keys=True,
+                                               separators=(",", ":"), ensure_ascii=True,
+                                               allow_nan=False).encode("ascii"))
+            return {"payload": payload, "signature_ed25519_hex": signature.hex()}
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "probe.json"
+            path.write_text(json.dumps(sign()))
+            with patch.object(authority, "_imds_transport", return_value=live_vm), \
+                 self.assertRaisesRegex(contract.ContractError,
+                                        "trusted compatibility collector not configured"):
+                contract.validate_probe_evidence(path, require_live_imds=True)
+            with patch.object(contract, "TRUSTED_PROBE_COLLECTOR_PUBLIC_KEY",
+                              collector.public_key().public_bytes_raw()), \
+                 patch.object(authority, "_imds_transport", return_value=live_vm):
+                envelope = sign()
+                path.write_text(json.dumps(envelope))
+                result = contract.validate_probe_evidence(path, require_live_imds=True)
+                self.assertEqual(result["status"], "t4_probe_evidence_valid")
+                self.assertTrue(result["independent_measurements_verified"])
+                supplied_key = {**envelope, "public_key_hex":
+                                collector.public_key().public_bytes_raw().hex()}
+                path.write_text(json.dumps(supplied_key))
+                with self.assertRaisesRegex(contract.ContractError,
+                                            "invalid T4 probe evidence shape"):
+                    contract.validate_probe_evidence(path, require_live_imds=True)
+                tampered = deepcopy(envelope)
+                tampered["payload"]["measurements"]["available_vram_bytes"] += 100
+                path.write_text(json.dumps(tampered))
+                with self.assertRaisesRegex(contract.ContractError, "measurement signature"):
+                    contract.validate_probe_evidence(path, require_live_imds=True)
+                stale = sign(timestamp=(datetime.now(timezone.utc) - timedelta(minutes=5)).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"))
+                path.write_text(json.dumps(stale))
+                with self.assertRaisesRegex(contract.ContractError, "stale compatibility"):
+                    contract.validate_probe_evidence(path, require_live_imds=True)
+                future = sign(timestamp=(datetime.now(timezone.utc) + timedelta(minutes=5)).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"))
+                path.write_text(json.dumps(future))
+                with self.assertRaisesRegex(contract.ContractError, "stale compatibility"):
+                    contract.validate_probe_evidence(path, require_live_imds=True)
+                wrong_source = sign(manifests={**contract.MANIFEST_SHA256,
+                                               "kova-nova": "0" * 64})
+                path.write_text(json.dumps(wrong_source))
+                with self.assertRaisesRegex(contract.ContractError, "pinned source"):
+                    contract.validate_probe_evidence(path, require_live_imds=True)
+                wrong_vm = deepcopy(measured)
+                wrong_vm["azure_vm_id"] = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+                path.write_text(json.dumps(sign(wrong_vm)))
+                with self.assertRaisesRegex(contract.ContractError, "another Azure VM"):
+                    contract.validate_probe_evidence(path, require_live_imds=True)
+                path.write_text(json.dumps(sign(signer=Ed25519PrivateKey.generate())))
+                with self.assertRaisesRegex(contract.ContractError, "measurement signature"):
+                    contract.validate_probe_evidence(path, require_live_imds=True)
+
+    def test_cost_admission_cannot_reuse_a_previous_family_reservation(self):
+        from datetime import datetime, timezone
+        now = datetime(2026, 9, 24, 12, 1, tzinfo=timezone.utc)
+        lifecycle = {
+            "lifecycle_id": "three-family-pilot", "ledger_id": "ledger-first",
+            "admission_scope": "three-family",
+            "pilot_resource_group_id": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/kova-pilot",
+            "watchdog_resource_group_id": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/kova-watchdog",
+        }
+        def health(family):
+            return {"kind": "watchdog_health", "family": family, "healthy": True,
+                    "rule_id": "tested-rule", "observed_at_utc": "2026-09-24T12:00:00Z",
+                    "expires_at_utc": "2026-09-24T12:05:00Z"}
+        def cost(family, remaining):
+            return {"kind": "cost_admission", "family": family,
+                    "account_price_verified": True, "quote_sha256": "a" * 64,
+                    "remaining_budget_usd": remaining,
+                    "observed_at_utc": "2026-09-24T12:00:00Z",
+                    "expires_at_utc": "2026-09-24T12:05:00Z"}
+        state = {"sequence": 0, "terminal": False, "family_order": [], "events": [],
+                 **lifecycle}
+        state = contract.append_ledger_event(state, health("kova-cosmo"),
+                                             expected_sequence=0, now=now)
+        state = contract.append_ledger_event(state, cost("kova-cosmo", "10.0000"),
+                                             expected_sequence=1, now=now,
+                                             trusted_lifecycle=lifecycle)
+        second_health = contract.append_ledger_event(state, health("kova-cosmo"),
+                                                     expected_sequence=2, now=now)
+        with self.assertRaisesRegex(contract.ContractError, "cumulative family budget"):
+            contract.append_ledger_event(second_health, cost("kova-cosmo", "10.0001"),
+                                         expected_sequence=3, now=now,
+                                         trusted_lifecycle=lifecycle)
+        state = contract.append_ledger_event(state,
+                    {"kind": "training_grant", "family": "kova-cosmo"},
+                    expected_sequence=2, now=now)
+        state = contract.append_ledger_event(state, health("kova-orion"),
+                                             expected_sequence=3, now=now)
+        # Orion may not reclaim Cosmo's reserved $1.25 after a $10 admission.
+        with self.assertRaisesRegex(contract.ContractError, "cumulative family budget"):
+            contract.append_ledger_event(state, cost("kova-orion", "9.0000"),
+                                         expected_sequence=4, now=now,
+                                         trusted_lifecycle=lifecycle)
+
     def test_ledger_assigns_sequence_and_rejects_stale_duplicate_out_of_order(self):
         from datetime import datetime, timedelta, timezone
         now = datetime(2026, 9, 24, 12, 1, tzinfo=timezone.utc)
@@ -1029,7 +1165,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
             return {"kind": "watchdog_health", "family": family, "healthy": True,
                     "rule_id": "tested-rule", "observed_at_utc": "2026-09-24T12:00:00Z",
                     "expires_at_utc": "2026-09-24T12:05:00Z"}
-        def cost(family, remaining="3.6500"):
+        def cost(family, remaining="10.0000"):
             return {"kind": "cost_admission", "family": family,
                     "account_price_verified": True, "quote_sha256": "a" * 64,
                     "remaining_budget_usd": remaining,
@@ -1122,7 +1258,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
             contract.append_ledger_event(state, cost("kova-orion", "3.3000"),
                                          expected_sequence=5, now=now,
                                          trusted_lifecycle=lifecycle)
-        state = contract.append_ledger_event(state, cost("kova-orion", "3.9000"),
+        state = contract.append_ledger_event(state, cost("kova-orion", "8.7500"),
                                              expected_sequence=5, now=now,
                                              trusted_lifecycle=lifecycle)
         with self.assertRaisesRegex(contract.ContractError, "stale admission"):
@@ -1131,6 +1267,16 @@ class ThreeFamilyContractTests(unittest.TestCase):
         state = contract.append_ledger_event(state, {"kind": "training_grant", "family": "kova-orion"},
                                              expected_sequence=6, now=now)
         self.assertEqual(state["family_order"], ["kova-cosmo", "kova-orion"])
+        nova_health = contract.append_ledger_event(state, health("kova-nova"),
+                                                   expected_sequence=7, now=now)
+        with self.assertRaisesRegex(contract.ContractError, "cumulative family budget"):
+            contract.append_ledger_event(nova_health, cost("kova-nova", "7.2501"),
+                                         expected_sequence=8, now=now,
+                                         trusted_lifecycle=lifecycle)
+        with self.assertRaisesRegex(contract.ContractError, "remaining family budget insufficient"):
+            contract.append_ledger_event(nova_health, cost("kova-nova", "3.2500"),
+                                         expected_sequence=8, now=now,
+                                         trusted_lifecycle=lifecycle)
         with self.assertRaises(contract.ContractError):
             contract.append_ledger_event(state, cost("kova-nova"), expected_sequence=1, now=now)
         with self.assertRaises(contract.ContractError):
@@ -1141,12 +1287,16 @@ class ThreeFamilyContractTests(unittest.TestCase):
         cosmo_state = {"sequence": 1, "terminal": False, "family_order": [],
                        "events": [health("kova-cosmo")], **cosmo}
         with self.assertRaisesRegex(contract.ContractError, "remaining family budget insufficient"):
-            contract.append_ledger_event(cosmo_state, cost("kova-cosmo", "3.2999"),
+            contract.append_ledger_event(cosmo_state, cost("kova-cosmo", "11.9999"),
                                          expected_sequence=1, now=now,
                                          trusted_lifecycle=cosmo)
-        contract.append_ledger_event(cosmo_state, cost("kova-cosmo", "3.3000"),
+        contract.append_ledger_event(cosmo_state, cost("kova-cosmo", "12.0000"),
                                      expected_sequence=1, now=now,
                                      trusted_lifecycle=cosmo)
+        with self.assertRaisesRegex(contract.ContractError, "remaining family budget insufficient"):
+            contract.append_ledger_event(cosmo_state, cost("kova-cosmo", "12.0001"),
+                                         expected_sequence=1, now=now,
+                                         trusted_lifecycle=cosmo)
 
     def test_terminal_ledger_rejects_post_cleanup_events(self):
         from datetime import datetime, timezone
@@ -1188,7 +1338,7 @@ class ThreeFamilyContractTests(unittest.TestCase):
                                                ensure_ascii=True, allow_nan=False).encode("ascii"))
             return {"kind": "cleanup_terminal", "cleanup_receipt": {
                 "payload": value, "signature_ed25519_hex": signature.hex()}}
-        for change in (lambda value: value.update(final_cost_usd="3.3001"),
+        for change in (lambda value: value.update(final_cost_usd="12.0001"),
                        lambda value: value.update(cost_posting_complete=False),
                        lambda value: value.update(pilot_remaining_resources=["disk"]),
                        lambda value: value.update(watchdog_remaining_resources=["logic-app"]),

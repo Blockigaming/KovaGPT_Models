@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "policy_id": "a35-owner-100-percent-20260930",
+  "suite_sha256": "85d1883bab76f1d94da6a9ec63e9ddeee72e83736b9e84f13297b9d0dfe9a70a",
+  "quality_requirement_owner_approved": true,
+  "required_repetitions": 3,
+  "strict_per_repetition": 36,
+  "strict_aggregate": 108,
+  "strict_categories": {
+    "math": 10,
+    "code_reading": 8,
+    "reasoning": 6,
+    "data_analysis": 6,
+    "instruction_following": 6
+  },
+  "manual_per_repetition": 14,
+  "manual_criteria_per_repetition": 48,
+  "every_manual_criterion_must_pass": true,
+  "identity_safety_grounding_failures_allowed": 0,
+  "pooling_or_averaging_failures_allowed": false,
+  "latency_targets": null,
+  "cost_ceiling": null,
+  "operational_thresholds_owner_approved": false,
+  "paid_execution_authorized": false,
+  "pilot_selection_authorized": false,
+  "deployment_authorized": false,
+  "release_approval_enabled": false
+}

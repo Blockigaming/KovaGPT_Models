@@ -1,0 +1,62 @@
+name: Measure trained CPU candidates against historical quality cases
+
+on:
+  workflow_dispatch:
+    inputs:
+      manual_max_new_tokens:
+        description: Explicit manual-case output budget (1 to 4096); separate run authorization required
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - family: kova-cosmo
+            run: 36367369377
+            artifact: cosmo-cpu-lora-candidate
+          - family: kova-orion
+            run: 36368479166
+            artifact: orion-cpu-lora-candidate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install hash-pinned CPU inference stack
+        run: |
+          python -m pip install --require-hashes -r requirements/cosmo-loss-mask-py312-linux-cpu.lock
+          sed -n '/^cffi==/p;/^cryptography==/p;/^pycparser==/p' requirements/kova-cosmo-sft-py312-linux.lock > "$RUNNER_TEMP/cosmo-imports.lock"
+          python -m pip install --require-hashes -r "$RUNNER_TEMP/cosmo-imports.lock"
+      - name: Retrieve immutable trained adapter
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/candidate
+          run-id: ${{ matrix.run }}
+          github-token: ${{ github.token }}
+      - name: Download and hash-verify immutable base
+        run: python -m training.pinned_snapshot_download --family "${{ matrix.family }}" --destination "$RUNNER_TEMP/base" --execute
+      - name: Measure pinned 50-case candidate outputs
+        env:
+          CUDA_VISIBLE_DEVICES: ''
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+          KOVA_MANUAL_OUTPUT_BUDGET: ${{ inputs.manual_max_new_tokens }}
+        run: python -m evaluation.cpu_candidate_quality --family "${{ matrix.family }}" --snapshot "$RUNNER_TEMP/base" --candidate "$RUNNER_TEMP/candidate" --output "$RUNNER_TEMP/${{ matrix.family }}-quality.json" --manual-max-new-tokens "$KOVA_MANUAL_OUTPUT_BUDGET"
+      - name: Preserve measured answer and score evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.family }}-quality-50-cases
+          path: ${{ runner.temp }}/${{ matrix.family }}-quality.json
+          if-no-files-found: warn
+          retention-days: 7

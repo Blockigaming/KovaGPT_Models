@@ -80,6 +80,14 @@ jobs:
           TRANSFORMERS_OFFLINE: '1'
           WANDB_DISABLED: 'true'
         run: python -m training.validate_kova_cosmo_sft_api
+      - name: Verify explicit row template mode and completion masks without weights
+        env:
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+          HF_DATASETS_OFFLINE: '1'
+          WANDB_DISABLED: 'true'
+          CUDA_VISIBLE_DEVICES: ""
+        run: python -m training.validate_template_policy
 
   verify:
     runs-on: ubuntu-latest

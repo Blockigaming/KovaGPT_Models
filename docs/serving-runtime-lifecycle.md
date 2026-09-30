@@ -22,6 +22,15 @@ concurrency and memory settings. The installed vLLM version must match before
 native imports; no version or model download fallback exists. This source-supported
 API version is NOT an approved production image or compatibility benchmark.
 
+The native binding now requires LoRA support and registers exactly one pinned
+adapter from the verified read-only artifact directory. It checks that vLLM lists
+the adapter during each health check. The internal engine handoff exposes only
+`generate` and `abort`; every generation supplies that adapter's LoRARequest,
+so a caller cannot obtain a base-only request by omitting the adapter. This is
+source wiring verified with a fake native engine, not a real loaded GPU model.
+The current candidate registry has no selected trained-adapter or bundle digest,
+and the checked-in serving policy is disabled, so startup still fails closed.
+
 After initialization, actual engine.model_config values must match the verified
 path, revision, served model, context and remote-code policy. check_health must
 succeed before readiness. Every identity/engine handoff repeats approval, image,
@@ -68,6 +77,8 @@ fixture directory is an actual production mount.
 Primary API references checked September 16, 2026:
 - https://docs.vllm.ai/en/v0.29.0/api/vllm/engine/arg_utils/
 - https://docs.vllm.ai/en/v0.29.0/api/vllm/v1/engine/async_llm/
+- https://docs.vllm.ai/en/v0.29.0/api/vllm/lora/request/
+- https://docs.vllm.ai/en/v0.29.0/features/lora/
 - https://docs.vllm.ai/en/latest/usage/security/
 
 This component neither republishes blocked job/tool APIs nor changes existing model

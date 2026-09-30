@@ -232,6 +232,7 @@ class HandlerTests(unittest.TestCase):
     def test_private_core_stage_uses_non_stream_response_and_null_ttft(self):
         records = []
         captured = []
+        public_fragments = []
         result = handle_job(
             {"input": self.request(reasoning_effort="medium", max_output_tokens=512)},
             lambda payload: captured.append(payload) or self.response(),
@@ -241,11 +242,77 @@ class HandlerTests(unittest.TestCase):
             ),
             token_counter=self.token_counter,
             clock_ns=Clock(0, 25_000_000), attempt_id_factory=lambda: "private-attempt",
+            public_delta_sink=public_fragments.append,
         )
         self.assertFalse(captured[0]["stream"])
         self.assertNotIn("stream_options", captured[0])
         self.assertEqual(result["content"], "answer")
         self.assertIsNone(records[0]["time_to_first_token_ms"])
+        self.assertEqual(public_fragments, [])
+
+    def test_public_answer_reaches_sink_before_provider_stream_finishes(self):
+        received = []
+        def chunks():
+            yield {"choices": [{"delta": {"content": "First "}}]}
+            self.assertEqual(received, ["First "])
+            yield {"choices": [{"delta": {"content": "answer"}, "finish_reason": "stop"}]}
+            yield {"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 2}}
+
+        result, records = self.handle(response=chunks(), public_delta_sink=received.append)
+        self.assertEqual("".join(received), "First answer")
+        self.assertEqual(result["content"], "First answer")
+        self.assertEqual(records[0]["outcome"], "success")
+
+    def test_public_sink_never_receives_a_split_hidden_reasoning_marker(self):
+        received = []
+        records = []
+        with self.assertRaisesRegex(ValueError, "hidden reasoning"):
+            handle_job(
+                {"input": self.request()}, lambda _: self.stream_response("safe ", "<th", "ink>secret"),
+                self.runtime_probe(), records.append,
+                execution_context=self.execution_context(), token_counter=self.token_counter,
+                clock_ns=Clock(0, 5_000_000, 10_000_000),
+                attempt_id_factory=lambda: "hidden-attempt", public_delta_sink=received.append,
+            )
+        self.assertEqual(received, ["safe "])
+        self.assertEqual(records[0]["outcome"], "failed")
+
+    def test_incomplete_stream_does_not_flush_a_pending_marker_prefix(self):
+        received = []
+        records = []
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            handle_job(
+                {"input": self.request()}, lambda _: iter([
+                    {"choices": [{"delta": {"content": "<th"}}]},
+                ]), self.runtime_probe(), records.append,
+                execution_context=self.execution_context(), token_counter=self.token_counter,
+                clock_ns=Clock(0, 5_000_000, 10_000_000),
+                attempt_id_factory=lambda: "incomplete-attempt", public_delta_sink=received.append,
+            )
+        self.assertEqual(received, [])
+        self.assertEqual(records[0]["outcome"], "failed")
+
+    def test_public_sink_failure_closes_provider_stream_and_fails_attempt(self):
+        closed = []
+        records = []
+        def chunks():
+            try:
+                yield {"choices": [{"delta": {"content": "answer"}}]}
+                raise AssertionError("provider should not be read after sink failure")
+            finally:
+                closed.append(True)
+        def rejected(_fragment):
+            raise ValueError("public sink disconnected")
+        with self.assertRaisesRegex(ValueError, "public sink disconnected"):
+            handle_job(
+                {"input": self.request()}, lambda _: chunks(),
+                self.runtime_probe(), records.append,
+                execution_context=self.execution_context(), token_counter=self.token_counter,
+                clock_ns=Clock(0, 5_000_000, 10_000_000),
+                attempt_id_factory=lambda: "sink-failed-attempt", public_delta_sink=rejected,
+            )
+        self.assertEqual(closed, [True])
+        self.assertEqual(records[0]["outcome"], "failed")
 
     def test_public_core_stage_rejects_fake_non_streaming_response(self):
         records = []

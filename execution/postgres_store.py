@@ -21,7 +21,8 @@ from execution.record_cipher import RecordCipher, need
 from execution.store import now_ms
 
 
-TABLES = frozenset(("jobs", "stages", "events", "private_job_policy", "private_job_tombstones", "model_store_version"))
+TABLES = frozenset(("jobs", "stages", "events", "answer_fragments", "private_job_policy",
+                    "private_job_tombstones", "model_store_version"))
 TABLE_PATTERN = re.compile(r"\b(" + "|".join(sorted(TABLES, key=len, reverse=True)) + r")\b")
 
 
@@ -119,7 +120,7 @@ class _Connection:
 
 
 def install_postgres_schema(connection, schema, *, administration_authorized=False):
-    """Apply the dedicated initial schema only when explicitly authorized.
+    """Apply both dedicated schema revisions only when explicitly authorized.
 
     Never called by runtime opening. No DROP/repair/overwrite or production endpoint
     selection is performed. A production migration controller must review target,
@@ -130,14 +131,36 @@ def install_postgres_schema(connection, schema, *, administration_authorized=Fal
     import psycopg
     from psycopg import sql
     require(type(connection) is psycopg.Connection and connection.autocommit, "owned autocommit connection required")
-    source = (Path(__file__).resolve().parents[1] / "migrations" / "001_private_execution_postgres.sql").read_text()
     with connection.transaction():
         connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         connection.execute(sql.SQL("REVOKE ALL ON SCHEMA {} FROM PUBLIC").format(sql.Identifier(schema)))
         adapter = _Connection(connection, schema)
-        for statement in source.split(";"):
-            if statement.strip():
-                adapter.execute(statement.strip())
+        _apply_migration(adapter, "001_private_execution_postgres.sql")
+        _apply_migration(adapter, "002_public_fragments_postgres.sql")
+        connection.execute(sql.SQL("REVOKE ALL ON ALL TABLES IN SCHEMA {} FROM PUBLIC").format(sql.Identifier(schema)))
+
+
+def _apply_migration(adapter, filename):
+    source = (Path(__file__).resolve().parents[1] / "migrations" / filename).read_text()
+    for statement in source.split(";"):
+        if statement.strip():
+            adapter.execute(statement.strip())
+
+
+def upgrade_postgres_schema(connection, schema, *, administration_authorized=False):
+    """Explicitly upgrade an isolated v1 journal; runtime opening never migrates."""
+    require(administration_authorized is True, "schema administration is not authorized")
+    schema = _schema(schema)
+    import psycopg
+    from psycopg import sql
+    require(type(connection) is psycopg.Connection and connection.autocommit,
+            "owned autocommit connection required")
+    with connection.transaction():
+        connection.execute(sql.SQL("REVOKE ALL ON SCHEMA {} FROM PUBLIC").format(sql.Identifier(schema)))
+        adapter = _Connection(connection, schema)
+        version = adapter.execute("SELECT version FROM model_store_version").fetchall()
+        require(len(version) == 1 and version[0][0] == 1, "execution schema version mismatch")
+        _apply_migration(adapter, "002_public_fragments_postgres.sql")
         connection.execute(sql.SQL("REVOKE ALL ON ALL TABLES IN SCHEMA {} FROM PUBLIC").format(sql.Identifier(schema)))
 
 
@@ -175,7 +198,7 @@ class PostgresPrivateJobStore(PrivateJobStore):
             self._db = _Connection(connection, schema)
             with self._transaction() as db:
                 version = db.execute("SELECT version FROM model_store_version").fetchall()
-                require(len(version) == 1 and version[0][0] == 1, "execution schema version mismatch")
+                require(len(version) == 1 and version[0][0] == 2, "execution schema version mismatch")
                 for flag in ("fsync", "full_page_writes", "synchronous_commit"):
                     require(connection.execute("SHOW " + flag).fetchone()[0] == "on", "database durability settings are not enabled")
                 public_access = connection.execute(

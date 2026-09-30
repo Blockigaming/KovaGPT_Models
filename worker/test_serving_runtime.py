@@ -6,11 +6,13 @@ executed. One test substitutes native API modules to verify exact loader argumen
 
 from dataclasses import replace
 import hashlib
+from importlib.metadata import PackageNotFoundError
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -312,19 +314,111 @@ class ServingRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
 
 class NativeBindingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_native_base_only_loader_rejects_before_gpu_allocation(self):
-        policy = runtime.LoaderPolicy("/trusted/policy.json", "a"*64, "fixture", "sha256:"+"b"*64,
-                                       8192, 0.8, 2, 60, 2, 2, True, True, True)
-        with patch.dict("sys.modules", {"vllm": None}), self.assertRaisesRegex(
-                runtime.ServingRuntimeError, "trained adapter loading is unavailable"):
-            runtime.NativeVllm("/readonly/model", {"model":"fixture-model", "revision":"a"*40}, policy)
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = self.directory.name
+        (Path(self.root) / "adapter_config.json").write_text(json.dumps(
+            {"peft_type":"LORA", "task_type":"CAUSAL_LM", "r":8}))
+        self.policy = runtime.LoaderPolicy("/trusted/policy.json", "a"*64, "fixture",
+            "sha256:"+"b"*64, 8192, 0.8, 2, 60, 2, 2, True, True, True)
+        self.artifact = {"candidate_id":"fixture", "model":"fixture-model", "revision":"a"*40,
+                         "adapter_sha256":"c"*64, "manifest_sha256":"d"*64}
+
+    def fake_modules(self):
+        self.native = SimpleNamespace(added=[], requested=[], registered=set(), stopped=None,
+            model_config=SimpleNamespace(model=self.root, tokenizer=self.root,
+                revision=self.artifact["revision"], tokenizer_revision=self.artifact["revision"],
+                served_model_name=[self.artifact["model"]], max_model_len=8192, trust_remote_code=False),
+            vllm_config=SimpleNamespace(lora_config=SimpleNamespace(max_loras=1, max_lora_rank=8)),
+            scheduler_config=SimpleNamespace(max_num_seqs=2))
+        async def add_lora(request):
+            self.native.added.append(request)
+            self.native.registered.add(request.lora_int_id)
+            return True
+        async def list_loras():
+            return set(self.native.registered)
+        async def check_health():
+            return None
+        async def generate(prompt, params, request_id, *, lora_request):
+            self.native.requested.append(lora_request)
+            yield SimpleNamespace(outputs=[SimpleNamespace(text="trained sample")])
+        async def abort(_):
+            return None
+        self.native.add_lora = add_lora
+        self.native.list_loras = list_loras
+        self.native.check_health = check_health
+        self.native.generate = generate
+        self.native.abort = abort
+        self.native.shutdown = lambda *, timeout: setattr(self.native, "stopped", timeout)
+        self.args = None
+        def args(**options):
+            self.args = options
+            return options
+        fake_async = SimpleNamespace(from_engine_args=lambda _: self.native)
+        fake_request = lambda name, identifier, path: SimpleNamespace(
+            lora_name=name, lora_int_id=identifier, lora_path=path)
+        modules = {key: ModuleType(key) for key in
+            ("vllm", "vllm.engine", "vllm.engine.arg_utils", "vllm.lora",
+             "vllm.lora.request", "vllm.v1", "vllm.v1.engine", "vllm.v1.engine.async_llm")}
+        modules["vllm.engine.arg_utils"].AsyncEngineArgs = args
+        modules["vllm.lora.request"].LoRARequest = fake_request
+        modules["vllm.v1.engine.async_llm"].AsyncLLM = fake_async
+        self.addCleanup(patch.stopall)
+        patch.dict(sys.modules, modules).start()
+        patch.object(runtime, "version", return_value=runtime.SUPPORTED_VLLM_VERSION).start()
+
+    async def test_handoff_never_generates_with_untrained_base_or_removed_adapter(self):
+        self.fake_modules()
+        backend = runtime.NativeVllm(self.root, self.artifact, self.policy)
+        # The first call loads the verified adapter; no caller can select an
+        # alternative LoRA or obtain the underlying base engine through handoff.
+        outputs = [item async for item in backend.engine.generate("prompt", object(), "1")]
+        self.assertEqual(outputs[0].outputs[0].text, "trained sample")
+        self.assertEqual(len(self.native.added), 1)
+        self.assertIs(self.native.added[0], self.native.requested[0])
+        self.assertEqual(self.native.requested[0].lora_path, self.root)
+        self.assertTrue(self.args["enable_lora"])
+        self.assertEqual(self.args["max_lora_rank"], 8)
+        self.assertFalse(self.args["trust_remote_code"])
+        self.native.registered.clear()
+        with self.assertRaises(runtime.ServingRuntimeError):
+            _ = [item async for item in backend.engine.generate("prompt", object(), "2")]
+        self.assertEqual(len(self.native.requested), 1)
+        backend.close()
+        self.assertEqual(self.native.stopped, 2)
+        with self.assertRaises(runtime.ServingRuntimeError):
+            _ = [item async for item in backend.engine.generate("prompt", object(), "3")]
+
+    async def test_observed_native_identity_drift_blocks_readiness(self):
+        self.fake_modules()
+        backend = runtime.NativeVllm(self.root, self.artifact, self.policy)
+        await backend.health()
+        self.assertEqual(backend.observed_configuration()["adapter_sha256"], "c"*64)
+        self.native.model_config.model = "/other/model"
+        with self.assertRaises(runtime.ServingRuntimeError):
+            backend.observed_configuration()
+        backend.close()
+
+    async def test_failed_adapter_registration_never_reaches_generation(self):
+        self.fake_modules()
+        backend = runtime.NativeVllm(self.root, self.artifact, self.policy)
+        async def reject(_request):
+            return False
+        self.native.add_lora = reject
+        with self.assertRaises(runtime.ServingRuntimeError):
+            _ = [item async for item in backend.engine.generate("prompt", object(), "1")]
+        self.assertEqual(self.native.requested, [])
+        backend.close()
+
+    async def test_missing_native_package_fails_before_engine_allocation(self):
+        with patch.object(runtime, "version", side_effect=PackageNotFoundError("vllm")):
+            with self.assertRaisesRegex(runtime.ServingRuntimeError, "supported native runtime unavailable"):
+                runtime.NativeVllm(self.root, self.artifact, self.policy)
 
     async def test_disabled_native_policy_fails_before_loader(self):
-        policy = runtime.LoaderPolicy("/trusted/policy.json", "a"*64, "fixture", "sha256:"+"b"*64,
-                                       8192, 0.8, 2, 60, 2, 2, True, True, True)
         with self.assertRaises(runtime.ServingRuntimeError):
-            runtime.NativeVllm("/readonly/model", {"model":"fixture", "revision":"a"*40},
-                               replace(policy, enabled=False))
+            runtime.NativeVllm(self.root, self.artifact, replace(self.policy, enabled=False))
 
     async def test_concrete_environment_guard_requires_nonroot_readonly_and_offline_flags(self):
         environment = {name:"1" for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "VLLM_NO_USAGE_STATS", "DO_NOT_TRACK")}

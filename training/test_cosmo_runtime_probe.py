@@ -30,9 +30,15 @@ class FakeModel:
 
 class FakeTokenizer:
     def apply_chat_template(self, messages, *, add_generation_prompt,
-                            return_tensors, tokenize):
+                            return_tensors, tokenize, enable_thinking):
+        assert enable_thinking is False
         self.last = (messages, return_tensors, tokenize)
         return [1, 2, 3] if add_generation_prompt else [1, 2, 3, 4, 5]
+
+
+class EncodingTokenizer(FakeTokenizer):
+    def apply_chat_template(self, *args, **kwargs):
+        return {"input_ids": super().apply_chat_template(*args, **kwargs)}
 
 
 class CosmoRuntimeProbeTests(unittest.TestCase):
@@ -198,6 +204,8 @@ class CosmoRuntimeProbeTests(unittest.TestCase):
                "completion": [{"role": "assistant", "content": "y"}]}
         tokens, labels = probe.completion_tokens(FakeTokenizer(), row, 16)
         self.assertEqual(tokens, [1, 2, 3, 4, 5])
+        self.assertEqual(probe.completion_tokens(EncodingTokenizer(), row, 16),
+                         (tokens, labels))
         self.assertEqual(labels, [-100, -100, -100, 4, 5])
 
     def test_dry_run_makes_no_runtime_claims(self):

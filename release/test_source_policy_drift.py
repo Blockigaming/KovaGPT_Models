@@ -11,7 +11,7 @@ class SourcePolicyDriftTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        for directory in ("config", "router", "release", "docs", "core", "worker", "scripts", "prompts", "ultra"):
+        for directory in ("config", "router", "release", "docs", "core", "worker", "scripts", "prompts", "ultra", "training"):
             shutil.copytree(ROOT / directory, self.root / directory)
 
     def tearDown(self):
@@ -33,7 +33,38 @@ class SourcePolicyDriftTests(unittest.TestCase):
         value = json.loads(path.read_text())
         value["entitlements"]["chat"]["plus"]["cosmo"] = ["light", "medium", "max"]
         path.write_text(json.dumps(value))
-        with self.assertRaisesRegex(ValueError, "entitlement_runtime_drift:chat:plus"):
+        # Admission now reads the same hash-pinned file. A cell swap is rejected
+        # at load time, before a separately defined route set can diverge.
+        with self.assertRaisesRegex(ValueError, "current product policy rejected"):
+            validate(self.root)
+
+    def test_inspected_runtime_policy_loader_cannot_be_replaced_by_cached_import(self):
+        path = self.root / "release/current_product_policy.py"
+        for replacement in (
+            "def load_policy(path=None):\n    raise RuntimeError('broken copied loader')\n",
+            path.read_text().replace(
+                'raise CurrentPolicyError("current product policy rejected")',
+                'return value', 1),
+        ):
+            with self.subTest(replacement=replacement[:40]):
+                path.write_text(replacement)
+                with self.assertRaisesRegex(ValueError, "runtime_policy_loader_drift"):
+                    validate(self.root)
+
+    def test_inspected_runtime_policy_loader_must_exist(self):
+        (self.root / "release/current_product_policy.py").unlink()
+        with self.assertRaisesRegex(ValueError, "runtime_policy_loader_unavailable"):
+            validate(self.root)
+
+    def test_inspected_policy_dependency_cannot_be_replaced_by_cached_import(self):
+        path = self.root / "training/three_family_contract.py"
+        path.write_text("raise RuntimeError('broken copied policy dependency')\n")
+        with self.assertRaisesRegex(ValueError, "runtime_entitlements_unloadable"):
+            validate(self.root)
+
+    def test_inspected_policy_dependency_must_exist(self):
+        (self.root / "training/three_family_contract.py").unlink()
+        with self.assertRaisesRegex(ValueError, "runtime_entitlements_unloadable"):
             validate(self.root)
 
     def test_legacy_file_cannot_regain_authority(self):

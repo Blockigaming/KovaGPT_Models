@@ -1,7 +1,7 @@
 """Provider-free scoring/accounting of supplied, unverified evaluation evidence.
 
-This is a new ingestion schema, not reconstruction of the inaccessible historical
-50-case suite. No generation, retry, tool/code execution or human review is run.
+This is an independent ingestion schema; the archived 50-case source bridge is
+separate. No generation, retry, tool/code execution or human review is run.
 """
 
 from collections import Counter, defaultdict
@@ -167,8 +167,10 @@ def analyze(suite, bundle, *, expected_suite_sha256, expected_source_commit):
         for value in row["timings"].values():
             if value is not None:
                 bounded_int(value)
-        first, completed = (row["timings"][k] for k in TIMINGS[1:])
-        need(first is None or completed is None or first <= completed)
+        observed = [row["timings"][key] for key in TIMINGS
+                    if row["timings"][key] is not None]
+        need(all(earlier <= later for earlier, later in zip(observed, observed[1:])))
+        first = row["timings"]["first_answer_token_ms"]
         # A status/acknowledgement is never substituted for an answer token.
         need(row["answer"] is not None or first is None)
         account = row["accounting"]

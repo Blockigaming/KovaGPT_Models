@@ -57,6 +57,18 @@ class LaunchTests(unittest.TestCase):
             "sku_restrictions": [], "account_compute_hourly_usd": "0.4000",
             "account_meter_source": "subscription_specific_billing_price_sheet",
             "category_upper_bounds_usd": dict(contract.COST_CATEGORY_BOUNDS),
+            "additional_cost_upper_bounds_usd": {
+                "controller_runtime": "0.0540",
+                "controller_registry_and_logs": "0.0004",
+                "protected_evidence_retention": "0.0010",
+                "external_archive_and_receipts": "0.0010",
+                "tax_and_other_fees": "0.0000",
+            },
+            "evidence_scope": {
+                "ledger_context_sha256": "a" * 64, "ledger_retention_days": 1,
+                "artifact_container": "cosmo-adapters",
+                "external_archive": {"uri": "https://evidence.example.test/archived-ledger",
+                    "retention_days": 30, "maximum_bytes": 1048576}},
             "all_category_rates_checked": True, "watchdog_health_tested": True,
             "watchdog_can_deallocate_and_delete": True,
             "exclusive_pilot_group_empty": True, "no_public_ip": True,
@@ -79,30 +91,29 @@ class LaunchTests(unittest.TestCase):
         planned = launch.proposal()
         self.assertEqual((planned["train_records"], planned["validation_records"]), (27, 15))
         self.assertFalse(planned["paid_actions_enabled"])
-        self.assertEqual(planned["all_in_ceiling_usd"], "3.3000")
+        self.assertEqual(planned["all_in_ceiling_usd"], "12.0000")
         self.assertEqual(planned["minimum_signed_allocation_seconds"], 5400)
         assessed = self.check()
-        self.assertEqual(assessed["worst_case_all_in_usd"], "3.1934")
+        self.assertEqual(assessed["worst_case_all_in_usd"], "5.2998")
         self.assertEqual(assessed["signed_allocation_seconds"], 7140)
         self.assertFalse(assessed["paid_actions_enabled"])
 
-    def test_shorter_signed_window_fits_only_when_compute_reservation_covers_it(self):
+    def test_signed_window_uses_shared_ceiling_and_still_requires_cleanup_lead(self):
         payload = deepcopy(self.payload)
         payload["account_compute_hourly_usd"] = "0.5260"
         payload["allocation_deadline_utc"] = "2026-09-24T13:30:00Z"
         result = self.check(payload)
         self.assertEqual(result["signed_allocation_seconds"], 5400)
-        self.assertEqual(result["worst_case_all_in_usd"], "3.1890")
+        self.assertEqual(result["worst_case_all_in_usd"], "5.2954")
         payload["allocation_deadline_utc"] = "2026-09-24T13:42:00Z"
-        self.assertEqual(self.check(payload)["worst_case_all_in_usd"], "3.2942")
+        self.assertLess(self.check(payload)["signed_allocation_seconds"], 7200)
         payload["allocation_deadline_utc"] = "2026-09-24T13:43:00Z"
-        with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
-            self.check(payload)
+        self.assertEqual(self.check(payload)["signed_allocation_seconds"], 6180)
         payload["allocation_deadline_utc"] = "2026-09-24T13:29:59Z"
         with self.assertRaisesRegex(launch.LaunchRejected, "90-120 minute"):
             self.check(payload)
         payload["allocation_deadline_utc"] = "2026-09-24T13:30:00Z"
-        payload["account_compute_hourly_usd"] = "0.6001"
+        payload["account_compute_hourly_usd"] = "6.4001"
         with self.assertRaisesRegex(contract.ContractError, "Cosmo worst case"):
             self.check(payload)
 
@@ -110,12 +121,12 @@ class LaunchTests(unittest.TestCase):
         payload = deepcopy(self.payload)
         payload['account_compute_hourly_usd'] = '0.5260'
         payload['allocation_deadline_utc'] = '2026-09-24T13:30:00Z'
-        payload['category_upper_bounds_usd']['nat_gateway_data_processed'] = '0.2525'
+        payload['category_upper_bounds_usd']['nat_gateway_data_processed'] = '0.7990'
         result = self.check(payload)
-        self.assertEqual(result['worst_case_all_in_usd'], '3.1890')
+        self.assertEqual(result['worst_case_all_in_usd'], '5.2954')
         self.assertFalse(result['paid_actions_enabled'])
-        for key, excess in (('nat_gateway_data_processed', '0.3251'), ('managed_disks', '0.1001'),
-                            ('public_ip_and_network', '0.0251'), ('nat_gateway_hours', '0.1501')):
+        for key, excess in (('nat_gateway_data_processed', '2.0001'), ('managed_disks', '0.2501'),
+                            ('public_ip_and_network', '0.0501'), ('nat_gateway_hours', '0.3501')):
             bad = deepcopy(payload)
             bad['category_upper_bounds_usd'][key] = excess
             with self.subTest(category=key), self.assertRaisesRegex(launch.LaunchRejected, 'category reservation'):
@@ -134,6 +145,49 @@ class LaunchTests(unittest.TestCase):
                 with self.assertRaisesRegex(launch.LaunchRejected, "insufficient deletion time"):
                     self.check(payload)
 
+    def test_controller_and_durable_evidence_costs_cannot_be_omitted(self):
+        for change in ("missing_field", "missing", "extra", "zero_controller", "zero_retention",
+                       "zero_archive", "negative", "over_ceiling"):
+            payload = deepcopy(self.payload)
+            extras = payload["additional_cost_upper_bounds_usd"]
+            if change == "missing_field":
+                del payload["additional_cost_upper_bounds_usd"]
+            elif change == "missing":
+                del extras["protected_evidence_retention"]
+            elif change == "extra":
+                extras["unreviewed"] = "0.0000"
+            elif change == "zero_controller":
+                extras["controller_runtime"] = "0.0000"
+            elif change == "zero_retention":
+                extras["protected_evidence_retention"] = "0.0000"
+            elif change == "zero_archive":
+                extras["external_archive_and_receipts"] = "0.0000"
+            elif change == "negative":
+                extras["tax_and_other_fees"] = "-0.0010"
+            else:
+                extras["controller_registry_and_logs"] = "9.0000"
+            with self.subTest(change=change), self.assertRaises(launch.LaunchRejected):
+                self.check(payload)
+
+    def test_signed_evidence_scope_requires_bounded_storage_and_retention(self):
+        for field, value in (("ledger_retention_days", 0),
+                             ("ledger_context_sha256", "broken"),
+                             ("artifact_container", "Invalid"),
+                             ("artifact_container", "cosmo--adapters")):
+            payload = deepcopy(self.payload)
+            payload["evidence_scope"][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(
+                    launch.LaunchRejected, "evidence scope"):
+                self.check(payload)
+        for field, value in (("uri", "http://example.test/archive"),
+                             ("retention_days", 0), ("maximum_bytes", 1024),
+                             ("maximum_bytes", 1048577)):
+            payload = deepcopy(self.payload)
+            payload["evidence_scope"]["external_archive"][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(
+                    launch.LaunchRejected, "evidence scope"):
+                self.check(payload)
+
     def test_unsigned_tampered_and_unpinned_authorities_fail(self):
         path = self.signed()
         contents = json.loads(path.read_text())
@@ -150,7 +204,7 @@ class LaunchTests(unittest.TestCase):
     def test_retailability_budget_quotas_identity_and_watchdog_fail_closed(self):
         edits = (
             ("account_meter_source", "azure_retail_price_api"),
-            ("account_compute_hourly_usd", "0.4600"),
+            ("account_compute_hourly_usd", "5.0000"),
             ("source_commit", "e" * 40),
             ("dataset_sha256", "a" * 64),
             ("model_revision", "a" * 40),
@@ -304,7 +358,7 @@ class LaunchTests(unittest.TestCase):
                        "grant_id": "one-and-only", "azure_identity_token_sha256": token_sha,
                        "issued_at_utc": "2026-09-24T12:01:00Z",
                        "expires_at_utc": "2026-09-24T13:15:00Z",
-                       "training_runs_consumed": runs, "all_in_reserved_usd": "3.3000",
+                       "training_runs_consumed": runs, "all_in_reserved_usd": "12.0000",
                        "watchdog_healthy": True, "cleanup_scope_verified": True,
                        "deployment_authorized": False}
             return {"payload": payload,

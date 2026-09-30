@@ -9,6 +9,7 @@ from core.adapter import bind_core_operation, build_core_plan
 from core.current_candidates import CORE_SERVING
 from core.identity import load_runtime_identity
 from router.policy import CHAT_POLICIES, WORK_EFFORTS, WORK_FAMILY_POLICIES, resolve_route
+from worker.response_privacy import require_private_reasoning_absent
 
 
 ALLOWED_EFFORTS = frozenset(("low", "medium", "xhigh"))
@@ -293,15 +294,38 @@ def _append_stream_tool_calls(states, fragments):
     return contributed_visible_data
 
 
-def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, timing_state):
-    """Normalize one engine response and measure first visible streamed output."""
+_HIDDEN_CONTENT_MARKERS = ("<think", "</think>")
+
+
+def _public_text_without_marker_prefix(text):
+    """Hold partial reasoning tags until the next fragment can disambiguate them."""
+    lowered = text.lower()
+    _require(not any(marker in lowered for marker in _HIDDEN_CONTENT_MARKERS),
+             "engine embedded hidden reasoning in content")
+    hold = max((length for marker in _HIDDEN_CONTENT_MARKERS
+                for length in range(1, len(marker))
+                if lowered.endswith(marker[:length])), default=0)
+    return (text[:-hold], text[-hold:]) if hold else (text, "")
+
+
+def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, timing_state,
+                            on_public_delta=None):
+    """Normalize one engine response and optionally emit provisional visible text.
+
+    The caller must supply a trusted sink only for a public final stage. A
+    fragment is provisional until the full response and postflight pass; the
+    sink must not represent its receipt as a completed answer or settled usage.
+    """
     _require(
         isinstance(timing_state, dict) and set(timing_state) == {"time_to_first_token_ms"} and
         timing_state["time_to_first_token_ms"] is None,
         "invalid stream timing state",
     )
+    _require(on_public_delta is None or callable(on_public_delta), "invalid public answer sink")
     if not expect_stream:
+        _require(on_public_delta is None, "private non-stream response cannot emit public deltas")
         normalized = _mapping(response, "non-stream engine response must be an object")
+        require_private_reasoning_absent(normalized)
         finished_ns = clock_ns()
         return normalized, finished_ns
 
@@ -318,20 +342,25 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
     usage = None
     first_token_ns = None
     finish_reason = None
+    pending_public_text = ""
     try:
         for raw_chunk in chunks:
             chunk = _mapping(raw_chunk, "stream chunk must be an object")
+            require_private_reasoning_absent(chunk)
             if chunk.get("usage") is not None:
                 _require(usage is None, "stream returned duplicate usage evidence")
                 usage = _mapping(chunk["usage"], "stream usage must be an object")
+                require_private_reasoning_absent(usage)
             choices = chunk.get("choices", [])
             _require(isinstance(choices, list) and len(choices) <= 1, "stream must return at most one choice")
             for raw_choice in choices:
                 _require(finish_reason is None, "stream returned a choice after its terminal finish reason")
                 choice = _mapping(raw_choice, "stream choice must be an object")
+                require_private_reasoning_absent(choice)
                 _require(type(choice.get("index", 0)) is int and choice.get("index", 0) == 0,
                          "stream returned an unexpected choice index")
                 delta = _mapping(choice.get("delta"), "stream choice missing delta")
+                require_private_reasoning_absent(delta)
                 reason = choice.get("finish_reason")
                 _require(reason is None or isinstance(reason, str), "invalid stream finish_reason")
                 if reason is not None:
@@ -350,6 +379,11 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
                     content_chars += len(content)
                     _require(content_chars <= MAX_TOTAL_TEXT_CHARS, "stream content too large")
                     content_parts.append(content)
+                    if on_public_delta is not None:
+                        visible, pending_public_text = _public_text_without_marker_prefix(
+                            pending_public_text + content)
+                        if visible:
+                            on_public_delta(visible)
     finally:
         # The consumer can reject a chunk before exhausting the provider stream.
         # Close explicitly rather than relying on generator garbage collection.
@@ -361,7 +395,6 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
                 # Never mask the original rejection with transport cleanup details.
                 pass
 
-    finished_ns = clock_ns()
     tool_calls = [tool_call_states[index] for index in sorted(tool_call_states)]
     normalized = {
         "choices": [{
@@ -370,7 +403,13 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
         }],
         "usage": usage,
     }
-    return normalized, finished_ns
+    if on_public_delta is not None:
+        # Final partial prefixes are ordinary visible text only if the whole
+        # completion is valid. Never emit an incomplete response's tail.
+        sanitize_engine_response("", normalized)
+        if pending_public_text:
+            on_public_delta(pending_public_text)
+    return normalized, clock_ns()
 
 
 def _unique_tool_object(pairs):
@@ -454,6 +493,7 @@ def _sanitized_tool_calls(value):
 
 def sanitize_engine_response(request_id, response):
     _require(isinstance(response, dict), "engine response must be an object")
+    require_private_reasoning_absent(response)
     choices = response.get("choices")
     _require(isinstance(choices, list) and len(choices) == 1, "engine response must contain exactly one choice")
     first = choices[0]
@@ -586,11 +626,13 @@ def emit_lifecycle_close(
 def handle_job(
     job, inference_client, runtime_probe, telemetry_sink, *, execution_context,
     token_counter, clock_ns=perf_counter_ns, attempt_id_factory=lambda: str(uuid4()),
+    public_delta_sink=None,
 ):
     """Execute one Core stage and persist its attempt telemetry before returning or raising."""
     _require(isinstance(job, dict) and set(job) == {"input"} and isinstance(job["input"], dict), "job must contain only input")
     _require(callable(inference_client), "inference client missing")
     _require(callable(telemetry_sink), "telemetry sink missing")
+    _require(public_delta_sink is None or callable(public_delta_sink), "invalid public answer sink")
     value = validate_input(job["input"])
     execution = validate_execution_context(execution_context)
     selected_candidate = _selected_candidate(execution["benchmark_candidate_id"])
@@ -612,6 +654,7 @@ def handle_job(
             clock_ns=clock_ns,
             started_ns=started_ns,
             timing_state=timing_state,
+            on_public_delta=public_delta_sink if execution["public_response"] else None,
         )
         result = sanitize_engine_response(value["request_id"], response)
     except Exception as error:

@@ -274,8 +274,19 @@ class SourceContext:
                 self.check(prepared, route_id=route)
                 return result
             return client
-        worker = ModelStageWorker(checked_factory, delegate.runtime_probe, delegate.token_counter,
-                                  delegate.telemetry_sink, clock_ns=delegate.clock_ns)
+        def checked_public_delta(fragment):
+            self.check(prepared, route_id=route)
+            delegate.public_delta_sink(fragment)
+        def checked_preflight():
+            self.check(prepared, route_id=route)
+            if delegate.public_delta_preflight is not None:
+                delegate.public_delta_preflight()
+        worker = ModelStageWorker(
+            checked_factory, delegate.runtime_probe, delegate.token_counter,
+            delegate.telemetry_sink, clock_ns=delegate.clock_ns,
+            public_delta_sink=checked_public_delta if delegate.public_delta_sink is not None else None,
+            public_delta_preflight=checked_preflight,
+        )
         def run(current_spec, stage, artifacts, control, job_id, attempt_id):
             _need(type(current_spec) is ExecutionSpec and current_spec.fingerprint == fingerprint)
             self.check(prepared, route_id=route)

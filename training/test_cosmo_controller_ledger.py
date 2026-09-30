@@ -94,6 +94,9 @@ class ControllerLedgerTests(unittest.TestCase):
                 "watchdog_resource_group_id": prefix + "watchdog"},
             "storage_resource_group_id": prefix + "evidence", "storage_account": "kovatestledger",
             "container": "cosmo42", "blob": "pilot.jsonl", "retention_days": 1,
+            "artifact_container": "cosmo-adapters",
+            "external_archive": {"uri": "https://evidence.example.test/archived-ledger",
+                "retention_days": 30, "maximum_bytes": 1048576},
             "not_before_utc": "2026-09-24T12:00:00Z", "grant_deadline_utc": "2026-09-24T13:15:00Z"}
         self.now = datetime(2026, 9, 24, 12, 1, tzinfo=timezone.utc)
         self.key = Ed25519PrivateKey.generate()
@@ -106,7 +109,7 @@ class ControllerLedgerTests(unittest.TestCase):
             "expires_at_utc": "2026-09-24T12:05:00Z"}
         self.cost = {"kind": "cost_admission", "family": "kova-cosmo",
             "account_price_verified": True, "quote_sha256": "a" * 64,
-            "remaining_budget_usd": "3.3000", "observed_at_utc": "2026-09-24T12:00:00Z",
+            "remaining_budget_usd": "12.0000", "observed_at_utc": "2026-09-24T12:00:00Z",
             "expires_at_utc": "2026-09-24T12:05:00Z"}
         payload = {"schema_version": 1, "kind": "kova_cosmo_qlora_training_grant",
             "issuer": authority.ISSUER, "source_commit": self.context["source_commit"],
@@ -124,7 +127,7 @@ class ControllerLedgerTests(unittest.TestCase):
             "allocation_deadline_utc": "2026-09-24T13:30:00Z",
             "watchdog_cleanup_trigger_utc": "2026-09-24T13:15:00Z",
             "training_runs_consumed": 1, "all_in_reserved_usd": "3.1890",
-            "all_in_ceiling_usd": "3.3000", "watchdog_healthy": True,
+            "all_in_ceiling_usd": "12.0000", "watchdog_healthy": True,
             "cleanup_scope_verified": True, "deployment_authorized": False}
         self.grant = {"kind": "training_grant", "family": "kova-cosmo", "quote_sha256": "a" * 64,
             "request_sha256": "f" * 64, "response_envelope": {"payload": payload,
@@ -142,6 +145,12 @@ class ControllerLedgerTests(unittest.TestCase):
                 preservation_public_key=self.verifier.public_key().public_bytes_raw(),
                 cleanup_public_key=self.verifier.public_key().public_bytes_raw(),
                 clock=lambda: self.now)
+
+    def test_artifact_container_must_be_a_valid_distinct_blob_container(self):
+        for name in ("cosmo--adapters", "Invalid", "cosmo42"):
+            with self.subTest(name=name), self.assertRaisesRegex(
+                    ledger.LedgerRejected, "invalid artifact container"):
+                self.make({**self.context, "artifact_container": name})
 
     def prepared(self):
         self.subject.initialize()
@@ -214,7 +223,7 @@ class ControllerLedgerTests(unittest.TestCase):
         original = self.io.body
         lines = original.splitlines(keepends=True)
         changed = json.loads(lines[-1])
-        changed["payload"]["event"]["remaining_budget_usd"] = "6.0000"
+        changed["payload"]["event"]["remaining_budget_usd"] = "12.0001"
         for bad in (original[:-1], b"".join(lines[::-1]),
                     b"".join(lines[:-1]) + authority.canonical(changed) + b"\n",
                     b"".join(lines[1:])):
@@ -277,7 +286,7 @@ class ControllerLedgerTests(unittest.TestCase):
             "blob_etag": self.io.etag,
             "observed_at_utc": export_stamp,
             "immutable_archive_uri": "https://evidence.example.test/archived-ledger",
-            "immutable_archive_version": "verified-v1"}
+            "immutable_archive_version": "verified-v1", "archive_retention_days": 30}
         def signed(value, signing_key=None):
             return {"payload": value, "signature_ed25519_hex":
                     (signing_key or self.cleanup_verifier).sign(authority.canonical(value)).hex()}
@@ -333,11 +342,16 @@ class ControllerLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerRejected, 'archive verifier cannot initialize'):
             verifier.initialize()
         bad_export = signed({**export_payload, 'archive_sha256': '0' * 64})
+        wrong_archive = signed({**export_payload,
+            'immutable_archive_uri': 'https://other.example.test/archived-ledger'})
+        short_archive = signed({**export_payload, 'archive_retention_days': 1})
         forged_export = deepcopy(export)
         forged_export['signature_ed25519_hex'] = '0' * 128
         for archived, attestation, termination in (
             (archive[:-1], export, final),
             (archive, bad_export, final),
+            (archive, wrong_archive, final),
+            (archive, short_archive, final),
             (archive, forged_export, final),
             (archive, export, signed({**final_payload, 'ledger_remaining_resources': ['storage']})),
             (archive, export, signed({**final_payload, 'ledger_deleted_at_utc': '2026-09-24T12:00:00Z'})),

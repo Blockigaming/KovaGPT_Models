@@ -1,5 +1,126 @@
 # Cosmo 42-record pilot: launch review
 
+## Current owner budget decision — 2026-09-27
+
+The selected run is **one shared, sequential Cosmo → Orion → Nova lifecycle**
+with a **$12 total maximum for the three one-time training pilots**. There is
+no separate $3.30 limit on Cosmo. The three-family cost guard and the older
+Cosmo-only quote/grant schema now both use $12 as an upper boundary; do not
+run the standalone Cosmo-only lifecycle in addition to the selected shared
+lifecycle under the same authorization. The Cosmo-only analysis and $3.30
+worksheet below are historical and superseded. Hosting after training needs
+its own budget. The $0.526/hour subscription-specific T4 price is a verified
+compute meter, but controller hosting, protected evidence retention, archive,
+tax and other charges still need an independently signed all-in quote before
+the selected QLoRA lifecycle is started. A $12 Azure budget alert cannot stop
+consumption.
+
+The three-family runner remains source-only: its `--execute` option fails
+closed. **No selected paid training or model deployment has begun.**
+
+**Bounded GPU hardware probe, 2026-09-28:** An independently watched private
+`Standard_NC4as_T4_v3` VM was actually provisioned, with no inbound public IP.
+The pinned NVIDIA extension succeeded; a live `nvidia-smi` readback reported
+Tesla T4, driver 580.178.04 and 16,384 MiB. The watchdog was enabled with a
+2026-09-28 05:11:48 UTC deadline and exactly two group-scoped Contributor
+assignments. The intended container-scoped VM write grant was not available,
+so no training or adapter upload was attempted on this VM. The pilot group
+and watchdog control group were both deleted; Azure `group exists` returned
+`false` for each at **03:28:33 UTC**. Provisioning and the brief hardware
+probe were billable even though no GPU training occurred. A separate free CPU
+Nova experiment and offline inference samples for the completed Cosmo/Orion
+adapters are running in GitHub Actions; they are not selected Azure pilots.
+
+**Experimental Cosmo CPU adapter, 2026-09-28:** The public GitHub Actions
+[run 36367369377](https://github.com/Blockigaming/KovaGPT_Models/actions/runs/36367369377)
+completed 7/7 FP32 LoRA optimizer steps against the approved 27 training
+records and produced an adapter for the pinned Qwen3-0.6B revision. A separate
+CPU run measured held-out completion loss on its 15 reserved records: 2.76193386
+for the base and 1.48700863 for the adapter, over 318 completion tokens. No
+human quality verdict has been made. The receipt,
+adapter hashes, archive digest and exact source are recorded in
+`docs/cosmo-cpu-candidate-20260928.md`. The compact adapter and receipt are
+preserved separately from the seven-day workflow artifact. This is **one
+trained experimental candidate, zero of three selected Azure T4 QLoRA pilots,
+and zero production routes**. It does not change Phase A's 30/40 verification
+or the Phase B hold.
+
+The 2026-09-27 transfer audit corrects an understated reservation. Pinned
+Qwen model downloads total 13,659,581,269 bytes for all three families; the
+pinned wheel archive adds roughly 4,091,454,718 bytes. At the subscription's
+$0.045/GB NAT data meter, their combined 17,751,035,987-byte transfer alone
+costs about $0.80 before retries and other downloads. The current shared
+guard therefore reserves $2.00 for NAT data, $0.35 for NAT hours, $0.05 for
+public IP/network and $0.25 for managed disks. All ancillary categories sum
+to $3.20. Six hours at the captured $0.526/hour VM meter plus ancillary
+categories and $1.25 emergency cleanup reserve total **$7.606**; the nominal
+unallocated space is **$4.394** below $12. These are reservations, not a
+guaranteed invoice or a signed all-in quote. The earlier $5.556 estimate is
+superseded. Verify account charges for the controller, 30-day protected
+retention, archive, taxes and transfers outside the NAT path before allocating
+a GPU. The Azure what-if checks on 2026-09-27 succeeded for the isolated VM
+and watchdog templates, but created no resources and proved no GPU capacity.
+
+On 2026-09-27, the exact pinned Hugging Face revisions of all three base
+models were downloaded into a **free, ephemeral Azure Cloud Shell**. The
+existing offline verifier returned `verified: true` for Cosmo (9 files,
+1,519,207,673 bytes), Orion (11 files, 4,079,448,540 bytes), and Nova
+(12 files, 8,060,925,056 bytes). Their temporary directories reported
+`protected_for_loading: false`; they are neither preserved adapters nor
+ready-to-train mounts and will disappear when the Cloud Shell session ends.
+No GPU, paid training, production deployment or billable pilot compute exists;
+the separately recorded CPU adapter was trained on 2026-09-28.
+`python3 -m training.pinned_snapshot_download --family kova-cosmo
+--destination /absolute/new/snapshot` prints the pinned download plan;
+adding `--execute` fetches only the manifest's files into a new directory,
+checks bytes and SHA-256 for each, then publishes that directory atomically.
+It does not create a VM, grant, watchdog or spending control. On a paid VM its
+network transfer must fit the independently admitted cost and deadline.
+The two hash-pinned Python 3.12 training locks installed successfully in that
+free Cloud Shell. A real `transformers==5.17.0` Qwen tokenizer check exposed
+that `apply_chat_template` returns a `BatchEncoding` rather than the bare list
+assumed by the previous loss-mask probe. The corrected source at `aef58b2`
+accepts its `input_ids`; a repeat with all 27 training and 15 validation rows
+passed the completion-mask check and constructed `trl==1.13.0` `SFTConfig`.
+This is a CPU-side API check; it has not exercised T4 quantization or training.
+The full hash-verified Cosmo checkpoint also loaded from local files on CPU
+with `trust_remote_code=False`: 596,049,920 parameters and no missing LoRA
+target modules from the approved recipe. That earlier check produced no adapter;
+the later CPU experiment is recorded above.
+
+The isolated evidence group now contains storage account `kova42c1a27`.
+Deployment succeeded on 2026-09-27; live readback confirms HTTPS-only access,
+TLS 1.2 minimum, no anonymous Blob access, no Shared Key access, and 30-day
+`Unlocked` policies on `cosmo-ledger` and `cosmo-adapters`. On 2026-09-28,
+the two **experimental CPU adapter ZIPs** were uploaded under
+`cpu-experimental/2026-09-28/` in `cosmo-adapters`; their downloaded readbacks
+matched the local SHA-256 digests. Their sizes, ETags and hashes are recorded
+in the Cosmo and Orion CPU candidate documents. A temporary user Blob Data
+Contributor role limited to that container was removed after readback, and
+an exact-scope role query returned `[]`. No ledger, locked retention,
+independent controller or selected paid QLoRA adapter exists. Do not claim
+protected preservation until the independent controller, retention lock,
+archive and all-in cost admission have been verified.
+
+**Watchdog live test, 2026-09-28:** After the owner explicitly approved
+Contributor for `kova-pilot-watchdog-c1a27` only on the pilot and control
+resource groups, Azure assigned exactly those two group-scoped roles. The first
+empty-group test fired after its deadline and deleted the pilot group. Its
+subsequent GET returned 403 because deleting the group removed that group's
+role assignment, so the initial safe gate left the control group intact; the
+operator deleted that residual group after independently confirming the pilot
+group was absent. The source gate now allows self-cleanup when the GET is 403
+**and** the group DELETE action both succeeded and completed with HTTP 200.
+In a second live empty-group test, the corrected workflow deleted the pilot
+group and its own control group automatically after the 00:07 UTC deadline.
+At 00:08:53 UTC, both approved groups returned `exists=false`. The controller's
+readback expectation was updated to match the actual Logic App trigger shape.
+This proves the bounded empty-group cleanup path and scoped IAM; it does not
+prove behavior against a live VM, controller admission, artifact preservation,
+an all-in $12 cost bound, or training. No watchdog or GPU remains deployed.
+
+## Historical Cosmo-only worksheet (superseded)
+
 **Status: source-only. Paid execution is disabled.** The first pilot is Cosmo
 only; Orion, Nova, deployment, and production routing are outside this release.
 This document is an approval worksheet, not an authorization to spend.
@@ -190,9 +311,17 @@ full charges remain prerequisites before storage deployment or a paid grant.
 **Paid launch remains blocked.** Source integration is implemented, but the
 TLS host, live immutable storage, isolated credentials and measured all-in
 cost/deletion bound remain unprovisioned or unverified. The watchdog template
-now deletes its own dedicated group after successful pilot-group deletion,
-with Contributor scoped only to those two groups. The verifier checks that
-exact sequence and both roles. Self-deletion has not been rehearsed in Azure.
+serializes its minute-triggered runs. After requesting pilot-group deletion,
+it makes a synchronous GET for the exact pilot group and requests its own
+dedicated group's deletion only if that GET returns HTTP 404. An HTTP 202
+acceptance, a still-present group, a timeout, or an unrelated GET failure
+cannot by itself start watchdog self-deletion. The verifier checks this exact
+action graph and both group-scoped Contributor roles. Azure documents that
+[HTTP 202 can precede completion](https://learn.microsoft.com/en-us/azure/connectors/connectors-native-http)
+and [resource deletion can be asynchronous](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/async-operations).
+The extra probe and any queued/retried runs belong in the complete signed cost
+quote. Self-deletion, 404 handling, absence of residual resources, and cleanup
+inside the priced window have not been rehearsed in Azure.
 Tests use real RSA/Ed25519 signatures and the real guest/issuer/HTTP logic with
 synthetic ARM resources; they do not prove Azure deployment or cleanup.
 The default ledger CLI makes zero provider calls and rejects `--execute`.
@@ -372,6 +501,22 @@ so this worksheet deliberately covers three intersected billing hours.
 
 The corrected **conditional** 90-minute reservation is therefore still
 **$0.7890 + $1.1500 + $1.2500 = $3.1890**, with $0.1110 below the owner ceiling.
+The signed launch quote now also requires explicit nonnegative upper bounds
+for controller runtime, controller registry/logs, protected evidence retention,
+external archive/receipts, and tax/other fees. Controller runtime and both
+durable evidence destinations require positive reserves; their sum is added
+to the conditional worksheet and rejected above $3.30. The synthetic test
+values are not account prices. No complete live quote exists yet, and the
+$0.1110 gap must cover every additional category for a 90-minute window.
+The signed quote now carries the exact ledger context hash, ledger retention
+days, adapter container, and external archive URI, retention days and 1 MiB
+maximum. The protected controller context fixes these values; the grant issuer
+rejects a quote for a shorter or different storage scope before consuming the
+single training grant. The preserver checks the adapter container against that
+context, and the offline terminal verifier checks the signed archive URI,
+retention assertion and size. The archive operator must still provide a real
+independently verified storage lock, destination and account-specific price;
+the signed assertion alone does not establish that a destination is provisioned.
 The four changed category reserves have the same combined total as before.
 Unlike the former worksheet, the known mandatory download floor now fits its
 own category, leaving **1,611,559,831 bytes** for all remaining NAT traffic.
@@ -434,6 +579,15 @@ capacity, establish account prices, or prove that the image boots the pinned
 CUDA 12.8 / bitsandbytes stack. No provider registration has been changed. A read-only subscription-wide
 management-lock inventory on 2026-09-25 returned zero locks and no next page;
 this does not replace the fresh per-grant check after future provisioning.
+
+On 2026-09-26, a read-only Azure portal check in the same subscription again
+showed `Microsoft.Network` and `Microsoft.Logic` as **NotRegistered**. The
+Compute quota view showed East US Standard NCASv3_T4 Family vCPUs at `0 of 4`
+and Total Regional vCPUs at `0 of 14`. The subscription resource list returned
+zero matches with the filter `Storage account`. This portal view is a dated
+prerequisite observation, not live capacity, complete inventory, a price quote
+or permission to register a provider or create storage.
+
 `what-if` may validate the proposed
 resource graph, but it does not reserve a GPU. Capacity and exact hardware
 identity can be confirmed only after an approved allocation.

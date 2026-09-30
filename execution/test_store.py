@@ -164,6 +164,28 @@ class JobStoreTests(SyntheticAdapterTestCase):
             with self.assertRaises(ExecutionError):
                 self.store.replay(OWNER, self.job, limit=value)
 
+    def test_future_replay_cursor_fails_instead_of_silently_missing_new_events(self):
+        current = self.store.status(OWNER, self.job)["sequence"]
+        self.assertEqual(self.store.replay(OWNER, self.job, after=current),
+                         {"events": [], "next_sequence": current})
+        future = current + 2
+        with self.assertRaisesRegex(ExecutionError, "future event cursor"):
+            self.store.replay(OWNER, self.job, after=future)
+        self.start()
+        self.assertEqual(self.store.replay(OWNER, self.job, after=current)["events"][0]["type"],
+                         "job_resumed")
+        with self.assertRaisesRegex(ExecutionError, "future event cursor"):
+            self.store.replay(OWNER, self.job, after=future)
+
+    def test_missing_persisted_event_fails_replay_instead_of_skipping_it(self):
+        self.start()
+        current = self.store.status(OWNER, self.job)["sequence"]
+        self.store._db.execute("DELETE FROM events WHERE job=? AND sequence=?", (self.job, current))
+        with self.assertRaisesRegex(ExecutionIntegrityError, "event journal sequence gap"):
+            self.store.replay(OWNER, self.job)
+        with self.assertRaisesRegex(ExecutionIntegrityError, "event journal sequence gap"):
+            self.store.replay(OWNER, self.job, after=current - 1)
+
     def test_snapshot_checksum_corruption_is_detected_before_execution(self):
         self.store._db.execute("UPDATE jobs SET spec=? WHERE id=?", (b"{}", self.job))
         with self.assertRaises(ExecutionIntegrityError):

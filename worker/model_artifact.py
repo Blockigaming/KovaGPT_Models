@@ -159,7 +159,16 @@ def _metadata_contract(metadata, names, candidate_id):
     adapter = metadata["adapter_config.json"]
     from release.model_revisions import MODEL_SOURCE_REFERENCES
     source = MODEL_SOURCE_REFERENCES.get(candidate_id)
-    _require(source is not None and adapter.get("base_model_name_or_path") == source.model,
+    base = adapter.get("base_model_name_or_path")
+    # PEFT saves the trainer's absolute snapshot directory here. It is not a
+    # serving path: the separately pinned manifest binds the packaged base
+    # bytes, candidate and revision before this metadata is inspected.
+    local_snapshot = (type(base) is str and 1 < len(base) <= 4096 and
+                      base.startswith("/") and not base.startswith("//") and
+                      os.path.normpath(base) == base and "\\" not in base and
+                      all(ord(character) >= 32 and ord(character) != 127
+                          for character in base))
+    _require(source is not None and (base == source.model or local_snapshot),
              "adapter base model differs from pinned family source")
     _require(adapter.get("peft_type") == "LORA" and adapter.get("task_type") == "CAUSAL_LM"
              and type(adapter.get("r")) is int

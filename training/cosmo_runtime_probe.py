@@ -7,6 +7,7 @@ required before this module can download or load the pinned model.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 import json
 import os
 from pathlib import Path
@@ -53,14 +54,22 @@ def target_inventory(model) -> dict[str, int]:
 
 
 def completion_tokens(tokenizer, row: dict, max_length: int) -> tuple[list[int], list[int]]:
+    from training.template_policy import CHAT_TEMPLATE_KWARGS
+    need(row.get("chat_template_kwargs", CHAT_TEMPLATE_KWARGS) == CHAT_TEMPLATE_KWARGS)
     prompt = tokenizer.apply_chat_template(
         row["prompt"], tokenize=True, add_generation_prompt=True,
-        return_tensors=None,
+        return_tensors=None, **CHAT_TEMPLATE_KWARGS,
     )
     full = tokenizer.apply_chat_template(
         row["prompt"] + row["completion"], tokenize=True,
-        add_generation_prompt=False, return_tensors=None,
+        add_generation_prompt=False, return_tensors=None, **CHAT_TEMPLATE_KWARGS,
     )
+    # Transformers 5 returns BatchEncoding for tokenize=True even without
+    # tensors. Earlier versions returned bare token lists.
+    if isinstance(prompt, Mapping):
+        prompt = prompt.get("input_ids")
+    if isinstance(full, Mapping):
+        full = full.get("input_ids")
     need(type(prompt) is list and type(full) is list)
     need(0 < len(prompt) < len(full) <= max_length)
     need(full[:len(prompt)] == prompt)

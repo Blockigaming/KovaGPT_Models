@@ -1,0 +1,45 @@
+name: One bounded Orion CPU candidate
+
+on:
+  push:
+    branches: [feature/phase-a-cumulative-review-20260927]
+    paths:
+      - .github/workflows/orion-cpu-candidate.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  train:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install hash-pinned CPU training stack
+        run: python -m pip install --require-hashes -r requirements/cosmo-loss-mask-py312-linux-cpu.lock
+      - name: Install pinned approved-data import dependencies
+        run: |
+          sed -n '/^cffi==/p;/^cryptography==/p;/^pycparser==/p' requirements/kova-cosmo-sft-py312-linux.lock > "$RUNNER_TEMP/cosmo-imports.lock"
+          python -m pip install --require-hashes -r "$RUNNER_TEMP/cosmo-imports.lock"
+          python -c 'from training import cosmo_qlora_training'
+      - name: Download and verify immutable Orion base
+        run: python -m training.pinned_snapshot_download --family kova-orion --destination "$RUNNER_TEMP/kova-orion-base" --execute
+      - name: Train and receipt experimental Orion adapter
+        env:
+          CUDA_VISIBLE_DEVICES: ''
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+          WANDB_DISABLED: 'true'
+        run: python -m training.cosmo_cpu_candidate --family kova-orion --execute --snapshot "$RUNNER_TEMP/kova-orion-base" --output "$RUNNER_TEMP/kova-orion-candidate"
+      - name: Preserve Orion candidate and receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orion-cpu-lora-candidate
+          path: ${{ runner.temp }}/kova-orion-candidate/
+          if-no-files-found: warn
+          retention-days: 7
