@@ -87,3 +87,59 @@ Local verification passed 973 Python tests, 80 Node tests, 20 source-policy drif
 The draft-input approval blocker is resolved by the owner-delegated revisions and verification. The active historical training contracts are deliberately unchanged and cannot launch a new candidate implicitly. A future separately scoped changed-candidate campaign must bind this revised input pack, satisfy the existing authenticated controller/route and provenance requirements, and receive execution/cost authorization before any training or GPU evaluation. No unchanged-candidate GPU rerun is authorized.
 
 A35 still requires actual 36/36 per repetition, 108/108 across three repetitions, all category cases, 14/14 manual and every applicable criterion PASS, with zero identity/safety/grounding failures and no averaging. Input masks and software tests supply no candidate quality credit. Future model manual reviews remain pending. Latency/cost operational thresholds remain unset and separately unapproved.
+
+## Minimum changed-candidate screen
+
+The executable plan is `config/a35-nova-screen.v1.json`. Nova alone starts from
+the pinned Qwen3-4B base, trains one epoch over all 61 revised training records
+(eight optimizer steps; validation stays held out), and runs the 36 strict cases
+once. Only 36/36 unlocks the 14 manual cases. No repeated confirmation, other
+family, old adapter, resume, or retry is authorized by this plan. This estimates
+the effect of the combined correction bundle; it cannot isolate individual
+prompt/data effects or establish generalization beyond this exposed suite.
+
+The actual training entry point is `training.a35_nova_screen`; its shared SFT
+configuration is checked with real TRL and the immutable tokenizer in Verify.
+Strict output stays at 128 tokens; manual output increases to 2,048. A finish
+without EOS fails closed, even if the text appears correct. Full manual review
+requires every one of the 48 criteria across 14 cases to pass.
+
+The single-use external owner grant must bind the final published source head,
+plan hash, prepared-pack hash and run ID. It supplies no authenticated-route
+credit. The prepared pack SHA-256 is
+`fcbe8556c9587d960a531bd0f91d5b7de13fa77fd69d3aa9d62a893dcab91726`.
+The original corrected prompt/supplement hashes remain unchanged.
+
+Use one private East US NC4as_T4_v3 VM, one allocation attempt. Anchor the
+immutable 90-minute envelope before creating any resource. Deploy the existing
+watchdog in its exclusive control group first, then call
+`training.a35_screen_control.verify_before_vm` against fresh ARM GETs. It
+requires an enabled, correctly bound workflow/trigger, exact cleanup roles,
+empty VM scope, and no locks/denials. Only then allocate the one VM. Verify
+actual VM/NAT/disk/identity/image settings with the existing ARM verifier before
+issuing the runtime grant. Grant Blob access only on the existing evidence
+container; remove that exact assignment when the disposable identity is deleted.
+
+The reviewed bootstrap stops its entire process group at minute 70. The
+independent watchdog starts deallocation and group deletion at minute 75;
+15 minutes remain for cleanup. The external operator always calls the scoped
+cleanup routine immediately after success/failure and verifies both groups
+absent. A 202/403 response is not absence. The watchdog self-deletes only after
+its VM group is gone. Preserve and read back create-only adapter/case/report
+evidence before cleanup; a failed upload stops further model work. No VM or
+watchdog has been created during free preparation. The new live watchdog check
+is necessarily performed within the future authorized resource-creation stage.
+
+The reserved all-in ceiling is **$5.00**: compute $1.20, NAT hours $0.10,
+NAT data $1.60, outbound IP $0.02, disk/transactions $0.25, evidence $0.10,
+egress $0.10, watchdog/logs $0.05, fees $0.58, cleanup contingency $1.00.
+Two billed hours are reserved, with 31 GB ingress/1 GB egress quotas and
+64 MiB of evidence. Current public meter observations are preserved in
+`evaluations/a35-nova-screen-pricing.v1.json`. Recheck account rates before
+creation; reject any rate/capacity/cleanup mismatch rather than expand scope.
+Azure billing alerts are not hard stops; provider control-plane failure remains
+a cloud-provider risk. This spending reservation does not approve unset A35
+operational thresholds. The final standard remains three perfect repetitions
+and all separate provenance, authenticated-route, latency and cost evidence.
+
+Paid execution remains blocked pending one bounded owner authorization.
