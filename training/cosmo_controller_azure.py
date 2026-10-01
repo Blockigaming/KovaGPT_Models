@@ -19,6 +19,7 @@ from training import cosmo_lifecycle_authority as authority
 from training import cosmo_qlora_grant as client
 from training import cosmo_qlora_launch as launch
 from training.cosmo_controller_ledger import AzureBlobIO, LedgerRejected, digest, need, parse_json, utc_now
+from training.watchdog_readback import verify_watchdog_properties
 
 ARM = "https://management.azure.com"
 CONTRIBUTOR = "b24988ac-6180-42a0-ab88-20f7382dd24c"
@@ -415,12 +416,11 @@ class AzureRequestVerifier:
              "live inbound/outbound rules differ from approved template")
         workflow = self.resource(self.watchdog, "2019-05-01")
         wp, wi = workflow["properties"], workflow["identity"]
-        need(wp["state"] == "Enabled" and wp["provisioningState"] == "Succeeded" and
-             wi["type"] == "SystemAssigned" and wi["tenantId"] == self.tenant and
-             wi["principalId"] != instance["system_assigned_identity_principal_id"] and
-             wp["parameters"] == {"deadlineUtc": {"value": cleanup_trigger_utc}} and
-             wp["definition"] == watchdog_definition(instance["resource_id"], pilot, self.lifecycle["watchdog_resource_group_id"]),
-             "watchdog disabled, changed or bound to a different deadline")
+        need(wi["type"] == "SystemAssigned" and wi["tenantId"] == self.tenant and
+             wi["principalId"] != instance["system_assigned_identity_principal_id"],
+             "watchdog identity changed")
+        verify_watchdog_properties(wp, cleanup_trigger_utc,
+            watchdog_definition(instance["resource_id"], pilot, self.lifecycle["watchdog_resource_group_id"]))
         trigger = self.resource(self.watchdog + "/triggers/every_minute", "2019-05-01")["properties"]
         need(trigger.get("state") == "Enabled" and trigger.get("provisioningState") == "Succeeded",
              "watchdog recurrence trigger is not enabled")

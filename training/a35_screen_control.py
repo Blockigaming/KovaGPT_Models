@@ -11,6 +11,7 @@ import re
 import time
 
 from training.a35_nova_screen import need
+from training.watchdog_readback import verify_watchdog_properties
 
 
 def scopes(subscription, run_id):
@@ -42,10 +43,7 @@ def verify_before_vm(subscription, run_id, allocation_started_epoch, read, *, no
          and re.fullmatch(r"[a-f0-9-]{36}", principal)
          and watchdog["location"].lower() == "eastus", "watchdog identity/scope drift")
     props = watchdog["properties"]
-    need(props["state"] == "Enabled" and props["provisioningState"] == "Succeeded"
-         and props["parameters"] == {"deadlineUtc": {"value": deadline}}
-         and props["definition"] == watchdog_definition(context["vm_id"], pilot, control),
-         "watchdog deadline, cleanup actions or enabled state drift")
+    verify_watchdog_properties(props, deadline, watchdog_definition(context["vm_id"], pilot, control))
     trigger = read(ARM + context["watchdog_id"] + "/triggers/every_minute?api-version=2019-05-01")
     need(trigger["properties"]["state"] == "Enabled", "watchdog trigger is not enabled")
     for group in (pilot, control):
