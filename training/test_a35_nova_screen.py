@@ -1,11 +1,15 @@
 """Free synthetic regressions; stubbed completions are never quality evidence."""
 
 from copy import deepcopy
+from contextlib import ExitStack
 import json
+import os
 from pathlib import Path
+import sys
 import tempfile
+import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from evaluation.completion_evidence import generation_evidence
 from evaluation.historical_suite_bridge import load_archived_suite
@@ -115,10 +119,173 @@ class ScreenTests(unittest.TestCase):
         self.assertNotIn("private</think>", json.dumps(rows))
 
     def test_manual_packet_keeps_all_14_cases_and_48_pending_criteria(self):
-        text = s.manual_packet(self.cases, [])
+        generate, _ = self.sample()
+        rows, _ = s.run_screen(self.cases, generate, lambda row: None)
+        text = s.manual_packet(self.cases, rows)
         self.assertEqual(text.count("\n## "), 14)
         self.assertEqual(text.count("- PENDING:"), 48)
-        self.assertEqual(text.count("NOT RUN"), 14)
+        self.assertNotIn("NOT RUN", text)
+
+    def preserve(self, report, *, manual_expected=False):
+        uploaded = {}
+        storage = Mock()
+        storage.put.side_effect = lambda name, body: uploaded.__setitem__(name, body)
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder)
+            receipt = b'{"synthetic_training_receipt":true}'
+            (output / "training-receipt.json").write_bytes(receipt)
+            with patch.object(s, "manual_packet", wraps=s.manual_packet) as packet:
+                s.preserve_screen(output, storage, report)
+                self.assertEqual(packet.call_count, int(manual_expected))
+            self.assertEqual((output / "manual-review.md").exists(), manual_expected)
+            self.assertEqual("manual-review.md" in uploaded, manual_expected)
+            self.assertEqual(json.loads((output / "screen.json").read_bytes()), report)
+            self.assertEqual(json.loads(uploaded["screen.json"]), report)
+            self.assertEqual((output / "training-receipt.json").read_bytes(), receipt)
+            if manual_expected:
+                self.assertEqual((output / "manual-review.md").read_bytes(), uploaded["manual-review.md"])
+        return uploaded
+
+    def test_35_of_36_never_generates_writes_or_uploads_manual_packet(self):
+        first = next(c["id"] for c in self.cases if c["evaluation"]["kind"] == "exact_json")
+        generate, calls = self.sample(lambda c, a, t, b: ("false" if c["id"] == first else a, t))
+        rows, state = s.run_screen(self.cases, generate, lambda row: None)
+        self.assertEqual(sum(r["result"] == "exact_json_pass" for r in rows), 35)
+        self.assertEqual(state, "strict_threshold_failed_manual_skipped")
+        self.assertEqual(len(calls), 36)
+        self.assertTrue(all(budget == 128 for _, budget in calls))
+        self.preserve({"status": state, "cases": rows})
+        with self.assertRaisesRegex(ValueError, "strict 36/36"):
+            s.manual_packet(self.cases, rows)
+
+    def test_36_of_36_generates_exactly_14_manual_and_publishes_48_criteria_once(self):
+        generate, calls = self.sample()
+        rows, state = s.run_screen(self.cases, generate, lambda row: None)
+        self.assertEqual([budget for _, budget in calls], [128] * 36 + [2048] * 14)
+        self.assertEqual(len({case_id for case_id, _ in calls}), 50)
+        uploaded = self.preserve({"status": state, "cases": rows}, manual_expected=True)
+        packet = uploaded["manual-review.md"].decode()
+        self.assertEqual(packet.count("\n## "), 14)
+        self.assertEqual(packet.count("- PENDING:"), 48)
+
+    def test_evaluator_exception_preserves_partial_results_without_manual(self):
+        for fail_at in (1, 36):
+            with self.subTest(fail_at=fail_at):
+                generate, calls = self.sample()
+                saved = []
+                scorer = s.score_case
+                def evaluate(*args):
+                    if len(calls) == fail_at:
+                        raise ValueError("synthetic evaluator error")
+                    return scorer(*args)
+                with patch.object(s, "score_case", side_effect=evaluate):
+                    with self.assertRaisesRegex(ValueError, "evaluator error"):
+                        s.run_screen(self.cases, generate, saved.append)
+                self.assertEqual(len(calls), fail_at)
+                self.assertTrue(all(budget == 128 for _, budget in calls))
+                self.preserve({"status": "failed", "cases": saved})
+
+    def test_incomplete_or_missing_completion_evidence_never_unlocks_manual(self):
+        for evidence in (None, {}, generation_evidence([7] * 128, max_new_tokens=128, eos_token_id=9),
+                         generation_evidence([7], max_new_tokens=128, eos_token_id=9)):
+            with self.subTest(evidence=evidence):
+                sample, calls = self.sample()
+                def generate(prompt, budget):
+                    answer, _, latency = sample(prompt, budget)
+                    return answer, evidence, latency
+                rows, state = s.run_screen(self.cases, generate, lambda row: None)
+                self.assertEqual((len(calls), state), (1, "completion_failed"))
+                self.preserve({"status": state, "cases": rows})
+
+    def test_failed_36th_checkpoint_blocks_manual_despite_36_scored_passes(self):
+        generate, calls = self.sample()
+        saved = []
+        def checkpoint(row):
+            saved.append(row)
+            if len(saved) == 36:
+                raise OSError("independent evidence readback failed")
+        with self.assertRaisesRegex(OSError, "readback failed"):
+            s.run_screen(self.cases, generate, checkpoint)
+        self.assertEqual((len(calls), len(saved)), (36, 36))
+        self.assertTrue(s.strict_passed(self.cases, saved))
+        self.preserve({"status": "failed", "cases": saved})
+
+    def test_safety_contract_stop_prevents_manual_and_packet_even_during_manual(self):
+        for stop_result in ("private_output_blocked", "output_contract_failed"):
+            for fail_at in (1, 36, 37):
+                with self.subTest(stop_result=stop_result, fail_at=fail_at):
+                    generate, calls = self.sample()
+                    scorer = s.score_case
+                    def evaluate(*args):
+                        return (stop_result, None) if len(calls) == fail_at else scorer(*args)
+                    with patch.object(s, "score_case", side_effect=evaluate):
+                        rows, state = s.run_screen(self.cases, generate, lambda row: None)
+                    self.assertEqual((len(calls), state), (fail_at, "safety_contract_failed"))
+                    self.preserve({"status": state, "cases": rows})
+
+    def test_missing_duplicate_or_mismatched_strict_evidence_cannot_create_packet(self):
+        generate, _ = self.sample()
+        valid, _ = s.run_screen(self.cases, generate, lambda row: None)
+        mutations = [lambda rows: rows.pop(0), lambda rows: rows.__setitem__(1, rows[0]),
+            lambda rows: rows[0].pop("completion_evidence"),
+            lambda rows: rows[0].update(completion_status="unverified"),
+            lambda rows: rows[0].update(prompt_sha256="0" * 64),
+            lambda rows: rows[0].update(result="exact_json_fail")]
+        for mutate in mutations:
+            rows = deepcopy(valid)
+            mutate(rows)
+            self.assertFalse(s.strict_passed(self.cases, rows))
+            self.preserve({"status": "manual_review_pending", "cases": rows})
+        self.preserve({"status": "failed", "cases": valid})
+
+    def test_stale_local_attempt_is_rejected_before_runtime_or_storage(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "candidate"
+            output.mkdir()
+            old_packet = output / "manual-review.md"
+            old_packet.write_text("old candidate must not count")
+            with patch.object(s, "load_plan", return_value=self.plan), \
+                 patch.object(s, "clean_head", return_value="c" * 40), \
+                 patch.object(s, "admit", return_value=time.time() + 100), \
+                 patch("training.a35_screen_storage.Storage") as storage:
+                with self.assertRaisesRegex(ValueError, "new output required"):
+                    s.execute(Path(folder), output, self.grant())
+                storage.assert_not_called()
+            self.assertEqual(old_packet.read_text(), "old candidate must not count")
+
+    def test_stale_packet_cannot_be_overwritten_or_uploaded_as_current(self):
+        generate, _ = self.sample()
+        rows, state = s.run_screen(self.cases, generate, lambda row: None)
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder)
+            (output / "manual-review.md").write_bytes(b"previous candidate")
+            storage = Mock()
+            with self.assertRaises(FileExistsError):
+                s.preserve_screen(output, storage, {"status": state, "cases": rows})
+            self.assertEqual((output / "manual-review.md").read_bytes(), b"previous candidate")
+            self.assertEqual([call.args[0] for call in storage.put.call_args_list], ["screen.json"])
+        self.assertNotEqual(Storage("a" * 32).prefix, Storage("b" * 32).prefix)
+
+    def test_execute_failure_preserves_evidence_and_propagates_for_cleanup(self):
+        with tempfile.TemporaryDirectory() as folder, ExitStack() as stack:
+            output = Path(folder) / "candidate"
+            stack.enter_context(patch.object(s, "load_plan", return_value=self.plan))
+            stack.enter_context(patch.object(s, "clean_head", return_value="c" * 40))
+            stack.enter_context(patch.object(s, "admit", return_value=time.time() + 100))
+            stack.enter_context(patch.dict(os.environ, {key: "1" for key in
+                ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE")}))
+            stack.enter_context(patch("training.cosmo_qlora_training.verify_installed_stack"))
+            stack.enter_context(patch("training.snapshot_verifier.verify_snapshot"))
+            stack.enter_context(patch("importlib.metadata.version", return_value="0.48.2"))
+            stack.enter_context(patch.dict(sys.modules, {"torch": None}))
+            storage = stack.enter_context(patch("training.a35_screen_storage.Storage")).return_value
+            with self.assertRaises(ModuleNotFoundError):
+                s.execute(Path(folder), output, self.grant())
+            report = json.loads((output / "screen.json").read_text())
+            self.assertEqual((report["status"], report["cases"]), ("failed", []))
+            self.assertFalse((output / "manual-review.md").exists())
+            self.assertEqual([call.args[0] for call in storage.put.call_args_list],
+                             ["run-claim.json", "screen.json"])
 
     def test_failed_preservation_stops_before_next_generation(self):
         generate, calls = self.sample()

@@ -240,6 +240,19 @@ def write_new(path, value):
         target.write(encoded(value))
 
 
+def strict_passed(cases, results):
+    """Only this sweep's complete, distinct strict results unlock manual work."""
+    strict = [c for c in cases if c["evaluation"]["kind"] == "exact_json"]
+    return (len(strict) == 36 and len({c["id"] for c in strict}) == 36
+        and len(results) >= 36 and all(
+            row.get("case_id") == case["id"]
+            and row.get("prompt_sha256") == sha(case["prompt"].encode())
+            and row.get("result") == "exact_json_pass"
+            and row.get("completion_status") == "verified_complete"
+            and completion_status(row.get("completion_evidence")) == "verified_complete"
+            for case, row in zip(strict, results[:36])))
+
+
 def run_screen(cases, generate, checkpoint):
     """One sweep; do not pay for manual/repeats if strict capability is absent."""
     strict = [c for c in cases if c["evaluation"]["kind"] == "exact_json"]
@@ -247,7 +260,7 @@ def run_screen(cases, generate, checkpoint):
     need(len(strict) == 36 and len(manual) == 14, "pinned suite shape changed")
     results = []
     for group in (strict, manual):
-        if group is manual and sum(r["result"] == "exact_json_pass" for r in results) != 36:
+        if group is manual and not strict_passed(cases, results):
             return results, "strict_threshold_failed_manual_skipped"
         for case in group:
             budget = 2048 if group is manual else 128
@@ -268,6 +281,7 @@ def run_screen(cases, generate, checkpoint):
 
 
 def manual_packet(cases, results):
+    need(strict_passed(cases, results), "manual packet requires complete strict 36/36")
     by_id = {row["case_id"]: row for row in results}
     text = ["# Changed Nova screen — manual review", "",
             "All 14 cases and every applicable criterion must PASS. No averaging.",
@@ -283,6 +297,22 @@ def manual_packet(cases, results):
                      "Answer:", "", "````text", (row["answer"] or "[private output blocked]")
                      if row else "[not generated: screening stopped]", "````", ""])
     return "\n".join(text)
+
+
+def preserve_screen(output, storage, report):
+    """Preserve every outcome; never create a manual artifact on a stopped sweep."""
+    report["result_counts"] = dict(Counter(row["result"] for row in report["cases"]))
+    report["case_count"] = len(report["cases"])
+    report["category_counts"] = {category: dict(Counter(r["result"] for r in report["cases"]
+        if r["category"] == category)) for category in sorted({r["category"] for r in report["cases"]})}
+    write_new(output / "screen.json", report)
+    storage.put("screen.json", encoded(report))
+    cases = load_archived_suite()["cases"]
+    if report["status"] == "manual_review_pending" and strict_passed(cases, report["cases"]):
+        packet = manual_packet(cases, report["cases"]).encode()
+        with (output / "manual-review.md").open("xb") as target:
+            target.write(packet)
+        storage.put("manual-review.md", packet)
 
 
 def execute(snapshot, output, grant):
@@ -409,15 +439,7 @@ def execute(snapshot, output, grant):
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
-        report["result_counts"] = dict(Counter(row["result"] for row in report["cases"]))
-        report["case_count"] = len(report["cases"])
-        report["category_counts"] = {category: dict(Counter(r["result"] for r in report["cases"]
-            if r["category"] == category)) for category in sorted({r["category"] for r in report["cases"]})}
-        write_new(output / "screen.json", report)
-        packet = manual_packet(load_archived_suite()["cases"], report["cases"]).encode()
-        (output / "manual-review.md").write_bytes(packet)
-        storage.put("screen.json", encoded(report))
-        storage.put("manual-review.md", packet)
+        preserve_screen(output, storage, report)
     return report
 
 
