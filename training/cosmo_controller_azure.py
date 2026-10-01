@@ -392,7 +392,24 @@ class AzureRequestVerifier:
              not nat["properties"].get("publicIpPrefixes") and
              ip["properties"]["publicIPAllocationMethod"] == "Static" and
              ip["properties"].get("publicIPAddressVersion", "IPv4") == "IPv4" and
-             not ip["properties"].get("ddosSettings"), "NAT path or public-IP cost changed")
+             ip["properties"].get("ddosSettings") == {"protectionMode": "VirtualNetworkInherited"},
+             "NAT path or public-IP cost changed")
+        # Azure returns this inherited mode for the reviewed outbound-only IP.
+        # Inheritance alone is not cost evidence: read its actual parent VNet
+        # and require explicit absence of paid protection, with the same isolated
+        # subnet/NAT/IP graph. Missing evidence must not become a false default.
+        vnet = self.resource(network["subnet_id"].rsplit("/subnets/", 1)[0], "2024-05-01")
+        vp = vnet["properties"]
+        need(vnet["location"].casefold() == "eastus" and
+             vp.get("provisioningState") == "Succeeded" and
+             vp.get("enableDdosProtection") is False and
+             vp.get("ddosProtectionPlan") is None and
+             vp.get("addressSpace") == {"addressPrefixes": ["10.91.0.0/16"]} and
+             vp.get("virtualNetworkPeerings") == [] and
+             [item["id"] for item in vp["subnets"]] == [network["subnet_id"]] and
+             nat["properties"].get("subnets") == [{"id": network["subnet_id"]}] and
+             ip["properties"].get("natGateway") == {"id": network["nat_gateway_id"]},
+             "inherited DDoS protection lacks reviewed VNet evidence")
         extension_id = instance["resource_id"] + "/extensions/NvidiaGpuDriverLinux"
         extension = self.resource(extension_id, "2024-03-01")["properties"]
         need(extension.get("provisioningState") == "Succeeded" and

@@ -74,8 +74,18 @@ class AzureVerifierTests(unittest.TestCase):
             'natGateway': {'id': n['nat_gateway_id']},
             'ipConfigurations': [{'id': n['vm_nic_id'] + '/ipConfigurations/private'}],
             'networkSecurityGroup': {'id': n['network_security_group_id']}})
-        put(n['nat_gateway_id'], '2024-05-01', {'publicIpAddresses': [{'id': n['nat_gateway_public_ip_id']}]}, sku={'name': 'Standard'})
-        put(n['nat_gateway_public_ip_id'], '2024-05-01', {'publicIPAllocationMethod': 'Static'}, sku={'name': 'Standard'})
+        put(n['nat_gateway_id'], '2024-05-01', {
+            'publicIpAddresses': [{'id': n['nat_gateway_public_ip_id']}],
+            'subnets': [{'id': n['subnet_id']}]}, sku={'name': 'Standard'})
+        put(n['nat_gateway_public_ip_id'], '2024-05-01', {
+            'publicIPAllocationMethod': 'Static',
+            'natGateway': {'id': n['nat_gateway_id']},
+            'ddosSettings': {'protectionMode': 'VirtualNetworkInherited'}}, sku={'name': 'Standard'})
+        self.vnet_id = n['subnet_id'].rsplit('/subnets/', 1)[0]
+        put(self.vnet_id, '2024-05-01', {
+            'provisioningState': 'Succeeded', 'enableDdosProtection': False,
+            'addressSpace': {'addressPrefixes': ['10.91.0.0/16']},
+            'subnets': [{'id': n['subnet_id']}], 'virtualNetworkPeerings': []}, location='eastus')
         self.extension_id = self.instance['resource_id'] + '/extensions/NvidiaGpuDriverLinux'
         put(self.extension_id, '2024-03-01', {'provisioningState': 'Succeeded',
             'publisher': 'Microsoft.HpcCompute', 'type': 'NvidiaGpuDriverLinux',
@@ -148,8 +158,81 @@ class AzureVerifierTests(unittest.TestCase):
 
     def test_real_guest_issuer_azure_adapter_exchange(self):
         self.f.test_committed_response_matches_existing_guest_verifier()
-        self.assertEqual(len(self.reads), 21)
+        self.assertEqual(len(self.reads), 22)
         self.assertTrue(all(self.f.token not in url for url in self.reads))
+
+    def test_inherited_ddos_requires_independent_parent_vnet_readback(self):
+        self.assertTrue(self.observe()['cleanup_scope_verified'])
+        self.assertIn(azure.ARM + self.vnet_id + '?api-version=2024-05-01', self.reads)
+
+    def reject_network_mutations(self, mutations):
+        original = deepcopy(self.documents)
+        before = self.f.f.io.body
+        for rid, mutate in mutations:
+            self.documents = deepcopy(original)
+            url = azure.ARM + rid + '?api-version=2024-05-01'
+            mutate(self.documents[url])
+            with self.subTest(resource=rid, mutation=mutate), self.assertRaises(LedgerRejected):
+                self.f.issuer.issue(self.f.request)
+            self.assertEqual(self.f.f.io.body, before)
+
+    def test_unexpected_ddos_modes_never_commit_grant(self):
+        ip = self.network['nat_gateway_public_ip_id']
+        self.reject_network_mutations([
+            (ip, lambda d, mode=mode: d['properties'].update(ddosSettings={'protectionMode': mode}))
+            for mode in ('Enabled', 'Disabled', 'Unknown', 'virtualnetworkinherited',
+                         'VirtualNetworkInherited ', '', None, False, 0)
+        ])
+
+    def test_missing_or_malformed_protection_evidence_never_commits_grant(self):
+        ip = self.network['nat_gateway_public_ip_id']
+        self.reject_network_mutations([
+            (ip, lambda d: d['properties'].pop('ddosSettings')),
+            *[(ip, lambda d, value=value: d['properties'].update(ddosSettings=value))
+              for value in (None, {}, [], 'VirtualNetworkInherited', {'protectionMode': None})],
+            (self.vnet_id, lambda d: d['properties'].pop('enableDdosProtection')),
+            *[(self.vnet_id, lambda d, value=value: d['properties'].update(enableDdosProtection=value))
+              for value in (None, 0, 'false')],
+        ])
+        del self.documents[azure.ARM + self.vnet_id + '?api-version=2024-05-01']
+        with self.assertRaises(LedgerRejected):
+            self.observe()
+
+    def test_inherited_ddos_rejects_paid_plans_and_unreviewed_settings(self):
+        ip = self.network['nat_gateway_public_ip_id']
+        self.reject_network_mutations([
+            (self.vnet_id, lambda d: d['properties'].update(enableDdosProtection=True)),
+            *[(self.vnet_id, lambda d, plan=plan: d['properties'].update(ddosProtectionPlan=plan))
+              for plan in ({'id': '/subscriptions/foreign/ddosProtectionPlans/paid'}, {}, False)],
+            (ip, lambda d: d['properties']['ddosSettings'].update(ddosProtectionPlan={'id': 'paid'})),
+            (ip, lambda d: d['properties']['ddosSettings'].update(ddosProtectionPlan=None)),
+            (ip, lambda d: d['properties']['ddosSettings'].update(newProtectionSetting=True)),
+        ])
+
+    def test_inherited_ddos_rejects_mismatched_resource_graph(self):
+        ip, nat = self.network['nat_gateway_public_ip_id'], self.network['nat_gateway_id']
+        subnet = self.network['subnet_id']
+        self.reject_network_mutations([
+            *[(rid, lambda d: d.update(id='/subscriptions/foreign/resource'))
+              for rid in (self.vnet_id, ip, nat)],
+            (self.vnet_id, lambda d: d['properties'].update(subnets=[{'id': subnet + '-foreign'}])),
+            (nat, lambda d: d['properties'].update(subnets=[{'id': subnet + '-foreign'}])),
+            (nat, lambda d: d['properties'].update(publicIpAddresses=[{'id': ip + '-foreign'}])),
+            (ip, lambda d: d['properties'].update(natGateway={'id': nat + '-foreign'})),
+            (ip, lambda d: d['properties'].pop('natGateway')),
+            (nat, lambda d: d['properties'].pop('subnets')),
+        ])
+
+    def test_inherited_ddos_rejects_unreviewed_vnet_scope(self):
+        self.reject_network_mutations([
+            (self.vnet_id, lambda d: d.update(location='westus')),
+            (self.vnet_id, lambda d: d['properties'].update(provisioningState='Updating')),
+            (self.vnet_id, lambda d: d['properties'].update(addressSpace={'addressPrefixes': ['10.92.0.0/16']})),
+            (self.vnet_id, lambda d: d['properties'].update(virtualNetworkPeerings=[{'id': 'foreign'}])),
+            (self.vnet_id, lambda d: d['properties'].pop('virtualNetworkPeerings')),
+            (self.vnet_id, lambda d: d['properties'].pop('subnets')),
+            (self.vnet_id, lambda d: d['properties']['subnets'].append({'id': 'foreign'})),
+        ])
 
     def test_role_assignment_filters_quote_principal_literals(self):
         self.observe()
