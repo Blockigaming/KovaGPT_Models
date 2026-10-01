@@ -104,7 +104,7 @@ class AzureVerifierTests(unittest.TestCase):
             self.documents[url] = {'value': []}
         self.guest_roles_url = (azure.ARM + pilot.split('/resourceGroups/')[0] +
             '/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&' +
-            urlencode({'$filter': 'principalId eq ' + self.instance['system_assigned_identity_principal_id']}))
+            urlencode({'$filter': "principalId eq '" + self.instance['system_assigned_identity_principal_id'] + "'"}))
         self.documents[self.guest_roles_url] = {'value': []}
         self.effective_roles_url = (azure.ARM + pilot.split('/resourceGroups/')[0] +
             '/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&' +
@@ -150,6 +150,34 @@ class AzureVerifierTests(unittest.TestCase):
         self.f.test_committed_response_matches_existing_guest_verifier()
         self.assertEqual(len(self.reads), 21)
         self.assertTrue(all(self.f.token not in url for url in self.reads))
+
+    def test_role_assignment_filters_quote_principal_literals(self):
+        self.observe()
+        principal = self.instance['system_assigned_identity_principal_id']
+        requests = [url for url in self.reads if '/roleAssignments?' in url
+                    and '$filter' in parse_qs(urlsplit(url).query)]
+        self.assertEqual(len(requests), 2)
+        self.assertEqual([parse_qs(urlsplit(url).query) for url in requests], [
+            {'api-version': ['2022-04-01'], '$filter': [f"principalId eq '{principal}'"]},
+            {'api-version': ['2022-04-01'], '$filter': [f"assignedTo('{principal}')"]},
+        ])
+        for url in requests:
+            self.assertIn('%27' + principal + '%27', url)
+
+    def test_malformed_or_injected_principal_never_reads_azure(self):
+        principal = self.instance['system_assigned_identity_principal_id']
+        before = self.f.f.io.body
+        for invalid in (None, 1, '', 'not-a-uuid', principal[:-1],
+                        principal + '\n', ' ' + principal, principal + "'",
+                        principal + "' or principalId ne '" + principal,
+                        principal + '%27', principal + '&$filter=atScope()'):
+            with self.subTest(principal=invalid):
+                self.instance['system_assigned_identity_principal_id'] = invalid
+                self.reads.clear()
+                with self.assertRaises(LedgerRejected):
+                    self.observe()
+                self.assertEqual(self.reads, [])
+                self.assertEqual(self.f.f.io.body, before)
 
     def test_foreign_expired_and_unsigned_identity_never_reads_arm(self):
         cases = [{'aud': 'wrong'}, {'tid': 'wrong'}, {'iss': 'https://attacker.invalid/'},

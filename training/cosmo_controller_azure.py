@@ -317,7 +317,7 @@ class AzureRequestVerifier:
         principal = instance["system_assigned_identity_principal_id"]
         guest_roles = self.read(ARM + subscription +
             "/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&" +
-            urlencode({"$filter": "principalId eq " + principal}))
+            urlencode({"$filter": "principalId eq '" + principal + "'"}))
         need(type(guest_roles) is dict and type(guest_roles.get("value")) is list and
              not guest_roles.get("nextLink") and guest_roles["value"] == [],
              "pilot VM identity has ARM privileges or incomplete role evidence")
