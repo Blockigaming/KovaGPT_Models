@@ -166,6 +166,19 @@ class ArmTests(AuthFixture, unittest.TestCase):
         self.assertEqual(self.acquire.call_count, 2)
         self.opener.open.assert_called_once()
 
+    def test_auth_failure_during_deallocation_does_not_suppress_group_cleanup(self):
+        from training.a35_screen_control import cleanup
+        calls = []
+        def call(method, url):
+            calls.append((method, url))
+            if method == "POST":
+                raise a.AuthenticationRejected({"failure_class": "authentication", "status": 401,
+                                                "error_code": "ExpiredAuthenticationToken"})
+            return (404, {}) if method == "GET" else (202, {})
+        result = cleanup(SUB, "d" * 32, call, sleep=lambda _: None)
+        self.assertTrue(result["vm_group_absent"] and result["control_group_absent"])
+        self.assertEqual([method for method, _ in calls], ["POST", "DELETE", "GET", "DELETE", "GET"])
+
     def test_bad_destination_or_subscription_rejected_before_acquisition(self):
         for url in (self.url.replace(SUB, TENANT), self.url.replace(SUB, SUB + "1"),
                     self.url.replace("management.azure.com", "management.azure.com.evil.example"),

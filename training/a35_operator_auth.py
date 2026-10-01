@@ -3,7 +3,8 @@
 Token claims are checked for consistency with the pinned CLI account, not used
 as signature verification. The authenticated ARM response proves service-side
 acceptance. No token, Authorization header or credential response is logged.
-No failed HTTP operation is retried, including allocation and cleanup requests.
+The transport never replays requests. The existing independent cleanup loop
+may issue fresh cleanup requests after a failure; allocation is never retried.
 """
 
 import base64
@@ -113,7 +114,7 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-class AuthenticationRejected(RuntimeError):
+class AuthenticationRejected(OSError):
     def __init__(self, receipt):
         self.receipt = receipt
         super().__init__("ARM " + receipt["failure_class"] + " rejected: HTTP " +
