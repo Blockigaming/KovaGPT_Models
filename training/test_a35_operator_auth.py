@@ -9,6 +9,23 @@ from urllib.error import HTTPError
 
 from training import a35_operator_auth as a
 
+
+class RuntimePreflightTests(unittest.TestCase):
+    def test_real_verifier_and_rsa_backend_load_before_paid_work(self):
+        self.assertEqual(a.preflight_runtime(), {"verifier_imports": True, "rs256_backend": True})
+
+    def test_missing_cryptography_fails_closed(self):
+        with patch.object(a, "import_module", side_effect=ModuleNotFoundError("No module named 'cryptography'")):
+            with self.assertRaises(ModuleNotFoundError):
+                a.preflight_runtime()
+
+    def test_incomplete_jwt_backend_fails_closed(self):
+        jwt = Mock()
+        jwt.algorithms.get_default_algorithms.return_value = {"HS256": object()}
+        with patch.object(a, "import_module", return_value=jwt):
+            with self.assertRaisesRegex(ValueError, "RSA verification backend"):
+                a.preflight_runtime()
+
 SUB, TENANT, PRINCIPAL = "a" * 8 + "-aaaa-aaaa-aaaa-" + "a" * 12, "b" * 8 + "-bbbb-bbbb-bbbb-" + "b" * 12, "c" * 8 + "-cccc-cccc-cccc-" + "c" * 12
 
 

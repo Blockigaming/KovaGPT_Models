@@ -10,6 +10,7 @@ may issue fresh cleanup requests after a failure; allocation is never retried.
 import base64
 from fnmatch import fnmatchcase
 import hashlib
+from importlib import import_module
 import json
 import re
 import subprocess
@@ -23,6 +24,21 @@ STORAGE = "https://storage.azure.com/"
 AUDIENCES = {ARM: {ARM, "https://management.core.windows.net/"}, STORAGE: {STORAGE}}
 UUID = re.compile(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}")
 MARGIN_SECONDS = 300
+
+
+def preflight_runtime():
+    """Exercise the real verifier imports/crypto backend before any paid work.
+
+    Cloud Shell's system Python can contain PyJWT without its cryptography
+    dependency. Install the existing receiver-auth lock in an isolated venv;
+    importing just this stdlib transport is not sufficient readiness evidence.
+    """
+    for name in ("training.a35_screen_control", "training.cosmo_controller_azure"):
+        import_module(name)
+    jwt = import_module("jwt")
+    need("RS256" in jwt.algorithms.get_default_algorithms(),
+         "operator RSA verification backend unavailable")
+    return {"verifier_imports": True, "rs256_backend": True}
 
 
 def need(condition, message):
