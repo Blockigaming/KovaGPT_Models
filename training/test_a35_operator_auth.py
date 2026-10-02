@@ -3,6 +3,8 @@
 import base64
 import io
 import json
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
@@ -195,6 +197,49 @@ class ArmTests(AuthFixture, unittest.TestCase):
         result = cleanup(SUB, "d" * 32, call, sleep=lambda _: None)
         self.assertTrue(result["vm_group_absent"] and result["control_group_absent"])
         self.assertEqual([method for method, _ in calls], ["POST", "DELETE", "GET", "DELETE", "GET"])
+
+    def test_unavailable_credential_keeps_cleanup_active_without_sending_invalid_token(self):
+        from training.a35_screen_control import cleanup
+        self.acquire.side_effect = [credential(1100), credential(2200)]
+        methods = []
+        def open_request(request, timeout):
+            methods.append(request.method)
+            response = io.BytesIO(b"{}")
+            response.status = 404 if request.method == "GET" else 202
+            response.headers = {}
+            return response
+        self.opener.open.side_effect = open_request
+        def call(method, url):
+            status, _, raw = self.client.request(method, url)
+            return status, json.loads(raw)
+        result = cleanup(SUB, "d" * 32, call, sleep=lambda _: None)
+        self.assertTrue(result["vm_group_absent"] and result["control_group_absent"])
+        self.assertEqual(methods, ["DELETE", "GET", "DELETE", "GET"])
+        self.assertTrue(any(r.get("http_request_sent") is False for r in self.receipts))
+
+    def test_network_body_persisted_before_downstream_attestation_rejects_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "network.json"
+            receipt_path = Path(directory) / "receipt.json"
+            def preserve(receipt, raw):
+                path.write_bytes(raw)
+                receipt_path.write_text(json.dumps(receipt))
+            self.client.preserve_response = preserve
+            self.response(data={"properties": {"unexpected": "evidence must survive cleanup"}})
+            with self.assertRaisesRegex(ValueError, "attestation mismatch"):
+                self.client.request("GET", self.url)
+                raise ValueError("attestation mismatch")
+            self.assertEqual(json.loads(path.read_bytes())["properties"]["unexpected"],
+                             "evidence must survive cleanup")
+            self.assertNotIn("Authorization", receipt_path.read_text())
+            self.assertNotIn(self.acquire.return_value["accessToken"], receipt_path.read_text())
+
+    def test_failed_evidence_persistence_blocks_response_admission(self):
+        self.response()
+        self.client.preserve_response = Mock(side_effect=OSError("evidence unavailable"))
+        with self.assertRaisesRegex(OSError, "evidence unavailable"):
+            self.client.request("GET", self.url)
+        self.opener.open.assert_called_once()
 
     def test_bad_destination_or_subscription_rejected_before_acquisition(self):
         for url in (self.url.replace(SUB, TENANT), self.url.replace(SUB, SUB + "1"),

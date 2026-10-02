@@ -137,9 +137,15 @@ class AuthenticationRejected(OSError):
                          str(receipt["status"]) + " " + str(receipt["error_code"]))
 
 
+class CredentialUnavailable(OSError):
+    """Fail closed without suppressing the existing bounded cleanup loop."""
+
+
 class ArmClient:
-    def __init__(self, tokens, *, opener=None, observe=lambda _: None):
+    def __init__(self, tokens, *, opener=None, observe=lambda _: None,
+                 preserve_response=lambda receipt, raw: None):
         self.tokens, self.opener, self.observe = tokens, opener or build_opener(NoRedirect()), observe
+        self.preserve_response = preserve_response
 
     def request(self, method, url, body=None, *, limit=16_000_000, timeout=30):
         parts = urlsplit(url)
@@ -151,7 +157,14 @@ class ArmClient:
              and all(p not in (".", "..") for p in parts.path.split("/")),
              "ARM credential destination/scope rejected")
         need(method in ("GET", "PUT", "POST", "DELETE", "PATCH"), "unapproved ARM method")
-        headers = {"Authorization": "Bearer " + self.tokens.get(ARM)}
+        try:
+            credential = self.tokens.get(ARM)
+        except (ValueError, subprocess.SubprocessError) as exc:
+            self.observe({"event": "credential_unavailable", "method": method,
+                          "path": parts.path, "failure_class": "credential",
+                          "error_type": type(exc).__name__, "http_request_sent": False})
+            raise CredentialUnavailable("validated ARM credential unavailable; no request sent") from None
+        headers = {"Authorization": "Bearer " + credential}
         if body is not None:
             body = json.dumps(body, separators=(",", ":")).encode()
             headers["Content-Type"] = "application/json"
@@ -177,6 +190,10 @@ class ArmClient:
             "request_id": response_headers.get("x-ms-request-id"),
             "correlation_id": response_headers.get("x-ms-correlation-request-id"),
             "failure_class": "authentication" if status == 401 else "authorization" if status == 403 else None}
+        # A narrowly scoped caller may preserve network evidence here, before
+        # downstream attestation can reject it and cleanup deletes the resource.
+        # The callback never receives request headers or credentials.
+        self.preserve_response(dict(receipt), raw)
         self.observe(receipt)
         if status in (401, 403):
             self.tokens.cache.pop(ARM, None)
