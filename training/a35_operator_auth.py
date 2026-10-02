@@ -69,12 +69,14 @@ def require_actions(document, actions):
 
 
 class CliTokens:
-    def __init__(self, subscription, tenant, principal, *, acquire=None, clock=time.time, observe=lambda _: None):
+    def __init__(self, subscription, tenant, principal, *, acquire=None, clock=time.time,
+                 monotonic=time.monotonic, sleep=time.sleep, observe=lambda _: None):
         need(all(type(x) is str and UUID.fullmatch(x) for x in (subscription, tenant, principal)),
              "pinned subscription, tenant and signed-in principal required")
         self.subscription, self.tenant, self.principal = subscription, tenant, principal
         self.acquire = acquire or self._cli
         self.clock, self.observe, self.cache = clock, observe, {}
+        self.monotonic, self.sleep = monotonic, sleep
 
     def _cli(self, resource):
         # Azure CLI accepts subscription OR tenant, not both. Validate the
@@ -94,6 +96,41 @@ class CliTokens:
             return cached[0]
         self.cache.pop(resource, None)
         data = self.acquire(resource)
+        token, expiry, issued, not_before, claims, now = self._validate(data, resource)
+        if force and resource == ARM and expiry <= now + MARGIN_SECONDS:
+            # force bypasses OUR cache, not Cloud Shell's upstream broker cache.
+            # az has no force-refresh switch. Before live preflight only, allow
+            # one bounded broker rollover: discard the aging token, wait past
+            # its expiry, then acquire and validate once more. No ARM request,
+            # allocation retry, cache deletion or interactive login occurs.
+            wait = max(0, expiry - now + 1)
+            need(wait <= MARGIN_SECONDS + 1, "credential refresh wait exceeds bound")
+            self.observe({"event": "credential_refresh_required", "resource": resource,
+                "expires_on": expiry, "observed_at": now, "remaining_seconds": int(expiry - now),
+                "wait_seconds": wait, "http_request_sent": False})
+            del data, token, claims
+            deadline = self.monotonic() + wait
+            for _ in range(11):
+                remaining = deadline - self.monotonic()
+                if remaining <= 0:
+                    break
+                self.sleep(min(30, remaining))
+            need(self.monotonic() >= deadline, "credential refresh wait did not complete")
+            data = self.acquire(resource)
+            token, expiry, issued, not_before, claims, now = self._validate(data, resource)
+        if expiry <= now + MARGIN_SECONDS:
+            self.observe({"event": "credential_lifetime_rejected", "resource": resource,
+                "expires_on": expiry, "observed_at": now, "remaining_seconds": int(expiry - now),
+                "required_margin_seconds": MARGIN_SECONDS, "http_request_sent": False})
+            raise ValueError("credential expired or insufficient remaining lifetime")
+        self.cache[resource] = token, expiry, not_before
+        self.observe({"event": "credential_validated", "resource": resource, "audience": claims["aud"],
+            "subscription": self.subscription, "tenant": self.tenant, "principal": self.principal,
+            "issued_at": issued, "not_before": not_before, "expires_on": expiry,
+            "observed_at": now, "remaining_seconds": int(expiry - now)})
+        return token
+
+    def _validate(self, data, resource):
         try:
             token = data["accessToken"]
             need(type(token) is str and len(token) <= 65536
@@ -113,16 +150,10 @@ class CliTokens:
                  "credential issuer mismatch")
             need(type(claims.get("scp")) is str and "user_impersonation" in claims["scp"].split(),
                  "signed-in user delegation missing")
-            need(issued <= now and not_before <= now and expiry > now + MARGIN_SECONDS,
-                 "credential expired, not yet valid or insufficient remaining lifetime")
+            need(issued <= now and not_before <= now, "credential not yet valid")
         except (KeyError, TypeError, UnicodeError, json.JSONDecodeError) as exc:
             raise ValueError("malformed credential metadata") from None
-        self.cache[resource] = token, expiry, not_before
-        self.observe({"event": "credential_validated", "resource": resource, "audience": claims["aud"],
-            "subscription": self.subscription, "tenant": self.tenant, "principal": self.principal,
-            "issued_at": issued, "not_before": not_before, "expires_on": expiry,
-            "observed_at": now, "remaining_seconds": int(expiry - now)})
-        return token
+        return token, expiry, issued, not_before, claims, now
 
 
 class NoRedirect(HTTPRedirectHandler):

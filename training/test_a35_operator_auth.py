@@ -138,6 +138,110 @@ class AuthTests(AuthFixture, unittest.TestCase):
         self.assertEqual(self.tokens.cache, {})
 
 
+class PreflightRefreshTests(AuthFixture, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        self.elapsed = 0
+        self.waits = []
+        def sleep(seconds):
+            self.waits.append(seconds)
+            self.now += seconds
+            self.elapsed += seconds
+        self.tokens.sleep = sleep
+        self.tokens.monotonic = lambda: self.elapsed
+
+    def test_forced_preflight_bypasses_even_valid_operator_cache(self):
+        self.tokens.get(a.ARM)
+        self.acquire.return_value = credential(2200)
+        self.assertEqual(self.tokens.get(a.ARM, force=True), self.acquire.return_value['accessToken'])
+        self.assertEqual(self.acquire.call_count, 2)
+        self.assertEqual(self.waits, [])
+
+    def test_actual_failure_lifetime_renews_once_without_arm_or_owner_login(self):
+        old, fresh = credential(1077), credential(2200)
+        self.acquire.side_effect = [old, fresh]
+        result = self.tokens.get(a.ARM, force=True)
+        self.assertEqual(result, fresh['accessToken'])
+        self.assertEqual(self.acquire.call_count, 2)
+        self.assertEqual(sum(self.waits), 78)
+        self.assertTrue(all(0 < x <= 30 for x in self.waits))
+        self.assertEqual(self.receipts[-1]['remaining_seconds'], 1122)
+        self.assertNotIn(old['accessToken'], json.dumps(self.receipts))
+        self.assertNotIn(fresh['accessToken'], json.dumps(self.receipts))
+
+    def test_same_aging_replacement_fails_closed_without_http_or_cache(self):
+        self.acquire.return_value = credential(1077)
+        with self.assertRaisesRegex(ValueError, 'remaining lifetime'):
+            self.tokens.get(a.ARM, force=True)
+        self.assertEqual(self.acquire.call_count, 2)
+        self.assertEqual(self.tokens.cache, {})
+        self.assertFalse(self.receipts[-1]['http_request_sent'])
+
+    def test_expired_token_is_discarded_before_single_noninteractive_acquisition(self):
+        self.acquire.side_effect = [credential(999), credential(2200)]
+        self.tokens.get(a.ARM, force=True)
+        self.assertEqual(self.waits, [])
+        self.assertEqual(self.acquire.call_count, 2)
+
+    def test_exact_margin_wait_is_bounded_and_strict_guard_is_preserved(self):
+        self.acquire.side_effect = [credential(1300), credential(2200)]
+        self.tokens.get(a.ARM, force=True)
+        self.assertEqual(sum(self.waits), 301)
+        self.assertEqual(len(self.waits), 11)
+        self.assertEqual(self.acquire.call_count, 2)
+
+    def test_wrong_identity_audience_or_future_token_never_triggers_refresh(self):
+        for changes in ({'oid':TENANT}, {'aud':a.STORAGE}, {'iat':1001}, {'nbf':1001}):
+            self.acquire.reset_mock()
+            self.acquire.return_value = credential(1077, **changes)
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.tokens.get(a.ARM, force=True)
+            self.acquire.assert_called_once()
+            self.assertEqual(self.waits, [])
+            self.assertEqual(self.tokens.cache, {})
+
+    def test_replacement_identity_and_lifetime_are_fully_revalidated(self):
+        for replacement in (credential(2200, oid=TENANT), credential(2200, aud=a.STORAGE),
+                            credential(1350), credential() | {'expires_on':None}):
+            self.setUp()
+            self.acquire.side_effect = [credential(1077), replacement]
+            with self.subTest(replacement=replacement['expires_on']), self.assertRaises(ValueError):
+                self.tokens.get(a.ARM, force=True)
+            self.assertEqual(self.acquire.call_count, 2)
+            self.assertEqual(self.tokens.cache, {})
+
+    def test_refresh_failure_never_falls_back_to_discarded_token(self):
+        self.acquire.side_effect = [credential(1077), ValueError('acquisition failed')]
+        with self.assertRaisesRegex(ValueError, 'acquisition failed'):
+            self.tokens.get(a.ARM, force=True)
+        self.assertEqual(self.tokens.cache, {})
+
+    def test_frozen_clock_cannot_create_unbounded_wait_or_admit_stale_token(self):
+        self.tokens.sleep = Mock()
+        self.acquire.return_value = credential(1077)
+        with self.assertRaisesRegex(ValueError, 'wait did not complete'):
+            self.tokens.get(a.ARM, force=True)
+        self.assertEqual(self.tokens.sleep.call_count, 11)
+        self.acquire.assert_called_once()
+        self.assertEqual(self.tokens.cache, {})
+
+    def test_ordinary_arm_operation_never_waits_or_sends_near_expiry_token(self):
+        self.acquire.return_value = credential(1077)
+        opener = Mock()
+        client = a.ArmClient(self.tokens, opener=opener)
+        with self.assertRaises(a.CredentialUnavailable):
+            client.request('PUT', a.ARM+'subscriptions/'+SUB+'/resourceGroups/fresh', {})
+        opener.open.assert_not_called()
+        self.acquire.assert_called_once()
+        self.assertEqual(self.waits, [])
+
+    def test_storage_force_does_not_add_unapproved_refresh_behavior(self):
+        self.acquire.return_value = credential(1077, resource=a.STORAGE)
+        with self.assertRaises(ValueError): self.tokens.get(a.STORAGE, force=True)
+        self.acquire.assert_called_once()
+        self.assertEqual(self.waits, [])
+
+
 class ArmTests(AuthFixture, unittest.TestCase):
     def setUp(self):
         super().setUp()
