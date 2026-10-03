@@ -1,10 +1,9 @@
 {
   "schema_version": 1,
-  "experiment_id": "a35-nova-corrected-inputs-screen-v1",
+  "experiment_id": "a35-nova-task-checks-screen-v2",
   "family": "kova-nova",
   "base_model": "Qwen/Qwen3-4B",
   "base_revision": "1cfa9a7208912126459214e8b04321603b3df60c",
-  "input_revision_commit": "7bea6c635111f2aeb503a2dd67ce64a766249f31",
   "file_sha256": {
     "prompts/kova-identity.v4.draft.txt": "96ffd74a27720901a86cdca5693092be8ea1512732e660fbad6cf2cc144a4298",
     "data/kova-identity-shared.v2.jsonl": "fa6406b2be2e607f8a40565bf9340db226a6fb8def4d5342d30dc38105696051",
@@ -18,9 +17,11 @@
     "infra/three-family-pilot-vm.bicep": "100f1f7cdea151fea982a86751b37ea32b60be96e9fd945c3de237d405a7c071",
     "infra/three-family-watchdog.bicep": "515693bef2783ec541e5536fb81e0e229615b5b903cc17bc8c89f1b7403d7748",
     "infra/three-family-watchdog-pilot-role.bicep": "81ce0aaa9285f0e167051fc15c74ea86375d6b0e5f03aa239747b44ccbf7d480",
-    "evaluations/a35-nova-screen-pricing.v1.json": "5676286ce05d9840e806030ebbc64fa2776c9b5f7371f818b9ae4e5ce17d8d1d"
+    "evaluations/a35-nova-screen-pricing.v1.json": "5676286ce05d9840e806030ebbc64fa2776c9b5f7371f818b9ae4e5ce17d8d1d",
+    "prompts/kova-nova-task-checks.v1.txt": "465c94b5b127299ea12c00325a25c7869c86b2a568ce221ca1fa004acf5e2de2",
+    "evaluations/a35-nova-task-checks-tokenizer.v1.json": "a68b53753be3af5ebaa94dd2f592f2b8a11081609d199ccf9eeea8a394a064fc"
   },
-  "prepared_pack_sha256": "fcbe8556c9587d960a531bd0f91d5b7de13fa77fd69d3aa9d62a893dcab91726",
+  "prepared_pack_sha256": "272d2a6e98fa57fec743618591d054e31298f6d36f01e5eacdc61ece61e1e591",
   "train_records": 61,
   "validation_records": 49,
   "training": {
@@ -113,5 +114,8 @@
   "pilot_selection_authorized": false,
   "deployment_authorized": false,
   "merge_authorized": false,
-  "a35_quality_gate_closed": false
+  "a35_quality_gate_closed": false,
+  "input_parent_commit": "1783367753b38ed662c611f7e2f45dfcda531a7e",
+  "task_checks_path": "prompts/kova-nova-task-checks.v1.txt",
+  "previous_screen_adapter_sha256": "95470d46db4a430ce6f5e5d53f5dc322dcb4a04aec824b69b922dbe9b1d71213"
 }

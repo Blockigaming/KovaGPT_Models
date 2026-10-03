@@ -44,8 +44,29 @@ def need(condition, message):
         raise ValueError(message)
 
 
-def prepared_inputs(plan):
+def system_prompt(plan):
+    """Nova-only task checks; keep the shared identity/safety policy intact."""
+    need(plan.get("task_checks_path") == "prompts/kova-nova-task-checks.v1.txt",
+         "Nova task-check source required")
+    return ((ROOT / "prompts/kova-identity.v4.draft.txt").read_text() + "\n" +
+            (ROOT / plan["task_checks_path"]).read_text())
+
+
+def prepared_nova_rows(plan):
     rows = prepared_revision_rows()
+    base = (ROOT / "prompts/kova-identity.v4.draft.txt").read_text()
+    system = system_prompt(plan)
+    for _, _, row in rows:
+        message = row["prompt"][0]
+        need(message["role"] == "system" and message["content"].startswith(base),
+             "shared policy prefix drift")
+        # Retain any explicitly hypothetical trusted-runtime fixture after policy.
+        message["content"] = system + message["content"][len(base):]
+    return rows
+
+
+def prepared_inputs(plan):
+    rows = prepared_nova_rows(plan)
     need(sha(encoded(rows)) == plan["prepared_pack_sha256"], "revised prepared pack drift")
     train = [row for _, split, row in rows if split == "train"]
     validation = [row for _, split, row in rows if split == "validation"]
@@ -60,6 +81,9 @@ def load_plan(path=PLAN):
     need(plan["family"] == "kova-nova" and plan["base_model"] == "Qwen/Qwen3-4B"
          and plan["base_revision"] == "1cfa9a7208912126459214e8b04321603b3df60c",
          "only the corrected Nova screen is supported")
+    need(plan.get("previous_screen_adapter_sha256") ==
+         "95470d46db4a430ce6f5e5d53f5dc322dcb4a04aec824b69b922dbe9b1d71213",
+         "completed-screen candidate binding required")
     for relative, expected in plan["file_sha256"].items():
         need(sha((ROOT / relative).read_bytes()) == expected, "input pin drift: " + relative)
     validate_draft()
@@ -174,7 +198,7 @@ def probe_candidate(assets):
                 tokenize=True, return_dict=False, **r["chat_template_kwargs"])) -
                 len(tokenizer.apply_chat_template(r["prompt"], tokenize=True, add_generation_prompt=True,
                     return_dict=False, **r["chat_template_kwargs"])) for r in train + validation)
-            system = (ROOT / "prompts/kova-identity.v4.draft.txt").read_text()
+            system = system_prompt(plan)
             prompts = [len(tokenizer.apply_chat_template([
                 {"role": "system", "content": system}, {"role": "user", "content": c["prompt"]}],
                 tokenize=True, add_generation_prompt=True, enable_thinking=False, return_dict=False))
@@ -182,6 +206,8 @@ def probe_candidate(assets):
             need(max(prompts) + 2048 < 32768 and completion_max < 2048,
                  "evaluation context/output allowance insufficient")
     return {"status": "pass", "candidate": plan["experiment_id"], "records": 110,
+            "prepared_pack_sha256": plan["prepared_pack_sha256"],
+            "system_prompt_sha256": sha(system.encode()),
             "maximum_tokens": maxima, "maximum_reference_completion_tokens": completion_max,
             "maximum_evaluation_prompt_tokens": max(prompts), "manual_output_budget": 2048,
             "training_model_calls": 0, "inference_calls": 0}
@@ -230,7 +256,8 @@ def new_candidate(receipt, plan, source, run_id, adapter):
          and receipt.get("training_records") == 61, "incomplete/stale training receipt")
     weights = sha((adapter / "adapter_model.safetensors").read_bytes())
     need(weights == receipt["adapter_sha256"]["adapter_model.safetensors"]
-         and weights != plan["preserved_adapter_sha256"], "unchanged/corrupt candidate rejected")
+         and weights not in (plan["preserved_adapter_sha256"], plan["previous_screen_adapter_sha256"]),
+         "unchanged/corrupt candidate rejected")
     for name, expected in receipt["adapter_sha256"].items():
         need(sha((adapter / name).read_bytes()) == expected, "saved adapter digest mismatch")
 
@@ -405,7 +432,7 @@ def execute(snapshot, output, grant):
         model.config.use_cache = True
         decoder = GenerationConfig(do_sample=False, num_beams=1, num_return_sequences=1,
             eos_token_id=tokenizer.eos_token_id, pad_token_id=tokenizer.eos_token_id)
-        system = (ROOT / "prompts/kova-identity.v4.draft.txt").read_text()
+        system = system_prompt(plan)
         report["generation_profile"] = {"decoder": decoder.to_dict(),
             "system_prompt_sha256": sha(system.encode()), "chat_template_sha256": sha(tokenizer.chat_template.encode()),
             "chat_template_kwargs": {"enable_thinking": False}}

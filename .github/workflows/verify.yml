@@ -61,7 +61,8 @@ jobs:
           CUDA_VISIBLE_DEVICES: ""
         run: |
           python -m training.a35_tokenizer_masks "$RUNNER_TEMP/a35-tokenizer" --fetch --check
-          python -m training.a35_nova_screen --probe-tokenizer "$RUNNER_TEMP/a35-tokenizer"
+          python -m training.a35_nova_screen --probe-tokenizer "$RUNNER_TEMP/a35-tokenizer" > "$RUNNER_TEMP/a35-nova-task-checks.json"
+          cmp "$RUNNER_TEMP/a35-nova-task-checks.json" evaluations/a35-nova-task-checks-tokenizer.v1.json
 
   cosmo-sft-api-contract:
     runs-on: ubuntu-latest
