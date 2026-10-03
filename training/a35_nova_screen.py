@@ -29,6 +29,11 @@ from evaluation.historical_suite_bridge import load_archived_suite
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAN = ROOT / "config/a35-nova-screen.v1.json"
+MEASURED_ADAPTERS = (
+    "f6d09354b5db910288be1e4ac9e22467bfe0c4bf8b554ef576162a245955e352",
+    "95470d46db4a430ce6f5e5d53f5dc322dcb4a04aec824b69b922dbe9b1d71213",
+    "9e9c991332e979d3b3b73452e643d0272f859965fc054329f32308491a0a7e0b",
+)
 
 
 def sha(body):
@@ -62,6 +67,14 @@ def prepared_nova_rows(plan):
              "shared policy prefix drift")
         # Retain any explicitly hypothetical trusted-runtime fixture after policy.
         message["content"] = system + message["content"][len(base):]
+    from evaluation.a35_nova_copy_contrast import load_rows
+    from evaluation.a35_nova_transfer_data import load_rows as transfer_rows
+    from training.template_policy import template_row
+    for row in load_rows() + transfer_rows():
+        prepared = template_row(
+            [{"role": "system", "content": system}, row["messages"][0]],
+            [row["messages"][1]])
+        rows.append((row["id"], row["split"], prepared))
     return rows
 
 
@@ -70,7 +83,8 @@ def prepared_inputs(plan):
     need(sha(encoded(rows)) == plan["prepared_pack_sha256"], "revised prepared pack drift")
     train = [row for _, split, row in rows if split == "train"]
     validation = [row for _, split, row in rows if split == "validation"]
-    need((len(train), len(validation)) == (61, 49), "revised input split drift")
+    need((len(train), len(validation)) == (72, 60)
+         == (plan["train_records"], plan["validation_records"]), "revised input split drift")
     need(all(r["chat_template_kwargs"] == {"enable_thinking": False}
              for r in train + validation), "template mode drift")
     return train, validation
@@ -84,6 +98,8 @@ def load_plan(path=PLAN):
     need(plan.get("previous_screen_adapter_sha256") ==
          "95470d46db4a430ce6f5e5d53f5dc322dcb4a04aec824b69b922dbe9b1d71213",
          "completed-screen candidate binding required")
+    need(plan.get("rejected_adapter_sha256") == list(MEASURED_ADAPTERS),
+         "all measured candidates must remain rejected")
     for relative, expected in plan["file_sha256"].items():
         need(sha((ROOT / relative).read_bytes()) == expected, "input pin drift: " + relative)
     validate_draft()
@@ -97,7 +113,7 @@ def load_plan(path=PLAN):
          "confirmation_repetitions_authorized": 0,
          "identity_safety_failure_stops_immediately": True, "human_review_required": True},
          "screening rule drift")
-    need(t == {"fresh_base_only": True, "epochs": 1, "expected_optimizer_steps": 8,
+    need(t == {"fresh_base_only": True, "epochs": 1, "expected_optimizer_steps": 9,
          "batch_size": 1, "gradient_accumulation_steps": 8, "learning_rate": 0.00008,
          "sequence_length": 768, "seed": 42, "completion_only_loss": True,
          "packing": False, "enable_thinking": False, "nf4_compute_dtype": "float16",
@@ -105,7 +121,7 @@ def load_plan(path=PLAN):
          "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
          "maximum_seconds": 600}, "training recipe drift")
     train, validation = prepared_inputs(plan)
-    need(math.ceil(len(train) / t["gradient_accumulation_steps"]) == 8,
+    need(math.ceil(len(train) / t["gradient_accumulation_steps"]) == t["expected_optimizer_steps"],
          "one epoch must include every training example")
     need(r["sku"] == "Standard_NC4as_T4_v3" and r["region"] == "eastus"
          and r["gpu_count"] == r["allocation_attempts"] == 1
@@ -205,7 +221,7 @@ def probe_candidate(assets):
                 for c in load_archived_suite()["cases"]]
             need(max(prompts) + 2048 < 32768 and completion_max < 2048,
                  "evaluation context/output allowance insufficient")
-    return {"status": "pass", "candidate": plan["experiment_id"], "records": 110,
+    return {"status": "pass", "candidate": plan["experiment_id"], "records": len(train) + len(validation),
             "prepared_pack_sha256": plan["prepared_pack_sha256"],
             "system_prompt_sha256": sha(system.encode()),
             "maximum_tokens": maxima, "maximum_reference_completion_tokens": completion_max,
@@ -252,11 +268,12 @@ def new_candidate(receipt, plan, source, run_id, adapter):
          and receipt.get("source_commit") == source and receipt.get("run_id") == run_id
          and receipt.get("base_revision") == plan["base_revision"]
          and receipt.get("prepared_pack_sha256") == plan["prepared_pack_sha256"]
-         and receipt.get("optimizer_steps") == 8 and receipt.get("completed_epochs") == 1.0
-         and receipt.get("training_records") == 61, "incomplete/stale training receipt")
+         and receipt.get("optimizer_steps") == plan["training"]["expected_optimizer_steps"]
+         and receipt.get("completed_epochs") == 1.0
+         and receipt.get("training_records") == plan["train_records"], "incomplete/stale training receipt")
     weights = sha((adapter / "adapter_model.safetensors").read_bytes())
     need(weights == receipt["adapter_sha256"]["adapter_model.safetensors"]
-         and weights not in (plan["preserved_adapter_sha256"], plan["previous_screen_adapter_sha256"]),
+         and weights not in plan["rejected_adapter_sha256"],
          "unchanged/corrupt candidate rejected")
     for name, expected in receipt["adapter_sha256"].items():
         need(sha((adapter / name).read_bytes()) == expected, "saved adapter digest mismatch")
@@ -409,7 +426,8 @@ def execute(snapshot, output, grant):
         signal.setitimer(signal.ITIMER_REAL, min(600, max(1, end - time.time())))
         result = trainer.train(resume_from_checkpoint=False)
         signal.setitimer(signal.ITIMER_REAL, max(1, end - time.time()))
-        need(result.global_step == 8 and trainer.state.epoch == 1.0, "incomplete epoch: no evaluation")
+        need(result.global_step == plan["training"]["expected_optimizer_steps"]
+             and trainer.state.epoch == 1.0, "incomplete epoch: no evaluation")
         adapter = output / "adapter"
         trainer.model.save_pretrained(adapter, safe_serialization=True)
         receipt = {"experiment_id": plan["experiment_id"], "source_commit": source,
@@ -488,8 +506,8 @@ def main():
     else:
         p = load_plan()
         print(json.dumps({"status": "source_prerequisites_valid_execution_blocked", "family": p["family"],
-              "prepared_pack_sha256": p["prepared_pack_sha256"], "optimizer_steps": 8,
-              "training_records": 61, "screening_repetitions": 1, "ceiling_usd": "5.00", "paid_calls": 0}))
+              "prepared_pack_sha256": p["prepared_pack_sha256"], "optimizer_steps": p["training"]["expected_optimizer_steps"],
+              "training_records": p["train_records"], "screening_repetitions": 1, "ceiling_usd": "5.00", "paid_calls": 0}))
 
 
 if __name__ == "__main__":

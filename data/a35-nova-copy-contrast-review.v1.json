@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "status": "owner_delegated_policy_conformance_review",
+  "scope": "nova_only_additive_draft",
+  "provenance": {
+    "source": "project_authored_synthetic_copy_contrast_examples",
+    "license": "CC0-1.0",
+    "private_customer_data": false,
+    "private_conversations": false,
+    "secrets": false,
+    "third_party_training_text": false
+  },
+  "rationale": "The existing copy training example demonstrates nested sharing but has no contrasting flat-copy outer mutation and alias write. This additive pair tests that narrow coverage hypothesis; it does not establish the cause of the measured regression or predict quality improvement. Existing 110 input records and all quality thresholds remain unchanged.",
+  "model_calls_made": 0,
+  "records": [
+    {
+      "id": "a35-nova-copy-isolation-train",
+      "group": "copy",
+      "structure": "flat_copy_slice_replacement_and_alias_write",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "source=[4,7,9]\nsnapshot=source.copy()\nsnapshot[1:]=[2,5]\nshared=source\nshared[0]=6\nresult=[source,snapshot]"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-copy-isolation-validation",
+      "group": "copy",
+      "structure": "mapping_copy_nested_sharing_top_level_replacement",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "catalog={'names':['oak'],'active':True}\nsaved=dict(catalog)\nsaved['names'].append('elm')\nsaved['active']=False\nresult=[catalog['names'],catalog['active'],saved['active']]"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    }
+  ]
+}

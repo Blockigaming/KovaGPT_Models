@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "experiment_id": "a35-nova-task-checks-screen-v2",
+  "experiment_id": "a35-nova-transfer-screen-v3",
   "family": "kova-nova",
   "base_model": "Qwen/Qwen3-4B",
   "base_revision": "1cfa9a7208912126459214e8b04321603b3df60c",
@@ -19,15 +19,19 @@
     "infra/three-family-watchdog-pilot-role.bicep": "81ce0aaa9285f0e167051fc15c74ea86375d6b0e5f03aa239747b44ccbf7d480",
     "evaluations/a35-nova-screen-pricing.v1.json": "5676286ce05d9840e806030ebbc64fa2776c9b5f7371f818b9ae4e5ce17d8d1d",
     "prompts/kova-nova-task-checks.v1.txt": "465c94b5b127299ea12c00325a25c7869c86b2a568ce221ca1fa004acf5e2de2",
-    "evaluations/a35-nova-task-checks-tokenizer.v1.json": "a68b53753be3af5ebaa94dd2f592f2b8a11081609d199ccf9eeea8a394a064fc"
+    "evaluations/a35-nova-task-checks-tokenizer.v1.json": "8721f2e0bc48cae8f3f686aefbeb4c6b509fc80192a0aa54b40c32a7faedc8ef",
+    "data/a35-nova-copy-contrast.v1.draft.jsonl": "bd5415471df1a8919bbea5dda1029fe1e1010eb10f9c3ef12d7463e6e77aa1dd",
+    "data/a35-nova-copy-contrast-review.v1.json": "e02119fbdf99dbfd3efbb5a2628066c2359aace8495acc200a9badc692850f07",
+    "data/a35-nova-transfer.v1.draft.jsonl": "d8e8b606cce9e27572e8844a1518e5e46f1ae53edcb522d6006a4008469b114f",
+    "data/a35-nova-transfer-review.v1.json": "1ec53a4b083a0d0b4c2d63c6aaf78a7268b06666fd6baba6f08037f616ccf293"
   },
-  "prepared_pack_sha256": "272d2a6e98fa57fec743618591d054e31298f6d36f01e5eacdc61ece61e1e591",
-  "train_records": 61,
-  "validation_records": 49,
+  "prepared_pack_sha256": "d0a7bbd518601ef95f9f04736aaad02fa5a20f92677042ae6d4ae3f8ce447d52",
+  "train_records": 72,
+  "validation_records": 60,
   "training": {
     "fresh_base_only": true,
     "epochs": 1,
-    "expected_optimizer_steps": 8,
+    "expected_optimizer_steps": 9,
     "batch_size": 1,
     "gradient_accumulation_steps": 8,
     "learning_rate": 8e-05,
@@ -115,7 +119,12 @@
   "deployment_authorized": false,
   "merge_authorized": false,
   "a35_quality_gate_closed": false,
-  "input_parent_commit": "1783367753b38ed662c611f7e2f45dfcda531a7e",
+  "input_parent_commit": "cfb0ddb3e9db6ddb7812233a1529589024318c3a",
   "task_checks_path": "prompts/kova-nova-task-checks.v1.txt",
-  "previous_screen_adapter_sha256": "95470d46db4a430ce6f5e5d53f5dc322dcb4a04aec824b69b922dbe9b1d71213"
+  "previous_screen_adapter_sha256": "95470d46db4a430ce6f5e5d53f5dc322dcb4a04aec824b69b922dbe9b1d71213",
+  "rejected_adapter_sha256": [
+    "f6d09354b5db910288be1e4ac9e22467bfe0c4bf8b554ef576162a245955e352",
+    "95470d46db4a430ce6f5e5d53f5dc322dcb4a04aec824b69b922dbe9b1d71213",
+    "9e9c991332e979d3b3b73452e643d0272f859965fc054329f32308491a0a7e0b"
+  ]
 }

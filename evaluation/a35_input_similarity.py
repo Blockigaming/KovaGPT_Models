@@ -61,6 +61,14 @@ def code_shape(source, *, function_only=False):
     tree = ast.parse(source)
     if function_only:
         tree.body = [node for node in tree.body if isinstance(node,ast.FunctionDef)]
+    elif (len(tree.body) > 1 and isinstance(tree.body[-1], ast.Assign)
+          and len(tree.body[-1].targets) == 1
+          and isinstance(tree.body[-1].targets[0], ast.Name)
+          and tree.body[-1].targets[0].id == "result"
+          and isinstance(tree.body[-1].value, ast.Name)):
+        # Authored oracles capture a final variable; the benchmark may omit
+        # that bookkeeping. It must not hide an otherwise identical program.
+        tree.body.pop()
     elif len(tree.body)==1 and isinstance(tree.body[0],ast.Assign):
         tree = ast.Expression(body=tree.body[0].value)
     return ast.dump(CodeShape().visit(tree),include_attributes=False)

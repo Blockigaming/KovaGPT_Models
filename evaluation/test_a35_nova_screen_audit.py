@@ -51,7 +51,7 @@ class NovaCorrectionTests(unittest.TestCase):
             self.assertEqual([p.name for p in Path(tmp).iterdir()], ["screen.json"])
             self.assertEqual([c.args[0] for c in storage.put.call_args_list], ["screen.json"])
 
-    def test_new_inputs_differ_only_in_nova_system_instruction_and_bind_new_hash(self):
+    def test_historical_110_rows_still_differ_only_in_nova_system_instruction(self):
         before = prepared_revision_rows()
         after = screen.prepared_nova_rows(self.plan)
         self.assertEqual(screen.sha(screen.encoded(before)), audit.PACK)
@@ -65,7 +65,7 @@ class NovaCorrectionTests(unittest.TestCase):
         new_system = screen.system_prompt(self.plan)
         self.assertTrue(new_system.startswith(old_system + "\n"))
         self.assertEqual(validate_prompt(new_system), 34)
-        for (old_id, old_split, old), (new_id, new_split, new) in zip(before, after, strict=True):
+        for (old_id, old_split, old), (new_id, new_split, new) in zip(before, after[:110], strict=True):
             self.assertEqual((old_id, old_split), (new_id, new_split))
             restored = deepcopy(new)
             restored["prompt"][0]["content"] = old_system + new["prompt"][0]["content"][len(new_system):]
@@ -82,7 +82,7 @@ class NovaCorrectionTests(unittest.TestCase):
         # This preserves evidence/inputs; it cannot promise future data quality.
         old = prepared_revision_rows()
         new = screen.prepared_nova_rows(self.plan)
-        self.assertEqual([r[2]["completion"] for r in old], [r[2]["completion"] for r in new])
+        self.assertEqual([r[2]["completion"] for r in old], [r[2]["completion"] for r in new[:110]])
 
     def test_no_golden_case_or_answer_lookup_enters_the_new_prompt(self):
         text = (screen.ROOT / self.plan["task_checks_path"]).read_text()
@@ -117,9 +117,10 @@ class NovaCorrectionTests(unittest.TestCase):
             adapter = Path(tmp)
             (adapter / "adapter_model.safetensors").write_bytes(b"synthetic previous candidate")
             digest = screen.sha((adapter / "adapter_model.safetensors").read_bytes())
-            plan = self.plan | {"previous_screen_adapter_sha256": digest}
+            plan = self.plan | {"rejected_adapter_sha256": [digest]}
             receipt = deepcopy(self.report["training_receipt"])
-            receipt.update(experiment_id=plan["experiment_id"], prepared_pack_sha256=plan["prepared_pack_sha256"])
+            receipt.update(experiment_id=plan["experiment_id"], prepared_pack_sha256=plan["prepared_pack_sha256"],
+                           training_records=plan["train_records"], optimizer_steps=plan["training"]["expected_optimizer_steps"])
             receipt["adapter_sha256"]["adapter_model.safetensors"] = digest
             with self.assertRaisesRegex(ValueError, "unchanged/corrupt candidate"):
                 screen.new_candidate(receipt, plan, audit.SOURCE, audit.RUN, adapter)

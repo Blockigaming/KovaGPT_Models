@@ -24,9 +24,9 @@ class ScreenTests(unittest.TestCase):
         cls.plan = s.load_plan()
         cls.cases = load_archived_suite()["cases"]
 
-    def test_new_pack_uses_v4_and_all_61_training_rows(self):
+    def test_new_pack_uses_v4_and_all_72_training_rows(self):
         train, val = s.prepared_inputs(self.plan)
-        self.assertEqual((len(train), len(val)), (61, 49))
+        self.assertEqual((len(train), len(val)), (72, 60))
         prompt = (s.ROOT / "prompts/kova-identity.v4.draft.txt").read_text()
         self.assertTrue(all(row["prompt"][0]["content"].startswith(prompt) for row in train + val))
         self.assertTrue(all(set(row) == {"prompt", "completion", "chat_template_kwargs"}
@@ -39,6 +39,27 @@ class ScreenTests(unittest.TestCase):
         plan["prepared_pack_sha256"] = "a" * 64
         with self.assertRaisesRegex(ValueError, "pack drift"):
             s.prepared_inputs(plan)
+
+    def test_copy_pair_is_additive_and_preserves_every_measured_input(self):
+        rows = s.prepared_nova_rows(self.plan)
+        self.assertEqual(len(rows), 132)
+        measured_pack = "272d2a6e98fa57fec743618591d054e31298f6d36f01e5eacdc61ece61e1e591"
+        self.assertEqual(s.sha(s.encoded(rows[:110])), measured_pack)
+        self.assertNotEqual(self.plan["prepared_pack_sha256"], measured_pack)
+        self.assertEqual(s.sha(s.system_prompt(self.plan).encode()),
+                         "258b48ccdc670cfd32312983de0ca4e71b136de1e71aa4ef97fb88d026e554d8")
+        self.assertEqual([(identifier, split) for identifier, split, _ in rows[110:112]],
+                         [("a35-nova-copy-isolation-train", "train"),
+                          ("a35-nova-copy-isolation-validation", "validation")])
+        for _, _, row in rows[110:]:
+            self.assertEqual(set(row), {"prompt", "completion", "chat_template_kwargs"})
+            self.assertEqual(row["prompt"][0]["content"], s.system_prompt(self.plan))
+
+    def test_nova_only_pair_does_not_modify_shared_family_inputs(self):
+        shared = s.prepared_revision_rows()
+        self.assertEqual(len(shared), 110)
+        self.assertEqual(s.sha(s.encoded(shared)),
+                         "fcbe8556c9587d960a531bd0f91d5b7de13fa77fd69d3aa9d62a893dcab91726")
 
     def test_exact_sft_one_epoch_no_seven_step_truncation(self):
         settings = s.sft_kwargs(self.plan, "/unused")
@@ -300,17 +321,39 @@ class ScreenTests(unittest.TestCase):
             (adapter / "adapter_config.json").write_text("{}")
             receipt = dict(experiment_id=self.plan["experiment_id"], source_commit="c" * 40,
                 run_id="d" * 32, base_revision=self.plan["base_revision"],
-                prepared_pack_sha256=self.plan["prepared_pack_sha256"], optimizer_steps=8,
-                completed_epochs=1.0, training_records=61,
+                prepared_pack_sha256=self.plan["prepared_pack_sha256"], optimizer_steps=9,
+                completed_epochs=1.0, training_records=72,
                 adapter_sha256={f.name: s.sha(f.read_bytes()) for f in adapter.iterdir()})
             s.new_candidate(receipt, self.plan, "c" * 40, "d" * 32, adapter)
             for field, value in (("optimizer_steps", 7), ("training_records", 27),
                                  ("prepared_pack_sha256", "0" * 64), ("completed_epochs", 0.5)):
                 altered = receipt | {field: value}
                 with self.assertRaises(ValueError): s.new_candidate(altered, self.plan, "c" * 40, "d" * 32, adapter)
-            old = self.plan | {"preserved_adapter_sha256": receipt["adapter_sha256"]["adapter_model.safetensors"]}
+            old = self.plan | {"rejected_adapter_sha256": [receipt["adapter_sha256"]["adapter_model.safetensors"]]}
             with self.assertRaisesRegex(ValueError, "unchanged"):
                 s.new_candidate(receipt, old, "c" * 40, "d" * 32, adapter)
+
+    def test_every_measured_adapter_including_latest_is_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            adapter = Path(folder)
+            (adapter / "adapter_model.safetensors").write_bytes(b"measured fixture")
+            for digest in s.MEASURED_ADAPTERS:
+                with self.subTest(digest=digest), patch.object(s, "sha", return_value=digest):
+                    receipt = dict(experiment_id=self.plan["experiment_id"], source_commit="c" * 40,
+                        run_id="d" * 32, base_revision=self.plan["base_revision"],
+                        prepared_pack_sha256=self.plan["prepared_pack_sha256"], optimizer_steps=9,
+                        completed_epochs=1.0, training_records=72,
+                        adapter_sha256={"adapter_model.safetensors": digest})
+                    with self.assertRaisesRegex(ValueError, "unchanged/corrupt"):
+                        s.new_candidate(receipt, self.plan, "c" * 40, "d" * 32, adapter)
+
+    def test_plan_cannot_omit_or_replace_a_measured_adapter_binding(self):
+        for rejected in (None, list(s.MEASURED_ADAPTERS[:2]), ["a" * 64] * 3):
+            with self.subTest(rejected=rejected), tempfile.TemporaryDirectory() as folder:
+                path = Path(folder) / "plan.json"
+                path.write_text(json.dumps(self.plan | {"rejected_adapter_sha256": rejected}))
+                with self.assertRaisesRegex(ValueError, "all measured candidates"):
+                    s.load_plan(path)
 
     def test_outputs_and_run_claims_cannot_be_overwritten(self):
         with tempfile.TemporaryDirectory() as folder:

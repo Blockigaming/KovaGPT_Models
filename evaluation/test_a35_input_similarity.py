@@ -6,6 +6,11 @@ from evaluation.a35_input_similarity import (code_shape,graph_shape,
 
 
 class InputSimilarityTests(unittest.TestCase):
+    def test_terminal_oracle_capture_cannot_hide_benchmark_substitution(self):
+        benchmark = "a=[1,2]; b=a.copy(); b.append(3)"
+        authored = "items=[7,8]; saved=items.copy(); saved.append(9); result=items"
+        self.assertEqual(code_shape(benchmark), code_shape(authored))
+
     def test_numeric_and_identifier_substitutions_keep_python_shape(self):
         a="result=[x*2 for x in [1,4,9] if x%2==0]"
         b="result=[n*7 for n in [6,2,5,8] if n%3==0]"
