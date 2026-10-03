@@ -26,6 +26,38 @@ UUID = re.compile(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}")
 MARGIN_SECONDS = 300
 
 
+def sufficient_lifetime(resource, expiry, now):
+    # Storage admits the owner's exact >=300 boundary; ARM retains its existing
+    # strictly-greater margin. Never substitute credentials between audiences.
+    return expiry >= now + MARGIN_SECONDS if resource == STORAGE else expiry > now + MARGIN_SECONDS
+
+
+def validate_storage_blob_url(url):
+    """The Storage audience is global; independently pin the actual destination."""
+    base = 'https://kova42c1a27.blob.core.windows.net/cosmo-adapters/'
+    parts = urlsplit(url)
+    need(url.startswith(base) and not parts.query and not parts.fragment
+         and re.fullmatch(r'[A-Za-z0-9_./-]+', url[len(base):])
+         and all(part not in ('', '.', '..') for part in url[len(base):].split('/')),
+         'Storage account/container/object destination rejected')
+
+
+def preflight_credentials(tokens):
+    """Fresh joint readiness before allocation; any failure stops the caller.
+
+    A Storage rollover can consume an earlier ARM margin. Check both again
+    without another acquisition/wait loop before returning readiness.
+    """
+    for resource in (ARM, STORAGE):
+        tokens.get(resource, force=True)
+    now = tokens.clock()
+    need(all(resource in tokens.cache and
+             sufficient_lifetime(resource, tokens.cache[resource][1], now) and
+             now >= tokens.cache[resource][2] for resource in (ARM, STORAGE)),
+         'joint credential readiness expired during rollover')
+    return {'arm_ready': True, 'storage_ready': True}
+
+
 def preflight_runtime():
     """Exercise the real verifier imports/crypto backend before any paid work.
 
@@ -92,17 +124,18 @@ class CliTokens:
         need(resource in AUDIENCES, "unapproved token resource")
         now = self.clock()
         cached = self.cache.get(resource)
-        if not force and cached and now + MARGIN_SECONDS < cached[1] and now >= cached[2]:
+        if not force and cached and sufficient_lifetime(resource, cached[1], now) and now >= cached[2]:
             return cached[0]
         self.cache.pop(resource, None)
         data = self.acquire(resource)
         token, expiry, issued, not_before, claims, now = self._validate(data, resource)
-        if force and resource == ARM and expiry <= now + MARGIN_SECONDS:
+        if (force or resource == STORAGE) and not sufficient_lifetime(resource, expiry, now):
             # force bypasses OUR cache, not Cloud Shell's upstream broker cache.
-            # az has no force-refresh switch. Before live preflight only, allow
-            # one bounded broker rollover: discard the aging token, wait past
-            # its expiry, then acquire and validate once more. No ARM request,
-            # allocation retry, cache deletion or interactive login occurs.
+            # az has no force-refresh switch. ARM retains forced-preflight-only
+            # rollover. Storage also needs it for reads after VM provisioning.
+            # Discard the aging token, wait past expiry, then acquire/validate
+            # once. No HTTP request replay, allocation retry, cache deletion or
+            # interactive login occurs; the other audience cache is untouched.
             wait = max(0, expiry - now + 1)
             need(wait <= MARGIN_SECONDS + 1, "credential refresh wait exceeds bound")
             self.observe({"event": "credential_refresh_required", "resource": resource,
@@ -118,7 +151,7 @@ class CliTokens:
             need(self.monotonic() >= deadline, "credential refresh wait did not complete")
             data = self.acquire(resource)
             token, expiry, issued, not_before, claims, now = self._validate(data, resource)
-        if expiry <= now + MARGIN_SECONDS:
+        if not sufficient_lifetime(resource, expiry, now):
             self.observe({"event": "credential_lifetime_rejected", "resource": resource,
                 "expires_on": expiry, "observed_at": now, "remaining_seconds": int(expiry - now),
                 "required_margin_seconds": MARGIN_SECONDS, "http_request_sent": False})

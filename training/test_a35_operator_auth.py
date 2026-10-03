@@ -235,11 +235,189 @@ class PreflightRefreshTests(AuthFixture, unittest.TestCase):
         self.acquire.assert_called_once()
         self.assertEqual(self.waits, [])
 
-    def test_storage_force_does_not_add_unapproved_refresh_behavior(self):
-        self.acquire.return_value = credential(1077, resource=a.STORAGE)
-        with self.assertRaises(ValueError): self.tokens.get(a.STORAGE, force=True)
-        self.acquire.assert_called_once()
+    def test_storage_force_rolls_over_once_without_affecting_arm(self):
+        self.acquire.side_effect = [credential(1180, resource=a.STORAGE),
+                                    credential(2200, resource=a.STORAGE)]
+        self.tokens.get(a.STORAGE, force=True)
+        self.assertEqual(self.acquire.call_count, 2)
+        self.assertEqual(sum(self.waits), 181)
+        self.assertNotIn(a.ARM, self.tokens.cache)
+
+
+class StorageRefreshTests(AuthFixture, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        self.waits = []
+        def sleep(seconds):
+            self.waits.append(seconds)
+            self.now += seconds
+        self.tokens.sleep = sleep
+        self.tokens.monotonic = lambda: self.now
+
+    def test_actual_180_second_ordinary_writer_read_refreshes_before_use(self):
+        old = credential(1180, resource=a.STORAGE)
+        fresh = credential(1481, resource=a.STORAGE)
+        self.acquire.side_effect = [old, fresh]
+        self.assertEqual(self.tokens.get(a.STORAGE), fresh['accessToken'])
+        self.assertEqual(sum(self.waits), 181)
+        self.assertEqual(self.acquire.call_count, 2)
+        self.assertEqual(self.receipts[-1]['remaining_seconds'], 300)
+        self.assertTrue(all(0 < seconds <= 30 for seconds in self.waits))
+
+    def test_storage_299_300_301_second_admission_boundaries(self):
+        for seconds in (299, 300, 301):
+            self.setUp()
+            first = credential(1000 + seconds, resource=a.STORAGE)
+            fresh = credential(2400, resource=a.STORAGE)
+            self.acquire.side_effect = [first, fresh]
+            with self.subTest(seconds=seconds):
+                actual = self.tokens.get(a.STORAGE)
+                self.assertEqual(actual, (fresh if seconds < 300 else first)['accessToken'])
+                self.assertEqual(self.acquire.call_count, 2 if seconds < 300 else 1)
+
+    def test_refreshed_299_rejects_300_and_301_pass(self):
+        for seconds in (299, 300, 301):
+            self.setUp()
+            self.acquire.side_effect = [credential(1180, resource=a.STORAGE),
+                                        credential(1181 + seconds, resource=a.STORAGE)]
+            with self.subTest(seconds=seconds):
+                if seconds < 300:
+                    with self.assertRaisesRegex(ValueError, 'remaining lifetime'):
+                        self.tokens.get(a.STORAGE)
+                    self.assertEqual(self.tokens.cache, {})
+                else:
+                    self.tokens.get(a.STORAGE)
+                self.assertEqual(self.acquire.call_count, 2)
+
+    def test_aging_operator_cache_is_discarded_and_broker_token_rolls_once(self):
+        old = credential(1600, resource=a.STORAGE)
+        self.acquire.return_value = old
+        self.tokens.get(a.STORAGE)
+        self.now = 1420
+        fresh = credential(2200, resource=a.STORAGE)
+        self.acquire.side_effect = [old, fresh]
+        self.assertEqual(self.tokens.get(a.STORAGE), fresh['accessToken'])
+        self.assertEqual(self.acquire.call_count, 3)
+        self.assertEqual(sum(self.waits), 181)
+
+    def test_missing_malformed_expiry_never_waits_or_caches(self):
+        for field in ('expires_on', 'exp'):
+            for bad in (None, True, False, 0, -1, 'tomorrow', '1300.0'):
+                self.setUp()
+                value = credential(1180, resource=a.STORAGE)
+                if field == 'exp': value = credential(1180, resource=a.STORAGE, exp=bad)
+                else: value[field] = bad
+                self.acquire.return_value = value
+                with self.subTest(field=field, bad=bad), self.assertRaises(ValueError):
+                    self.tokens.get(a.STORAGE)
+                self.assertEqual(self.waits, [])
+                self.assertEqual(self.tokens.cache, {})
+
+    def test_same_stale_replacement_fails_closed_without_a_third_acquisition(self):
+        self.acquire.return_value = credential(1180, resource=a.STORAGE)
+        with self.assertRaisesRegex(ValueError, 'remaining lifetime'):
+            self.tokens.get(a.STORAGE)
+        self.assertEqual(self.acquire.call_count, 2)
+        self.assertEqual(self.tokens.cache, {})
+        self.assertFalse(self.receipts[-1]['http_request_sent'])
+
+    def test_expired_storage_never_reused(self):
+        self.acquire.side_effect = [credential(999, resource=a.STORAGE),
+                                    credential(1600, resource=a.STORAGE)]
+        self.tokens.get(a.STORAGE)
+        self.assertEqual(self.acquire.call_count, 2)
         self.assertEqual(self.waits, [])
+
+    def test_scope_identity_resource_and_subscription_validate_before_rollover(self):
+        invalid = [credential(1180, resource=a.STORAGE, **change) for change in (
+            {'aud': a.ARM}, {'aud': 'https://other.blob.core.windows.net/'},
+            {'tid': PRINCIPAL}, {'oid': TENANT}, {'scp': 'User.Read'},
+            {'iss': 'https://untrusted.example/'}, {'nbf': 1001})]
+        invalid += [credential(1180, resource=a.STORAGE) | change for change in (
+            {'subscription': TENANT}, {'tenant': SUB}, {'tokenType': 'Basic'})]
+        for value in invalid:
+            self.setUp(); self.acquire.return_value = value
+            with self.assertRaises(ValueError): self.tokens.get(a.STORAGE)
+            self.acquire.assert_called_once()
+            self.assertEqual(self.waits, [])
+            self.assertEqual(self.tokens.cache, {})
+
+    def test_replacement_identity_and_expiry_are_revalidated(self):
+        for value in (credential(2200, resource=a.STORAGE, aud=a.ARM),
+                      credential(2200, resource=a.STORAGE, oid=TENANT),
+                      credential(2200, resource=a.STORAGE) | {'expires_on': None}):
+            self.setUp()
+            self.acquire.side_effect = [credential(1180, resource=a.STORAGE), value]
+            with self.assertRaises(ValueError): self.tokens.get(a.STORAGE)
+            self.assertEqual(self.acquire.call_count, 2)
+            self.assertEqual(self.tokens.cache, {})
+
+    def test_rollover_failure_does_not_discard_or_substitute_arm_credential(self):
+        arm = credential(2200)
+        self.acquire.return_value = arm
+        self.tokens.get(a.ARM)
+        self.acquire.side_effect = [credential(1180, resource=a.STORAGE), ValueError('acquisition failed')]
+        with self.assertRaisesRegex(ValueError, 'acquisition failed'): self.tokens.get(a.STORAGE)
+        self.assertNotIn(a.STORAGE, self.tokens.cache)
+        self.assertEqual(self.tokens.get(a.ARM), arm['accessToken'])
+
+    def test_successful_storage_rollover_keeps_arm_cache_and_resource_separate(self):
+        arm = credential(2200)
+        self.acquire.return_value = arm
+        self.tokens.get(a.ARM)
+        self.acquire.side_effect = [credential(1180, resource=a.STORAGE), credential(2200, resource=a.STORAGE)]
+        storage = self.tokens.get(a.STORAGE)
+        self.assertNotEqual(storage, arm['accessToken'])
+        self.assertEqual(self.tokens.get(a.ARM), arm['accessToken'])
+        self.assertEqual([x.args[0] for x in self.acquire.call_args_list], [a.ARM, a.STORAGE, a.STORAGE])
+
+    def test_frozen_clock_bounds_wait_and_never_admits(self):
+        self.tokens.sleep = Mock()
+        self.acquire.return_value = credential(1180, resource=a.STORAGE)
+        with self.assertRaisesRegex(ValueError, 'wait did not complete'): self.tokens.get(a.STORAGE)
+        self.assertEqual(self.tokens.sleep.call_count, 11)
+        self.acquire.assert_called_once()
+
+    def test_earliest_storage_cli_or_jwt_expiry_controls_rollover(self):
+        for cli_expiry, claim_expiry in ((1180, 2200), (2200, 1180)):
+            self.setUp()
+            self.acquire.side_effect = [credential(cli_expiry, resource=a.STORAGE, exp=claim_expiry),
+                                        credential(2200, resource=a.STORAGE)]
+            self.tokens.get(a.STORAGE)
+            self.assertEqual(sum(self.waits), 181)
+
+    def test_exact_container_url_only(self):
+        base = 'https://kova42c1a27.blob.core.windows.net/cosmo-adapters/'
+        a.validate_storage_blob_url(base + 'a35-nova-screen/proof.json')
+        for bad in ('http://kova42c1a27.blob.core.windows.net/cosmo-adapters/proof.json',
+                    base.replace('kova42c1a27', 'anotheraccount') + 'proof.json',
+                    base.replace('cosmo-adapters', 'other-container') + 'proof.json',
+                    base + '../secret/proof.json', base + '%2e%2e/secret',
+                    base + 'a//b', base + 'a\\b', base + 'proof.json?sig=secret',
+                    base + 'proof.json#fragment', base):
+            with self.subTest(url=bad), self.assertRaises(ValueError): a.validate_storage_blob_url(bad)
+
+    def test_joint_preflight_requires_both_and_blocks_allocation_on_storage_failure(self):
+        allocate = Mock()
+        self.acquire.side_effect = [credential(2400), credential(1180, resource=a.STORAGE),
+                                    credential(1180, resource=a.STORAGE)]
+        with self.assertRaises(ValueError):
+            a.preflight_credentials(self.tokens)
+            allocate()
+        allocate.assert_not_called()
+
+    def test_joint_preflight_detects_arm_margin_consumed_by_storage_rollover(self):
+        self.acquire.side_effect = [credential(1400), credential(1180, resource=a.STORAGE),
+                                    credential(2200, resource=a.STORAGE)]
+        with self.assertRaisesRegex(ValueError, 'joint credential readiness'):
+            a.preflight_credentials(self.tokens)
+
+    def test_joint_preflight_passes_without_returning_or_logging_secrets(self):
+        self.acquire.side_effect = [credential(2400), credential(1180, resource=a.STORAGE),
+                                    credential(2200, resource=a.STORAGE)]
+        result = a.preflight_credentials(self.tokens)
+        self.assertEqual(result, {'arm_ready': True, 'storage_ready': True})
+        self.assertNotIn('accessToken', json.dumps(result) + json.dumps(self.receipts))
 
 
 class ArmTests(AuthFixture, unittest.TestCase):
