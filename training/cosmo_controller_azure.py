@@ -19,6 +19,7 @@ from training import cosmo_lifecycle_authority as authority
 from training import cosmo_qlora_grant as client
 from training import cosmo_qlora_launch as launch
 from training.cosmo_controller_ledger import AzureBlobIO, LedgerRejected, digest, need, parse_json, utc_now
+from training.watchdog_readback import verify_watchdog_properties
 
 ARM = "https://management.azure.com"
 CONTRIBUTOR = "b24988ac-6180-42a0-ab88-20f7382dd24c"
@@ -316,7 +317,7 @@ class AzureRequestVerifier:
         principal = instance["system_assigned_identity_principal_id"]
         guest_roles = self.read(ARM + subscription +
             "/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&" +
-            urlencode({"$filter": "principalId eq " + principal}))
+            urlencode({"$filter": "principalId eq '" + principal + "'"}))
         need(type(guest_roles) is dict and type(guest_roles.get("value")) is list and
              not guest_roles.get("nextLink") and guest_roles["value"] == [],
              "pilot VM identity has ARM privileges or incomplete role evidence")
@@ -391,7 +392,24 @@ class AzureRequestVerifier:
              not nat["properties"].get("publicIpPrefixes") and
              ip["properties"]["publicIPAllocationMethod"] == "Static" and
              ip["properties"].get("publicIPAddressVersion", "IPv4") == "IPv4" and
-             not ip["properties"].get("ddosSettings"), "NAT path or public-IP cost changed")
+             ip["properties"].get("ddosSettings") == {"protectionMode": "VirtualNetworkInherited"},
+             "NAT path or public-IP cost changed")
+        # Azure returns this inherited mode for the reviewed outbound-only IP.
+        # Inheritance alone is not cost evidence: read its actual parent VNet
+        # and require explicit absence of paid protection, with the same isolated
+        # subnet/NAT/IP graph. Missing evidence must not become a false default.
+        vnet = self.resource(network["subnet_id"].rsplit("/subnets/", 1)[0], "2024-05-01")
+        vp = vnet["properties"]
+        need(vnet["location"].casefold() == "eastus" and
+             vp.get("provisioningState") == "Succeeded" and
+             vp.get("enableDdosProtection") is False and
+             vp.get("ddosProtectionPlan") is None and
+             vp.get("addressSpace") == {"addressPrefixes": ["10.91.0.0/16"]} and
+             vp.get("virtualNetworkPeerings") == [] and
+             [item["id"] for item in vp["subnets"]] == [network["subnet_id"]] and
+             nat["properties"].get("subnets") == [{"id": network["subnet_id"]}] and
+             ip["properties"].get("natGateway") == {"id": network["nat_gateway_id"]},
+             "inherited DDoS protection lacks reviewed VNet evidence")
         extension_id = instance["resource_id"] + "/extensions/NvidiaGpuDriverLinux"
         extension = self.resource(extension_id, "2024-03-01")["properties"]
         need(extension.get("provisioningState") == "Succeeded" and
@@ -415,12 +433,11 @@ class AzureRequestVerifier:
              "live inbound/outbound rules differ from approved template")
         workflow = self.resource(self.watchdog, "2019-05-01")
         wp, wi = workflow["properties"], workflow["identity"]
-        need(wp["state"] == "Enabled" and wp["provisioningState"] == "Succeeded" and
-             wi["type"] == "SystemAssigned" and wi["tenantId"] == self.tenant and
-             wi["principalId"] != instance["system_assigned_identity_principal_id"] and
-             wp["parameters"] == {"deadlineUtc": {"value": cleanup_trigger_utc}} and
-             wp["definition"] == watchdog_definition(instance["resource_id"], pilot, self.lifecycle["watchdog_resource_group_id"]),
-             "watchdog disabled, changed or bound to a different deadline")
+        need(wi["type"] == "SystemAssigned" and wi["tenantId"] == self.tenant and
+             wi["principalId"] != instance["system_assigned_identity_principal_id"],
+             "watchdog identity changed")
+        verify_watchdog_properties(wp, cleanup_trigger_utc,
+            watchdog_definition(instance["resource_id"], pilot, self.lifecycle["watchdog_resource_group_id"]))
         trigger = self.resource(self.watchdog + "/triggers/every_minute", "2019-05-01")["properties"]
         need(trigger.get("state") == "Enabled" and trigger.get("provisioningState") == "Succeeded",
              "watchdog recurrence trigger is not enabled")
