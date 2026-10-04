@@ -30,8 +30,8 @@
   "validation_records": 60,
   "training": {
     "fresh_base_only": true,
-    "epochs": 1,
-    "expected_optimizer_steps": 9,
+    "epochs": 2,
+    "expected_optimizer_steps": 18,
     "batch_size": 1,
     "gradient_accumulation_steps": 8,
     "learning_rate": 8e-05,
@@ -125,6 +125,7 @@
   "rejected_adapter_sha256": [
     "f6d09354b5db910288be1e4ac9e22467bfe0c4bf8b554ef576162a245955e352",
     "95470d46db4a430ce6f5e5d53f5dc322dcb4a04aec824b69b922dbe9b1d71213",
-    "9e9c991332e979d3b3b73452e643d0272f859965fc054329f32308491a0a7e0b"
+    "9e9c991332e979d3b3b73452e643d0272f859965fc054329f32308491a0a7e0b",
+    "95fd3383589ef1bfe942345a9df09e3a3afaa8cf8d24ea886a273eea2a5089ee"
   ]
 }

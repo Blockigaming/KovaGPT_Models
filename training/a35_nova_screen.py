@@ -33,6 +33,7 @@ MEASURED_ADAPTERS = (
     "f6d09354b5db910288be1e4ac9e22467bfe0c4bf8b554ef576162a245955e352",
     "95470d46db4a430ce6f5e5d53f5dc322dcb4a04aec824b69b922dbe9b1d71213",
     "9e9c991332e979d3b3b73452e643d0272f859965fc054329f32308491a0a7e0b",
+    "95fd3383589ef1bfe942345a9df09e3a3afaa8cf8d24ea886a273eea2a5089ee",
 )
 
 
@@ -113,7 +114,7 @@ def load_plan(path=PLAN):
          "confirmation_repetitions_authorized": 0,
          "identity_safety_failure_stops_immediately": True, "human_review_required": True},
          "screening rule drift")
-    need(t == {"fresh_base_only": True, "epochs": 1, "expected_optimizer_steps": 9,
+    need(t == {"fresh_base_only": True, "epochs": 2, "expected_optimizer_steps": 18,
          "batch_size": 1, "gradient_accumulation_steps": 8, "learning_rate": 0.00008,
          "sequence_length": 768, "seed": 42, "completion_only_loss": True,
          "packing": False, "enable_thinking": False, "nf4_compute_dtype": "float16",
@@ -121,8 +122,8 @@ def load_plan(path=PLAN):
          "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
          "maximum_seconds": 600}, "training recipe drift")
     train, validation = prepared_inputs(plan)
-    need(math.ceil(len(train) / t["gradient_accumulation_steps"]) == t["expected_optimizer_steps"],
-         "one epoch must include every training example")
+    need(math.ceil(len(train) / t["gradient_accumulation_steps"]) * t["epochs"] == t["expected_optimizer_steps"],
+         "each complete epoch must include every training example")
     need(r["sku"] == "Standard_NC4as_T4_v3" and r["region"] == "eastus"
          and r["gpu_count"] == r["allocation_attempts"] == 1
          and r["vm_public_ip"] is False
@@ -269,7 +270,7 @@ def new_candidate(receipt, plan, source, run_id, adapter):
          and receipt.get("base_revision") == plan["base_revision"]
          and receipt.get("prepared_pack_sha256") == plan["prepared_pack_sha256"]
          and receipt.get("optimizer_steps") == plan["training"]["expected_optimizer_steps"]
-         and receipt.get("completed_epochs") == 1.0
+         and receipt.get("completed_epochs") == float(plan["training"]["epochs"])
          and receipt.get("training_records") == plan["train_records"], "incomplete/stale training receipt")
     weights = sha((adapter / "adapter_model.safetensors").read_bytes())
     need(weights == receipt["adapter_sha256"]["adapter_model.safetensors"]
@@ -427,7 +428,7 @@ def execute(snapshot, output, grant):
         result = trainer.train(resume_from_checkpoint=False)
         signal.setitimer(signal.ITIMER_REAL, max(1, end - time.time()))
         need(result.global_step == plan["training"]["expected_optimizer_steps"]
-             and trainer.state.epoch == 1.0, "incomplete epoch: no evaluation")
+             and trainer.state.epoch == float(plan["training"]["epochs"]), "incomplete epoch: no evaluation")
         adapter = output / "adapter"
         trainer.model.save_pretrained(adapter, safe_serialization=True)
         receipt = {"experiment_id": plan["experiment_id"], "source_commit": source,

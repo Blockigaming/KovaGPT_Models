@@ -120,7 +120,8 @@ class NovaCorrectionTests(unittest.TestCase):
             plan = self.plan | {"rejected_adapter_sha256": [digest]}
             receipt = deepcopy(self.report["training_receipt"])
             receipt.update(experiment_id=plan["experiment_id"], prepared_pack_sha256=plan["prepared_pack_sha256"],
-                           training_records=plan["train_records"], optimizer_steps=plan["training"]["expected_optimizer_steps"])
+                           training_records=plan["train_records"], optimizer_steps=plan["training"]["expected_optimizer_steps"],
+                           completed_epochs=float(plan["training"]["epochs"]))
             receipt["adapter_sha256"]["adapter_model.safetensors"] = digest
             with self.assertRaisesRegex(ValueError, "unchanged/corrupt candidate"):
                 screen.new_candidate(receipt, plan, audit.SOURCE, audit.RUN, adapter)
