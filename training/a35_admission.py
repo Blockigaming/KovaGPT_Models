@@ -92,7 +92,7 @@ class AmbiguousMutation(RuntimeError):
     pass
 
 
-def deployment_matches(observed, *, resource_id, template, parameters, location):
+def deployment_matches(observed, *, resource_id, template, parameters, location, acknowledgement=None):
     """Compare Azure's typed/default-expanded parameters to the pinned template.
 
     Azure returns {type,value} and materializes resourceGroup().location even
@@ -114,8 +114,29 @@ def deployment_matches(observed, *, resource_id, template, parameters, location)
     supported = {"string": str, "bool": bool, "int": int, "array": list, "object": dict}
     for name, definition in definitions.items():
         kind = definition.get("type", "").lower()
+        if kind == "securestring":
+            # Only the existing SSH-public-key parameter is masked by this plan.
+            # A matching GET alone cannot establish its value after a lost PUT.
+            # Require the actual complete authenticated 2xx PUT response, matching
+            # deployment correlation, template hash and every returned parameter.
+            ack = acknowledgement if isinstance(acknowledgement, dict) else {}
+            ap = ack.get("properties", {})
+            value = actual[name]
+            correlation = props.get("correlationId")
+            template_hash = props.get("templateHash")
+            if (name != "sshPublicKey" or type(parameters.get(name)) is not str or not parameters[name]
+                    or not isinstance(value, dict) or value.get("type", "").lower() != "securestring"
+                    or set(value) not in ({"type"}, {"type", "value"}) or value.get("value") is not None
+                    or ack.get("id", "").casefold() != resource_id.casefold()
+                    or ap.get("mode") != "Incremental" or ap.get("parameters") != actual
+                    or not isinstance(correlation, str) or len(correlation) != 36
+                    or ap.get("correlationId") != correlation
+                    or not isinstance(template_hash, str) or not template_hash.isdecimal()
+                    or ap.get("templateHash") != template_hash):
+                return False
+            continue
         if kind not in supported:
-            return False  # A masked secret cannot establish exact readback.
+            return False
         if name in parameters:
             expected = parameters[name]
         elif "defaultValue" in definition:
@@ -135,19 +156,22 @@ def deployment_matches(observed, *, resource_id, template, parameters, location)
     return True
 
 
-def mutate_once(write, read, *, expected, observe, polls=3, sleep=time.sleep):
+def mutate_once(write, read, *, expected, observe, acknowledged_expected=None, polls=3, sleep=time.sleep):
     """Submit exactly once, including on timeout. Reconcile at the fixed identity.
 
     A 404 after a lost response is not proof that Azure did not accept the write.
     We conservatively stop rather than issue a second potentially duplicate write.
     """
     ambiguous = False
+    acknowledgement = None
     try:
-        status, _ = write()
+        status, response = write()
         if status not in (200, 201, 202, 204):
             if status not in TRANSIENT_STATUS:
                 raise RuntimeError("mutation rejected: HTTP " + str(status))
             ambiguous = True
+        else:
+            acknowledgement = response
     except Exception as exc:
         if not transient(exc):
             raise
@@ -156,7 +180,10 @@ def mutate_once(write, read, *, expected, observe, polls=3, sleep=time.sleep):
     for number in range(polls):
         status, actual = read()
         if status == 200:
-            if not expected(actual):
+            matches = (acknowledged_expected(actual, acknowledgement)
+                       if acknowledgement is not None and acknowledged_expected is not None
+                       else expected(actual))
+            if not matches:
                 raise AmbiguousMutation("mutation readback identity/configuration mismatch")
             observe({"event": "mutation_reconciled", "response_was_ambiguous": ambiguous, "write_replayed": False})
             return actual

@@ -60,12 +60,14 @@
   "stop": {
     "corrective_scope": "Resolve the pinned template parameters, require exact types/values/identity/mode/state, and reject unknown expressions or missing/extra evidence. No watchdog definition, model input, grader or quality threshold changed.",
     "get_status": 200,
+    "masked_parameter_followthrough": "The compiled VM template uses the existing secure SSH-public-key parameter. Preserve masking; accept its masked readback only with the complete authenticated successful PUT response matching deployment identity, correlation, template hash and every returned parameter. A lost PUT acknowledgement still fails closed; no write replay. No secure-template declaration changed.",
     "observed_provisioning_state": "Running",
     "put_status": 201,
     "root_cause": "The new private operator compared request parameter dictionaries directly with Azure typed/default-expanded response parameters. Azure included type fields and the source-defined East US location default.",
     "stage": "watchdog deployment readback"
   },
   "verification": {
+    "preserved_actual_vm_masked_parameter_replay": "PASS; complete PUT acknowledgement required; lost acknowledgement rejected",
     "preserved_authenticated_response_replay": "PASS",
     "private_changed_launcher_checks": {
       "passed": 7,
@@ -76,8 +78,8 @@
       "total": 3
     },
     "public_admission_regressions": {
-      "passed": 27,
-      "total": 27
+      "passed": 33,
+      "total": 33
     },
     "unchanged_verify_baseline": 659
   }

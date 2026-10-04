@@ -158,6 +158,57 @@ class DeploymentReadback(unittest.TestCase):
     def test_absent_state_is_rejected(self):
         del self.observed['properties']['provisioningState'];self.assertFalse(self.matches())
 
+    def secure_fixture(self):
+        self.template['parameters']['sshPublicKey']={'type':'securestring'}
+        self.parameters['sshPublicKey']='synthetic public key only'
+        self.observed['properties']['parameters']['sshPublicKey']={'type':'SecureString'}
+        self.observed['properties']['correlationId']='00000000-0000-4000-8000-000000000001'
+        self.observed['properties']['templateHash']='123456789'
+        return deepcopy(self.observed)
+
+    def secure_matches(self,ack):
+        return deployment_matches(self.observed,resource_id=self.rid,template=self.template,
+                                  parameters=self.parameters,location='eastus',acknowledgement=ack)
+
+    def test_masked_ssh_requires_complete_acknowledgement(self):
+        ack=self.secure_fixture()
+        self.assertFalse(self.matches())
+        self.assertTrue(self.secure_matches(ack))
+
+    def test_masked_ssh_mismatched_acknowledgement_rejected(self):
+        original=self.secure_fixture()
+        for key,value in [('correlationId','foreign'),('templateHash','98765'),('mode','Complete')]:
+            ack=deepcopy(original);ack['properties'][key]=value
+            with self.subTest(key=key): self.assertFalse(self.secure_matches(ack))
+
+    def test_arbitrary_masked_secret_not_allowed(self):
+        ack=self.secure_fixture()
+        self.template['parameters']['adminPassword']={'type':'securestring'}
+        self.parameters['adminPassword']='test only'
+        self.observed['properties']['parameters']['adminPassword']={'type':'SecureString'}
+        ack=deepcopy(self.observed)
+        self.assertFalse(self.secure_matches(ack))
+
+    def test_lost_put_cannot_use_acknowledged_matcher(self):
+        write=Mock(side_effect=TimeoutError());matched=Mock(return_value=True)
+        with self.assertRaises(AmbiguousMutation):
+            mutate_once(write,lambda:(200,{}),expected=lambda _:False,
+                        acknowledged_expected=matched,observe=Mock())
+        matched.assert_not_called();write.assert_called_once()
+
+    def test_transient_put_status_cannot_use_acknowledged_matcher(self):
+        matched=Mock(return_value=True)
+        with self.assertRaises(AmbiguousMutation):
+            mutate_once(lambda:(503,{}),lambda:(200,{}),expected=lambda _:False,
+                        acknowledged_expected=matched,observe=Mock())
+        matched.assert_not_called()
+
+    def test_acknowledged_matcher_receives_actual_put_response(self):
+        ack={'id':'expected','properties':{'correlationId':'observed'}};matched=Mock(return_value=True)
+        mutate_once(lambda:(201,ack),lambda:(200,{}),expected=lambda _:False,
+                    acknowledged_expected=matched,observe=Mock())
+        matched.assert_called_once_with({},ack)
+
     def test_write_permission_failure_never_retried(self):
         write=Mock(return_value=(403,{})); read=Mock()
         with self.assertRaises(RuntimeError): mutate_once(write,read,expected=lambda _:True,observe=Mock())
