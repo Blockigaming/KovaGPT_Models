@@ -33,8 +33,8 @@ CURRENT_BENCHMARK_ASSERTION = (
     'inference.trusted_execution_context.benchmark_candidate_id_source !== '
     '"trusted_server_configuration_allowlisted_in_current_candidates"'
 )
-APPROVED_RUNTIME_IDENTITY_PATH = "prompts/kova-identity.v3.txt"
-APPROVED_RUNTIME_IDENTITY_SHA256 = "ed1b503f947cabc6a7c24a9395bd63b9eff2dd55d57570a0d5a8fd51df3c5bc8"
+APPROVED_RUNTIME_IDENTITY_PATH = "prompts/kova-identity.v5.txt"
+APPROVED_RUNTIME_IDENTITY_SHA256 = "2a92814b2ed77045c37a44f4c299c9a835de3a5d9ca5790a820bfa649aa5cc95"
 # The runtime entitlement import can resolve a module cached from the calling
 # checkout. Pin the inspected loader's complete source independently so an
 # alternate root cannot pass with a broken or disabled policy digest check.
@@ -44,7 +44,7 @@ IDENTITY_RUNTIME_CALLERS = {
     "ultra/orchestrator.py": ("IDENTITY", "build_ultra_plan"),
     "worker/handler.py": ("TRUSTED_SYSTEM_IDENTITY", "build_engine_request"),
 }
-FORBIDDEN_PUBLIC = ("Qwen/", "Qwen3-", "qwen3-", "Kova 5.6", "chat-shared")
+FORBIDDEN_PUBLIC = ("PRIVATE_MODEL_SOURCE", "INTERNAL_UPSTREAM_MODEL", "Kova 5.6", "chat-shared")
 
 
 def _unique(pairs):
@@ -188,7 +188,7 @@ def validate(root: Path = ROOT) -> dict:
     _runtime_identity(root)
     legacy_identity = _load(root / "config/identity.v1.json")
     if (legacy_identity.get("status") != "superseded_non_authoritative_history" or
-            legacy_identity.get("superseded_by") != APPROVED_RUNTIME_IDENTITY_PATH):
+            legacy_identity.get("superseded_by") != "prompts/kova-identity.v3.txt"):
         raise ValueError("legacy_identity_source_not_superseded")
     for name in ARCHIVED:
         value = _load(root / "config" / name)

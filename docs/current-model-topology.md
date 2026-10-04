@@ -5,9 +5,9 @@ that an adapter was trained, evaluated, loaded, or deployed.
 
 | Customer family | Private upstream base | Chat | Work |
 | --- | --- | --- | --- |
-| Kova Cosmo | Qwen3-0.6B | Free, Plus, Pro | Plus, Pro |
-| Kova Orion | Qwen3-1.7B | Plus, Pro | Plus, Pro |
-| Kova Nova | Qwen3-4B | No | Plus, Pro |
+| Kova Cosmo | Private immutable source | Free, Plus, Pro | Plus, Pro |
+| Kova Orion | Private immutable source | Plus, Pro | Plus, Pro |
+| Kova Nova | Private immutable source | No | Plus, Pro |
 
 Nova is Work-only. There is no separate 8B Chat slot. Lite through Ultra are
 bounded runtime profiles over a selected family, not separately trained models.
@@ -20,8 +20,10 @@ bounded runtime profiles over a selected family, not separately trained models.
 | Plus | 6: Cosmo/Orion × Lite–High | 18: all families × Lite–Ultra |
 | Pro | 12: Cosmo/Orion × Lite–Ultra | 18: all families × Lite–Ultra |
 
-Normal customer-facing responses, APIs, logs, errors, selectors, and activity
-text use only Kova names. Required upstream lineage remains accurate in the
+All customer-facing responses, APIs, logs, errors, selectors, and activity
+text use only Kova names, including direct or adversarial identity requests.
+The canonical identity is “I’m KovaGPT, built by Kova.” This document and the
+lineage manifests are engineering records, never product help or customer model cards. Required upstream lineage remains accurate in the
 private record `config/kova-private-lineage.v1.json`; immutable download
 inventories live in the three family manifests.
 

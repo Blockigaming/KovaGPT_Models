@@ -1,5 +1,6 @@
 """Synthetic CPU rehearsal only: no deployment, real models, tools or credentials."""
 
+from training.three_family_contract import MANIFEST_PATHS
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import json
@@ -98,11 +99,9 @@ class RolloutTests(unittest.TestCase):
                          "config/kova-orion-qlora.v1.json",
                          "config/kova-nova-qlora.v1.json",
                          "training/three_family_operator.py",
-                         "prompts/kova-identity.v3.txt", "core/identity.py",
+                         "prompts/kova-identity.v5.txt", "core/identity.py",
                          "config/kova-three-family-dataset.v2.json", "worker/handler.py",
-                         "config/qwen3-0.6b-download-manifest.v1.json",
-                         "config/qwen3-1.7b-download-manifest.v1.json",
-                         "config/qwen3-4b-download-manifest.v1.json",
+                         *MANIFEST_PATHS.values(),
                          "worker/model_artifact.py", "worker/model_startup.py",
                          "worker/serving_runtime.py", "execution/contracts.py",
                          "scripts/summarize-core-benchmark.mjs", "ultra/binding.py",

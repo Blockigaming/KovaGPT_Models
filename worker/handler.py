@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from core.adapter import bind_core_operation, build_core_plan
 from core.current_candidates import CORE_SERVING
 from core.identity import load_runtime_identity
+from core.public_identity import guard_message, public_usage, public_answer_payload, public_error_payload
 from router.policy import CHAT_POLICIES, WORK_EFFORTS, WORK_FAMILY_POLICIES, resolve_route
 from worker.response_privacy import require_private_reasoning_absent
 
@@ -309,12 +310,13 @@ def _public_text_without_marker_prefix(text):
 
 
 def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, timing_state,
-                            on_public_delta=None):
-    """Normalize one engine response and optionally emit provisional visible text.
+                            on_public_delta=None, user_messages=None):
+    """Buffer one bounded engine response before identity-safe public delivery.
 
-    The caller must supply a trusted sink only for a public final stage. A
-    fragment is provisional until the full response and postflight pass; the
-    sink must not represent its receipt as a completed answer or settled usage.
+    The caller must supply a trusted sink only for a public final stage.
+    No fragment can be released until the complete response passes privacy,
+    completion and identity checks. Original output remains in the returned
+    normalized response for internal accounting, never as a repaired score.
     """
     _require(
         isinstance(timing_state, dict) and set(timing_state) == {"time_to_first_token_ms"} and
@@ -340,9 +342,7 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
     content_chars = 0
     tool_call_states = {}
     usage = None
-    first_token_ns = None
     finish_reason = None
-    pending_public_text = ""
     try:
         for raw_chunk in chunks:
             chunk = _mapping(raw_chunk, "stream chunk must be an object")
@@ -371,19 +371,11 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
                 _require(content is None or isinstance(content, str), "stream content must be text or null")
                 fragments = delta.get("tool_calls", [])
                 _require(isinstance(fragments, list), "stream tool_calls must be an array")
-                meaningful_tool_fragment = _append_stream_tool_calls(tool_call_states, fragments)
-                if first_token_ns is None and ((content and content.strip()) or meaningful_tool_fragment):
-                    first_token_ns = clock_ns()
-                    timing_state["time_to_first_token_ms"] = max(0, first_token_ns - started_ns) / 1_000_000
+                _append_stream_tool_calls(tool_call_states, fragments)
                 if content:
                     content_chars += len(content)
                     _require(content_chars <= MAX_TOTAL_TEXT_CHARS, "stream content too large")
                     content_parts.append(content)
-                    if on_public_delta is not None:
-                        visible, pending_public_text = _public_text_without_marker_prefix(
-                            pending_public_text + content)
-                        if visible:
-                            on_public_delta(visible)
     finally:
         # The consumer can reject a chunk before exhausting the provider stream.
         # Close explicitly rather than relying on generator garbage collection.
@@ -403,12 +395,17 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
         }],
         "usage": usage,
     }
+    checked = sanitize_engine_response("", normalized, user_messages=user_messages)
+    first_token_ns = clock_ns()
+    timing_state["time_to_first_token_ms"] = max(0, first_token_ns - started_ns) / 1_000_000
     if on_public_delta is not None:
-        # Final partial prefixes are ordinary visible text only if the whole
-        # completion is valid. Never emit an incomplete response's tail.
-        sanitize_engine_response("", normalized)
-        if pending_public_text:
-            on_public_delta(pending_public_text)
+        # Whole-response buffering also prevents identifiers split across chunks.
+        if checked["content"] != "".join(content_parts):
+            on_public_delta(checked["content"])
+        else:
+            for fragment in content_parts:
+                if fragment:
+                    on_public_delta(fragment)
     return normalized, clock_ns()
 
 
@@ -491,7 +488,7 @@ def _sanitized_tool_calls(value):
     return cleaned
 
 
-def sanitize_engine_response(request_id, response):
+def sanitize_engine_response(request_id, response, *, user_messages=None):
     _require(isinstance(response, dict), "engine response must be an object")
     require_private_reasoning_absent(response)
     choices = response.get("choices")
@@ -520,12 +517,16 @@ def sanitize_engine_response(request_id, response):
     input_tokens, output_tokens = _usage_tokens(response)
     _require(input_tokens > 0, "invalid input_tokens")
     _require(output_tokens > 0, "invalid output_tokens")
-    return {
+    content, tool_calls, identity_blocked = guard_message(content if has_content else "", tool_calls, user_messages)
+    result = {
         "request_id": request_id,
-        "content": content if has_content else "",
+        "content": content,
         "tool_calls": tool_calls,
-        "usage": usage,
+        "usage": public_usage(usage),
     }
+    if identity_blocked:
+        result["identity_guard_blocked"] = True
+    return result
 
 
 def _attempt_record(value, execution, attempt_id, outcome, elapsed_ms, first_token_ms, runtime, response):
@@ -655,8 +656,10 @@ def handle_job(
             started_ns=started_ns,
             timing_state=timing_state,
             on_public_delta=public_delta_sink if execution["public_response"] else None,
+            user_messages=value["messages"] if execution["public_response"] else None,
         )
-        result = sanitize_engine_response(value["request_id"], response)
+        result = sanitize_engine_response(value["request_id"], response,
+                                          user_messages=value["messages"] if execution["public_response"] else None)
     except Exception as error:
         operation_error = error
         if finished_ns is None:
@@ -682,7 +685,8 @@ def handle_job(
             raise operation_error.with_traceback(operation_error.__traceback__) from integrity_error
         raise
 
-    outcome = "failed" if operation_error is not None else "success"
+    outcome = ("failed" if operation_error is not None else
+               "quarantined" if result.get("identity_guard_blocked") else "success")
     record = _attempt_record(
         value, execution, attempt_id, outcome, elapsed_ms, first_token_ms, after, response,
     )
@@ -691,3 +695,11 @@ def handle_job(
         raise operation_error.with_traceback(operation_error.__traceback__)
     result["benchmark"] = record
     return result
+
+
+def handle_public_job(*args, **kwargs):
+    """Customer adapter: no raw exception, private telemetry or engine metadata."""
+    try:
+        return public_answer_payload(handle_job(*args, **kwargs))
+    except Exception as error:
+        return public_error_payload(error)

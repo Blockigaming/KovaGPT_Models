@@ -26,6 +26,7 @@ from evaluation.a35_quality_policy import load_policy
 from evaluation.completion_evidence import completion_status, generation_evidence
 from evaluation.cpu_candidate_quality import score_case
 from evaluation.historical_suite_bridge import load_archived_suite
+from core.public_identity import contains_prohibited
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAN = ROOT / "config/a35-nova-screen.v1.json"
@@ -56,14 +57,15 @@ def system_prompt(plan):
     """Nova-only task checks; keep the shared identity/safety policy intact."""
     need(plan.get("task_checks_path") == "prompts/kova-nova-task-checks.v1.txt",
          "Nova task-check source required")
-    return ((ROOT / "prompts/kova-identity.v4.draft.txt").read_text() + "\n" +
+    return ((ROOT / "prompts/kova-identity.v5.txt").read_text() + "\n" +
             (ROOT / plan["task_checks_path"]).read_text())
 
 
-def prepared_nova_rows(plan):
+def historical_nova_rows(plan):
+    """Reproduce the measured parent exactly; never use it for new execution."""
     rows = prepared_revision_rows()
     base = (ROOT / "prompts/kova-identity.v4.draft.txt").read_text()
-    system = system_prompt(plan)
+    system = base + "\n" + (ROOT / plan["task_checks_path"]).read_text()
     for _, _, row in rows:
         message = row["prompt"][0]
         need(message["role"] == "system" and message["content"].startswith(base),
@@ -81,6 +83,12 @@ def prepared_nova_rows(plan):
     return rows
 
 
+def prepared_nova_rows(plan):
+    from training.a35_identity_inputs import apply_identity_policy
+    system = system_prompt(plan)  # Validate the source allowlist before any read.
+    return apply_identity_policy(historical_nova_rows(plan), system, plan["file_sha256"])
+
+
 def prepared_inputs(plan):
     rows = prepared_nova_rows(plan)
     need(sha(encoded(rows)) == plan["prepared_pack_sha256"], "revised prepared pack drift")
@@ -95,9 +103,13 @@ def prepared_inputs(plan):
 
 def load_plan(path=PLAN):
     plan = json.loads(path.read_text())
-    need(plan["family"] == "kova-nova" and plan["base_model"] == "Qwen/Qwen3-4B"
+    need(plan["family"] == "kova-nova" and plan["base_model"] == "internal-nova-base-v1"
          and plan["base_revision"] == "1cfa9a7208912126459214e8b04321603b3df60c",
          "only the corrected Nova screen is supported")
+    need(plan.get("private_catalog_required") is True
+         and all(re.fullmatch(r"[0-9a-f]{64}", str(plan.get(key, "")))
+                 for key in ("private_catalog_sha256", "private_source_manifest_sha256")),
+         "private source and identity policy bindings required")
     need(plan.get("previous_screen_adapter_sha256") ==
          "95470d46db4a430ce6f5e5d53f5dc322dcb4a04aec824b69b922dbe9b1d71213",
          "completed-screen candidate binding required")
@@ -313,6 +325,9 @@ def run_screen(cases, generate, checkpoint):
             budget = 2048 if group is manual else 128
             answer, evidence, latency = generate(case["prompt"], budget)
             result, safe = score_case(case, answer, evidence)
+            if contains_prohibited(answer):
+                # Raw private evidence is retained; delivery fallback cannot earn credit.
+                result = "identity_policy_blocked"
             row = {"case_id": case["id"], "category": case["category"], "result": result,
                    "answer": safe, "answer_sha256": sha(answer.encode()),
                    "prompt_sha256": sha(case["prompt"].encode()),
@@ -320,7 +335,7 @@ def run_screen(cases, generate, checkpoint):
                    "latency_seconds": latency, "review_criteria": case["evaluation"].get("criteria", [])}
             results.append(row)
             checkpoint(row)
-            if result in ("private_output_blocked", "output_contract_failed"):
+            if result in ("private_output_blocked", "output_contract_failed", "identity_policy_blocked"):
                 return results, "safety_contract_failed"
             if completion_status(evidence) != "verified_complete":
                 return results, "completion_failed"
@@ -364,6 +379,8 @@ def preserve_screen(output, storage, report):
 
 def execute(snapshot, output, grant):
     plan = load_plan()
+    from core.private_provenance import load_catalog
+    load_catalog(plan["private_catalog_sha256"])  # Before any execution claim or model call.
     source = clean_head()
     end = admit(grant, plan, source)
     need(not output.exists() and not output.is_symlink() and output.parent.is_dir(), "new output required")
@@ -375,7 +392,9 @@ def execute(snapshot, output, grant):
     from importlib.metadata import version
     approved.verify_installed_stack()
     need(version("bitsandbytes") == "0.48.2", "four-bit stack drift")
-    verify_snapshot(snapshot, json.loads((ROOT / "config/qwen3-4b-download-manifest.v1.json").read_text()))
+    from core.private_provenance import source_manifest
+    verify_snapshot(snapshot, source_manifest(plan["base_model"], plan["base_revision"],
+                                               plan["private_source_manifest_sha256"]))
     output.mkdir(mode=0o700)
     # Atomic run claim is in external storage too; the controller must preserve
     # its If-None-Match:* claim before invoking this job. Local retries also fail.

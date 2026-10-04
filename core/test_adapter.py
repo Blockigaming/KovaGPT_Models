@@ -1,3 +1,4 @@
+import json
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -95,10 +96,10 @@ class CoreAdapterTests(unittest.TestCase):
         plan = self.build(self.request(messages=[{"role": "user", "content": question}]))
         messages = plan["operations"][0]["request_template"]["messages"]
         self.assertEqual(messages[1], selected_candidate_provenance(plan["route_id"], self.model()))
-        self.assertIn("Qwen/Qwen3-0.6B", messages[1]["content"])
-        self.assertIn(source_reference_for_route(plan["route_id"]).revision, messages[1]["content"])
-        self.assertIn("only to answer a direct question", messages[1]["content"])
-        self.assertIn("Do not volunteer upstream", messages[1]["content"])
+        self.assertNotIn("model revision:", messages[1]["content"].lower())
+        self.assertNotIn(source_reference_for_route(plan["route_id"]).revision, messages[1]["content"])
+        self.assertIn("never user-facing", messages[1]["content"])
+        self.assertIn("KovaGPT, built by Kova", messages[1]["content"])
         self.assertNotIn("Evil Cloud", messages[1]["content"])
         self.assertEqual(messages[4], {"role": "user", "content": question})
         with self.assertRaisesRegex(ValueError, "unsupported message role"):
@@ -161,11 +162,11 @@ class CoreAdapterTests(unittest.TestCase):
                 operation["maximum_input_tokens"] + operation["maximum_output_tokens"],
                 candidate_context,
             )
-        self.assertEqual(plan["provider"], "runpod_serverless")
+        self.assertEqual(plan["provider"], json.loads((Path(__file__).resolve().parents[1] / "config/core-serving.v1.json").read_text())["provider"])
         self.assertEqual(plan["endpoint_name"], "kova-core")
         self.assertFalse(plan["endpoint_deployed"])
 
-    def test_qwen_thinking_mode_tracks_kova_route(self):
+    def test_thinking_mode_tracks_kova_route(self):
         instant = self.build()
         high = self.build(self.request(route_id="high"))
         self.assertFalse(instant["operations"][0]["request_template"]["chat_template_kwargs"]["enable_thinking"])

@@ -1,3 +1,4 @@
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -64,7 +65,7 @@ class UltraPlannerTests(unittest.TestCase):
                 for operation in plan["operations"]:
                     messages = operation["input_template"]["messages"]
                     self.assertEqual(messages[1], expected)
-                    self.assertIn(source_reference_for_route(route).model, messages[1]["content"])
+                    self.assertNotIn(source_reference_for_route(route).model, messages[1]["content"])
                     self.assertNotIn("attacker/model", messages[1]["content"])
                     self.assertEqual(messages[4], {"role": "user", "content": question})
                 self.assertTrue(plan["model_selection_required"])
@@ -106,7 +107,7 @@ class UltraPlannerTests(unittest.TestCase):
         plan = self.build(self.request("Prove this probability equation."))
         self.assertFalse(plan["production_ready"])
         self.assertTrue(plan["model_selection_required"])
-        self.assertEqual(plan["provider"], "runpod_serverless")
+        self.assertEqual(plan["provider"], json.loads((Path(__file__).resolve().parents[1] / "config/core-serving.v1.json").read_text())["provider"])
         self.assertEqual(plan["endpoint_name"], "kova-ultra")
         self.assertFalse(plan["endpoint_deployed"])
 

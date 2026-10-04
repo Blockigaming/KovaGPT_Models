@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "experiment_id": "a35-nova-three-epoch-exposure-v6",
+  "experiment_id": "a35-nova-private-provenance-v8",
   "family": "kova-nova",
-  "base_model": "Qwen/Qwen3-4B",
+  "base_model": "internal-nova-base-v1",
   "base_revision": "1cfa9a7208912126459214e8b04321603b3df60c",
   "file_sha256": {
     "prompts/kova-identity.v4.draft.txt": "96ffd74a27720901a86cdca5693092be8ea1512732e660fbad6cf2cc144a4298",
@@ -11,7 +11,6 @@
     "data/a35-approved-corpus-validation-overrides.v1.jsonl": "7c2156410bf29e784b78e0e362d4f1653afbcb53e20b7e54e2bb758d50b32b11",
     "data/a35-correction-supplement-review.v1.json": "fc996d2065a7b6848aa6ea8b9e3d18ca35f1db63bb630415c9022ac6b3a27bd7",
     "evaluations/a35-revised-input-tokenizer-masks.v1.json": "0326976bdd6544f11675fbf607d8c66d83b1d3333149e0242873feec30c42368",
-    "config/qwen3-4b-download-manifest.v1.json": "8fd1bac2209b5f1c4f1412fc1797b29e0bdc4609025bdd176660dd560fa97566",
     "requirements/kova-cosmo-sft-py312-linux.lock": "6ea7d49102e0edc8ceb6a74b875570787dab69685c87c2c5acde5bc22e7b72c0",
     "requirements/kova-three-family-bitsandbytes-py312-linux.lock": "e1259d3f8af7aa3715241e20b03f09ce2e0e30105ebeaa64e09f639c2394bf7b",
     "infra/three-family-pilot-vm.bicep": "100f1f7cdea151fea982a86751b37ea32b60be96e9fd945c3de237d405a7c071",
@@ -19,13 +18,18 @@
     "infra/three-family-watchdog-pilot-role.bicep": "81ce0aaa9285f0e167051fc15c74ea86375d6b0e5f03aa239747b44ccbf7d480",
     "evaluations/a35-nova-screen-pricing.v1.json": "5676286ce05d9840e806030ebbc64fa2776c9b5f7371f818b9ae4e5ce17d8d1d",
     "prompts/kova-nova-task-checks.v1.txt": "465c94b5b127299ea12c00325a25c7869c86b2a568ce221ca1fa004acf5e2de2",
-    "evaluations/a35-nova-task-checks-tokenizer.v1.json": "2933f590d75bebc0660cb7acfed481f00bd9290f91097fb37107372ed5db762b",
+    "evaluations/a35-nova-task-checks-tokenizer.v1.json": "a82423d6341427e05695276866fb2c95a9e7351de48f574697d9a3a779a954f6",
     "data/a35-nova-copy-contrast.v1.draft.jsonl": "bd5415471df1a8919bbea5dda1029fe1e1010eb10f9c3ef12d7463e6e77aa1dd",
     "data/a35-nova-copy-contrast-review.v1.json": "e02119fbdf99dbfd3efbb5a2628066c2359aace8495acc200a9badc692850f07",
     "data/a35-nova-transfer.v1.draft.jsonl": "f6dbf2576ec091d018bcccd90a08284a4a4c2edcd0da8c474e04459052a697b8",
-    "data/a35-nova-transfer-review.v1.json": "fc0e0b1cc648d1146ab5622d4a2b03c60078ab22c397f220da25600cb943a7b7"
+    "data/a35-nova-transfer-review.v1.json": "fc0e0b1cc648d1146ab5622d4a2b03c60078ab22c397f220da25600cb943a7b7",
+    "prompts/kova-identity.v5.txt": "2a92814b2ed77045c37a44f4c299c9a835de3a5d9ca5790a820bfa649aa5cc95",
+    "config/identity.v2.json": "08505290c25c6e62376d675d3b6df8b85ec3e409c6f190793aa715762e2816b1",
+    "data/a35-kovagpt-identity-overrides.v1.jsonl": "a81ad878e22b7fc13708320cd538ca920551a5b07c35cbdcc1679c44e71942b8",
+    "data/a35-kovagpt-identity-review.v1.json": "281059b854ec0628131ab86f7e437a290eda04f73ecd238d9e5d4f1d76471405",
+    "config/evaluation-gates.v2.json": "788121b7e49e7f92638c13c8b684fa836e87bfe93396d237bf4b93ac3d7a5232"
   },
-  "prepared_pack_sha256": "d670792ddf8f38896ee9adcac338268a7677cd4b2c60079a33d80a018cdccdf8",
+  "prepared_pack_sha256": "5a8f17cbf9ad51bc6c49e682763bdc5f1627318165d982b652c24a686d235b1c",
   "train_records": 73,
   "validation_records": 61,
   "training": {
@@ -119,7 +123,7 @@
   "deployment_authorized": false,
   "merge_authorized": false,
   "a35_quality_gate_closed": false,
-  "input_parent_commit": "2bd530c3f9d6666184b926b4706aab9fec17fd24",
+  "input_parent_commit": "d02db7324cceeeac64f675b1c25e27cdc5973c11",
   "task_checks_path": "prompts/kova-nova-task-checks.v1.txt",
   "previous_screen_adapter_sha256": "95470d46db4a430ce6f5e5d53f5dc322dcb4a04aec824b69b922dbe9b1d71213",
   "rejected_adapter_sha256": [
@@ -129,5 +133,8 @@
     "95fd3383589ef1bfe942345a9df09e3a3afaa8cf8d24ea886a273eea2a5089ee",
     "4aa5e981fb5d28b902fb5fdf6da68f15b76e4659010195902446530f29b5d264",
     "32b971862c5b7d0a013aea8f6da4913ba5eeb94b92e153dd7d0aa10419031e16"
-  ]
+  ],
+  "private_source_manifest_sha256": "d10f0f065dc331fb61b3e174288ad4a2dda89a361a17491fa46fb076bc03a7cd",
+  "private_catalog_required": true,
+  "private_catalog_sha256": "6eaf8ac788043f47cb8776f3f9d56853003517e730b9f041933210f4be609801"
 }

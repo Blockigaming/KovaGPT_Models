@@ -24,10 +24,10 @@ class ScreenTests(unittest.TestCase):
         cls.plan = s.load_plan()
         cls.cases = load_archived_suite()["cases"]
 
-    def test_new_pack_uses_v4_and_all_73_training_rows(self):
+    def test_new_pack_uses_v5_and_all_73_training_rows(self):
         train, val = s.prepared_inputs(self.plan)
         self.assertEqual((len(train), len(val)), (73, 61))
-        prompt = (s.ROOT / "prompts/kova-identity.v4.draft.txt").read_text()
+        prompt = (s.ROOT / "prompts/kova-identity.v5.txt").read_text()
         self.assertTrue(all(row["prompt"][0]["content"].startswith(prompt) for row in train + val))
         self.assertTrue(all(set(row) == {"prompt", "completion", "chat_template_kwargs"}
                             for row in train + val))
@@ -41,19 +41,19 @@ class ScreenTests(unittest.TestCase):
             s.prepared_inputs(plan)
 
     def test_copy_pair_is_additive_and_preserves_every_measured_input(self):
-        rows = s.prepared_nova_rows(self.plan)
+        rows = s.historical_nova_rows(self.plan)
         self.assertEqual(len(rows), 134)
         measured_pack = "272d2a6e98fa57fec743618591d054e31298f6d36f01e5eacdc61ece61e1e591"
         self.assertEqual(s.sha(s.encoded(rows[:110])), measured_pack)
         self.assertNotEqual(self.plan["prepared_pack_sha256"], measured_pack)
-        self.assertEqual(s.sha(s.system_prompt(self.plan).encode()),
+        self.assertEqual(s.sha(((s.ROOT / "prompts/kova-identity.v4.draft.txt").read_text() + "\n" + (s.ROOT / "prompts/kova-nova-task-checks.v1.txt").read_text()).encode()),
                          "258b48ccdc670cfd32312983de0ca4e71b136de1e71aa4ef97fb88d026e554d8")
         self.assertEqual([(identifier, split) for identifier, split, _ in rows[110:112]],
                          [("a35-nova-copy-isolation-train", "train"),
                           ("a35-nova-copy-isolation-validation", "validation")])
         for _, _, row in rows[110:]:
             self.assertEqual(set(row), {"prompt", "completion", "chat_template_kwargs"})
-            self.assertEqual(row["prompt"][0]["content"], s.system_prompt(self.plan))
+            self.assertEqual(row["prompt"][0]["content"], ((s.ROOT / "prompts/kova-identity.v4.draft.txt").read_text() + "\n" + (s.ROOT / "prompts/kova-nova-task-checks.v1.txt").read_text()))
 
     def test_nova_only_pair_does_not_modify_shared_family_inputs(self):
         shared = s.prepared_revision_rows()
@@ -73,7 +73,7 @@ class ScreenTests(unittest.TestCase):
     def test_grouped_sum_replacement_preserves_prior_rows_bounds_and_one_run(self):
         self.assertEqual(self.plan["training"]["expected_optimizer_steps"], 30)
         self.assertEqual(self.plan["training"]["maximum_seconds"], 600)
-        rows = s.prepared_nova_rows(self.plan)
+        rows = s.historical_nova_rows(self.plan)
         self.assertEqual(s.sha(s.encoded(rows[:132])),
                          "d0a7bbd518601ef95f9f04736aaad02fa5a20f92677042ae6d4ae3f8ce447d52")
         self.assertNotEqual(self.plan["prepared_pack_sha256"], s.sha(s.encoded(rows[:132])))
@@ -97,8 +97,8 @@ class ScreenTests(unittest.TestCase):
     def test_historical_replacement_receipt_preserves_original_unmeasured_binding(self):
         receipt = json.loads((s.ROOT / "evaluations/a35-nova-grouped-sum-replacement.v1.json").read_text())
         hashes = receipt["hashes"]
-        self.assertEqual(hashes["pack"], s.sha(s.encoded(s.prepared_nova_rows(self.plan))))
-        self.assertEqual(hashes["prompt"], s.sha(s.system_prompt(self.plan).encode()))
+        self.assertEqual(hashes["pack"], s.sha(s.encoded(s.historical_nova_rows(self.plan))))
+        self.assertEqual(hashes["prompt"], s.sha(((s.ROOT / "prompts/kova-identity.v4.draft.txt").read_text() + "\n" + (s.ROOT / "prompts/kova-nova-task-checks.v1.txt").read_text()).encode()))
         for key, relative in (("dataset", "data/a35-nova-transfer.v1.draft.jsonl"),
                               ("review", "data/a35-nova-transfer-review.v1.json")):
             self.assertEqual(hashes[key], s.sha((s.ROOT / relative).read_bytes()))
@@ -120,12 +120,11 @@ class ScreenTests(unittest.TestCase):
         self.assertEqual(receipt["next_proposal"]["maximum_training_seconds"], 600)
         self.assertEqual(receipt["next_proposal"]["new_examples"], 0)
         self.assertEqual(receipt["next_proposal"]["status"], "UNMEASURED")
-        self.assertEqual(receipt["hashes"]["plan"], s.sha(s.PLAN.read_bytes()))
-        self.assertEqual(receipt["hashes"]["pack"], self.plan["prepared_pack_sha256"])
-        self.assertEqual(receipt["hashes"]["prompt"], s.sha(s.system_prompt(self.plan).encode()))
+        self.assertEqual(receipt["hashes"]["plan"], "166bf0e6cace6c558f8d4793157185f1afd6c5afcbec90c4636a6784d8b554d5")
+        self.assertEqual(receipt["hashes"]["pack"], s.sha(s.encoded(s.historical_nova_rows(self.plan))))
+        self.assertEqual(receipt["hashes"]["prompt"], "258b48ccdc670cfd32312983de0ca4e71b136de1e71aa4ef97fb88d026e554d8")
         for key, relative in (("dataset", "data/a35-nova-transfer.v1.draft.jsonl"),
-                              ("review", "data/a35-nova-transfer-review.v1.json"),
-                              ("tokenizer", "evaluations/a35-nova-task-checks-tokenizer.v1.json")):
+                              ("review", "data/a35-nova-transfer-review.v1.json")):
             self.assertEqual(receipt["hashes"][key], s.sha((s.ROOT / relative).read_bytes()))
         self.assertEqual(receipt["rejected_adapters"], list(s.MEASURED_ADAPTERS))
         self.assertEqual(len(receipt["rejected_adapters"]), 6)
@@ -134,6 +133,7 @@ class ScreenTests(unittest.TestCase):
         self.assertEqual(receipt["a35"], "OPEN")
         self.assertFalse(receipt["execution_authorized"] or receipt["quality_gate_closed"]
                          or receipt["next_proposal"]["quality_improvement_proved"])
+        self.assertEqual(receipt["hashes"]["tokenizer"], "2933f590d75bebc0660cb7acfed481f00bd9290f91097fb37107372ed5db762b")
 
     def grant(self):
         return dict(owner_authorized=True, experiment_id=self.plan["experiment_id"],
@@ -334,7 +334,7 @@ class ScreenTests(unittest.TestCase):
                  patch.object(s, "clean_head", return_value="c" * 40), \
                  patch.object(s, "admit", return_value=time.time() + 100), \
                  patch("training.a35_screen_storage.Storage") as storage:
-                with self.assertRaisesRegex(ValueError, "new output required"):
+                with patch("core.private_provenance.load_catalog", return_value={}), self.assertRaisesRegex(ValueError, "new output required"):
                     s.execute(Path(folder), output, self.grant())
                 storage.assert_not_called()
             self.assertEqual(old_packet.read_text(), "old candidate must not count")
@@ -362,6 +362,8 @@ class ScreenTests(unittest.TestCase):
                 ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE")}))
             stack.enter_context(patch("training.cosmo_qlora_training.verify_installed_stack"))
             stack.enter_context(patch("training.snapshot_verifier.verify_snapshot"))
+            stack.enter_context(patch("core.private_provenance.source_manifest", return_value={}))
+            stack.enter_context(patch("core.private_provenance.load_catalog", return_value={}))
             stack.enter_context(patch("importlib.metadata.version", return_value="0.48.2"))
             stack.enter_context(patch.dict(sys.modules, {"torch": None}))
             storage = stack.enter_context(patch("training.a35_screen_storage.Storage")).return_value

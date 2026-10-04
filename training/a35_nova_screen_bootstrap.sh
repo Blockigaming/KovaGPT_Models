@@ -3,6 +3,8 @@
 set -euo pipefail
 : "${SOURCE_COMMIT:?exact published source required}"
 : "${OWNER_GRANT_FILE:?external owner grant path required}"
+: "${KOVA_PRIVATE_CATALOG:?private provenance catalog required}"
+: "${KOVA_PRIVATE_CATALOG_SHA256:?private provenance catalog digest required}"
 [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || exit 2
 test -f "$OWNER_GRANT_FILE"
 # Bound the ENTIRE bootstrap process group, including installation/downloads.
@@ -76,8 +78,8 @@ timeout 900 "$work/venv/bin/python" -m pip install --disable-pip-version-check \
   -r requirements/kova-three-family-bitsandbytes-py312-linux.lock
 "$work/venv/bin/python" -m pip check
 "$work/venv/bin/python" -m training.a35_nova_screen # Pins/scope before weights.
-timeout 900 "$work/venv/bin/python" -m training.pinned_snapshot_download \
-  --family kova-nova --destination "$work/snapshot" --execute
+timeout 900 "$work/venv/bin/python" -m training.private_snapshot_download \
+  --destination "$work/snapshot" --execute
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
 remaining=$((work_deadline - $(date +%s)))
 test "$remaining" -gt 600

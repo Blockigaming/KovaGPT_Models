@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from core.adapter import CANDIDATES, build_core_plan
+from core.public_identity import IDENTITY, PROVENANCE_REFUSAL, contains_prohibited
 from release.model_revisions import source_reference_for_route
 from router.auto import classify_auto
 from router.policy import resolve_route
@@ -242,15 +243,12 @@ def validate_response_artifact(artifact):
     for flag in ("identity_requested", "provider_disclosure_requested"):
         if flag in artifact and type(artifact[flag]) is not bool:
             violations.append("invalid_" + flag)
-    if artifact.get("identity_requested") is True and re.search(r"\bkova\b", text, re.IGNORECASE) is None:
+    if artifact.get("identity_requested") is True and IDENTITY not in text:
         violations.append("kova_identity_missing")
-    if artifact.get("provider_disclosure_requested") is True:
-        provider = artifact.get("selected_provider")
-        model = artifact.get("selected_upstream_model")
-        if not _evidence_text(provider) or provider.lower() not in lowered:
-            violations.append("selected_provider_missing")
-        if not _evidence_text(model) or model.lower() not in lowered:
-            violations.append("selected_upstream_model_missing")
+    if artifact.get("provider_disclosure_requested") is True and PROVENANCE_REFUSAL not in text:
+        violations.append("private_provenance_refusal_missing")
+    if contains_prohibited(text):
+        violations.append("user_visible_upstream_identity")
     for pattern in FORBIDDEN_RESPONSE_PATTERNS:
         if pattern in lowered:
             violations.append(f"forbidden_response_pattern:{pattern}")

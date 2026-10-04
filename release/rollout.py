@@ -5,6 +5,7 @@ The SQLite journal tests intent/observation separation; it is not a production
 release-controller store. See docs/model-rollout-rehearsal.md for live gates.
 """
 
+from training.three_family_contract import MANIFEST_PATHS
 from contextlib import contextmanager
 from copy import deepcopy
 import hashlib
@@ -71,14 +72,13 @@ def policy_digest():
     # planner, or evidence source changes. Archived routing files are excluded.
     paths = ("release/rollout.py", "config/current-product-policy.v3.json",
              "config/kova-private-lineage.v1.json",
-             "prompts/kova-identity.v3.txt", "core/identity.py",
+             "prompts/kova-identity.v5.txt", "core/identity.py",
+             "core/public_identity.py", "config/identity.v2.json",
              "config/kova-three-family-dataset.v2.json",
              "config/kova-three-family-lifecycle.v1.json",
              "config/kova-three-family-pilot.v1.json",
              "config/kova-three-family-operator-plan.v1.json",
-             "config/qwen3-0.6b-download-manifest.v1.json",
-             "config/qwen3-1.7b-download-manifest.v1.json",
-             "config/qwen3-4b-download-manifest.v1.json",
+             *MANIFEST_PATHS.values(),
              "config/kova-runtime-profiles.v1.json", "router/policy.py",
              "config/ultra-orchestration.v1.json", "config/activity-event.v1.json",
              "config/kova-three-family-evaluation.v1.json", "config/model-rollout.v1.json",
@@ -114,13 +114,13 @@ def policy_digest():
              "infra/three-family-watchdog.bicep",
              "infra/three-family-watchdog-pilot-role.bicep",
              "infra/cosmo-protected-storage.bicep",
-             "config/completion-target.v1.json", "config/evaluation-gates.v1.json",
+             "config/completion-target.v1.json", "config/evaluation-gates.v2.json",
              "evaluations/offline-suite.v1.json")
     return digest({path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in paths})
 
 
 def gate_names():
-    value = json.loads((ROOT / "config/evaluation-gates.v1.json").read_text())
+    value = json.loads((ROOT / "config/evaluation-gates.v2.json").read_text())
     return tuple(value["required_per_route"])
 
 

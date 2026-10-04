@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "status": "all_routes_blocked",
+  "required_per_route": [
+    "kova_identity",
+    "canonical_kovagpt_identity_and_no_user_visible_upstream_provenance",
+    "instruction_following",
+    "reasoning_quality",
+    "factuality",
+    "tool_call_schema",
+    "tool_result_grounding",
+    "no_fabricated_actions_or_sources",
+    "no_hidden_reasoning_exposure",
+    "latency_budget",
+    "measured_total_cost",
+    "cold_and_warm_behavior"
+  ],
+  "architecture_gates": [
+    "core_candidate_wins_documented_quality_latency_and_cost_benchmark",
+    "cosmo_orion_nova_have_measurably_distinct_compute_policies",
+    "ultra_uses_dynamic_specialists_disagreement_check_judge_and_synthesis",
+    "provider_and_model_selection_are_server_controlled",
+    "existing_azure_routes_remain_unchanged_until_canary_verification",
+    "selected_provider_billing_storage_and_cold_start_constraints_are_explicitly_accepted"
+  ],
+  "release_policy": {
+    "allow_partial_route_evidence": false,
+    "allow_name_only_mode_variants": false,
+    "allow_unbenchmarked_route": false,
+    "allow_failed_identity_route": false
+  },
+  "offline_contract_evidence": {
+    "status": "passed",
+    "suite": "evaluations/offline-suite.v1.json",
+    "route_contracts_checked": 37,
+    "engine_split": {
+      "auto": 1,
+      "core": 30,
+      "ultra": 6
+    },
+    "auto_classifier_cases_checked": 7,
+    "response_evaluator_cases_checked": 6,
+    "activity_evaluator_cases_checked": 4,
+    "actual_model_outputs_evaluated": false,
+    "quality_or_factuality_claimed": false,
+    "paid_provider_calls": 0
+  },
+  "passing_routes": [],
+  "target_routes": 37,
+  "runtime_selection": "current_v5_identity_policy"
+}

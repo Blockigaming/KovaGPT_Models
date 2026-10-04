@@ -132,7 +132,7 @@ class ResponseIntegrityTests(unittest.TestCase):
                                     started_ns=0, timing_state={"time_to_first_token_ms": None},
                                     on_public_delta=emitted.append)
         self.assertNotIn("private-marker", str(caught.exception))
-        self.assertEqual(emitted, ["public"])
+        self.assertEqual(emitted, [])
 
     def test_nonstream_consumer_rejects_private_response_before_returning(self):
         value = response()
@@ -177,7 +177,7 @@ class ResponseIntegrityTests(unittest.TestCase):
                                     started_ns=0, timing_state={"time_to_first_token_ms": None},
                                     on_public_delta=emitted.append)
         self.assertNotIn("private-marker", str(caught.exception))
-        self.assertEqual(emitted, ["public"])
+        self.assertEqual(emitted, [])
         self.assertEqual(closed, [True])
 
     def test_duplicate_nonnull_usage_chunks_cannot_overwrite_cost_evidence(self):

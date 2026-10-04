@@ -53,16 +53,16 @@ class NovaCorrectionTests(unittest.TestCase):
 
     def test_historical_110_rows_still_differ_only_in_nova_system_instruction(self):
         before = prepared_revision_rows()
-        after = screen.prepared_nova_rows(self.plan)
+        after = screen.historical_nova_rows(self.plan)
         self.assertEqual(screen.sha(screen.encoded(before)), audit.PACK)
-        self.assertEqual(screen.sha(screen.encoded(after)), self.plan["prepared_pack_sha256"])
+        self.assertEqual(screen.sha(screen.encoded(after)), "d670792ddf8f38896ee9adcac338268a7677cd4b2c60079a33d80a018cdccdf8")
         self.assertNotEqual(self.plan["prepared_pack_sha256"], audit.PACK)
         self.assertEqual(self.plan["previous_screen_adapter_sha256"], audit.ADAPTER)
         self.assertEqual(self.plan["preserved_adapter_sha256"],
                          "f6d09354b5db910288be1e4ac9e22467bfe0c4bf8b554ef576162a245955e352")
         changed = 0
         old_system = (screen.ROOT / "prompts/kova-identity.v4.draft.txt").read_text()
-        new_system = screen.system_prompt(self.plan)
+        new_system = old_system + "\n" + (screen.ROOT / self.plan["task_checks_path"]).read_text()
         self.assertTrue(new_system.startswith(old_system + "\n"))
         self.assertEqual(validate_prompt(new_system), 34)
         for (old_id, old_split, old), (new_id, new_split, new) in zip(before, after[:110], strict=True):
@@ -81,7 +81,7 @@ class NovaCorrectionTests(unittest.TestCase):
                                         row["completion_evidence"])[0], "exact_json_pass")
         # This preserves evidence/inputs; it cannot promise future data quality.
         old = prepared_revision_rows()
-        new = screen.prepared_nova_rows(self.plan)
+        new = screen.historical_nova_rows(self.plan)
         self.assertEqual([r[2]["completion"] for r in old], [r[2]["completion"] for r in new[:110]])
 
     def test_no_golden_case_or_answer_lookup_enters_the_new_prompt(self):

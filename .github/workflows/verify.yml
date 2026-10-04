@@ -47,7 +47,7 @@ jobs:
           python -m pip install --disable-pip-version-check \
             --require-hashes -r requirements/cosmo-loss-mask-py312-linux-cpu.lock
           python -m pip check
-      - name: Verify synthetic Qwen3 LoRA forward, backward and adapter reload
+      - name: Verify synthetic low-rank forward, backward and adapter reload
         env:
           HF_HUB_OFFLINE: '1'
           TRANSFORMERS_OFFLINE: '1'
@@ -61,7 +61,7 @@ jobs:
           CUDA_VISIBLE_DEVICES: ""
         run: |
           python -m training.a35_tokenizer_masks "$RUNNER_TEMP/a35-tokenizer" --fetch --check
-          python -m training.a35_nova_screen --probe-tokenizer "$RUNNER_TEMP/a35-tokenizer" > "$RUNNER_TEMP/a35-nova-task-checks.json"
+          python scripts/with-synthetic-identity-policy.py python -m training.a35_nova_screen --probe-tokenizer "$RUNNER_TEMP/a35-tokenizer" > "$RUNNER_TEMP/a35-nova-task-checks.json"
           cmp "$RUNNER_TEMP/a35-nova-task-checks.json" evaluations/a35-nova-task-checks-tokenizer.v1.json
 
   cosmo-sft-api-contract:
