@@ -100,9 +100,9 @@ class ScreenTests(unittest.TestCase):
         self.assertEqual(hashes["pack"], s.sha(s.encoded(s.prepared_nova_rows(self.plan))))
         self.assertEqual(hashes["prompt"], s.sha(s.system_prompt(self.plan).encode()))
         for key, relative in (("dataset", "data/a35-nova-transfer.v1.draft.jsonl"),
-                              ("review", "data/a35-nova-transfer-review.v1.json"),
-                              ("tokenizer", "evaluations/a35-nova-task-checks-tokenizer.v1.json")):
+                              ("review", "data/a35-nova-transfer-review.v1.json")):
             self.assertEqual(hashes[key], s.sha((s.ROOT / relative).read_bytes()))
+        self.assertEqual(hashes["tokenizer"], "68446fbb94a6d020a214cf7ac399865de57f0812a739a06c7a2ee8230009be09")
         self.assertEqual(hashes["plan"], "80d635299aee3ee1d3e7393c7676436c7d0551fded3fcee3bedcca136fbd3401")
         self.assertEqual(receipt["rejected_adapters"], list(s.MEASURED_ADAPTERS[:5]))
         self.assertEqual(len(receipt["rejected_adapters"]), 5)
@@ -123,6 +123,10 @@ class ScreenTests(unittest.TestCase):
         self.assertEqual(receipt["hashes"]["plan"], s.sha(s.PLAN.read_bytes()))
         self.assertEqual(receipt["hashes"]["pack"], self.plan["prepared_pack_sha256"])
         self.assertEqual(receipt["hashes"]["prompt"], s.sha(s.system_prompt(self.plan).encode()))
+        for key, relative in (("dataset", "data/a35-nova-transfer.v1.draft.jsonl"),
+                              ("review", "data/a35-nova-transfer-review.v1.json"),
+                              ("tokenizer", "evaluations/a35-nova-task-checks-tokenizer.v1.json")):
+            self.assertEqual(receipt["hashes"][key], s.sha((s.ROOT / relative).read_bytes()))
         self.assertEqual(receipt["rejected_adapters"], list(s.MEASURED_ADAPTERS))
         self.assertEqual(len(receipt["rejected_adapters"]), 6)
         self.assertIn(receipt["measured"]["candidate_sha256"], self.plan["rejected_adapter_sha256"])

@@ -19,7 +19,7 @@
     "infra/three-family-watchdog-pilot-role.bicep": "81ce0aaa9285f0e167051fc15c74ea86375d6b0e5f03aa239747b44ccbf7d480",
     "evaluations/a35-nova-screen-pricing.v1.json": "5676286ce05d9840e806030ebbc64fa2776c9b5f7371f818b9ae4e5ce17d8d1d",
     "prompts/kova-nova-task-checks.v1.txt": "465c94b5b127299ea12c00325a25c7869c86b2a568ce221ca1fa004acf5e2de2",
-    "evaluations/a35-nova-task-checks-tokenizer.v1.json": "68446fbb94a6d020a214cf7ac399865de57f0812a739a06c7a2ee8230009be09",
+    "evaluations/a35-nova-task-checks-tokenizer.v1.json": "2933f590d75bebc0660cb7acfed481f00bd9290f91097fb37107372ed5db762b",
     "data/a35-nova-copy-contrast.v1.draft.jsonl": "bd5415471df1a8919bbea5dda1029fe1e1010eb10f9c3ef12d7463e6e77aa1dd",
     "data/a35-nova-copy-contrast-review.v1.json": "e02119fbdf99dbfd3efbb5a2628066c2359aace8495acc200a9badc692850f07",
     "data/a35-nova-transfer.v1.draft.jsonl": "f6dbf2576ec091d018bcccd90a08284a4a4c2edcd0da8c474e04459052a697b8",
