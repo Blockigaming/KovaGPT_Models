@@ -34,6 +34,7 @@ MEASURED_ADAPTERS = (
     "95470d46db4a430ce6f5e5d53f5dc322dcb4a04aec824b69b922dbe9b1d71213",
     "9e9c991332e979d3b3b73452e643d0272f859965fc054329f32308491a0a7e0b",
     "95fd3383589ef1bfe942345a9df09e3a3afaa8cf8d24ea886a273eea2a5089ee",
+    "4aa5e981fb5d28b902fb5fdf6da68f15b76e4659010195902446530f29b5d264",
 )
 
 
@@ -84,7 +85,7 @@ def prepared_inputs(plan):
     need(sha(encoded(rows)) == plan["prepared_pack_sha256"], "revised prepared pack drift")
     train = [row for _, split, row in rows if split == "train"]
     validation = [row for _, split, row in rows if split == "validation"]
-    need((len(train), len(validation)) == (72, 60)
+    need((len(train), len(validation)) == (73, 61)
          == (plan["train_records"], plan["validation_records"]), "revised input split drift")
     need(all(r["chat_template_kwargs"] == {"enable_thinking": False}
              for r in train + validation), "template mode drift")
@@ -114,7 +115,7 @@ def load_plan(path=PLAN):
          "confirmation_repetitions_authorized": 0,
          "identity_safety_failure_stops_immediately": True, "human_review_required": True},
          "screening rule drift")
-    need(t == {"fresh_base_only": True, "epochs": 2, "expected_optimizer_steps": 18,
+    need(t == {"fresh_base_only": True, "epochs": 2, "expected_optimizer_steps": 20,
          "batch_size": 1, "gradient_accumulation_steps": 8, "learning_rate": 0.00008,
          "sequence_length": 768, "seed": 42, "completion_only_loss": True,
          "packing": False, "enable_thinking": False, "nf4_compute_dtype": "float16",

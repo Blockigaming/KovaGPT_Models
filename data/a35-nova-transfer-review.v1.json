@@ -324,6 +324,36 @@
       "criteria": [],
       "policy_review": "conformant",
       "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-grouped_sum-train",
+      "group": "grouped_sum",
+      "structure": "a35-nova-transfer-grouped_sum-train",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "adjustments=[('harbor',19),('hill',-5),('harbor',-7),('field',0),('hill',5),('harbor',4)]\ntotals={}\nfor depot,change in adjustments:\n    totals[depot]=totals.get(depot,0)+change\nresult=totals"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-grouped_sum-validation",
+      "group": "grouped_sum",
+      "structure": "a35-nova-transfer-grouped_sum-validation",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "ledger=[('elm',12),('ash',-8),('pine',5),('elm',-17),('ash',3),('pine',-5),('ash',9)]\nlabels=sorted(set(label for label,value in ledger))\nresult=[[label,sum(value for key,value in ledger if key==label)] for label in labels]"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
     }
   ]
 }

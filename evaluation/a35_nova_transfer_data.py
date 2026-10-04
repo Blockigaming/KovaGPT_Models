@@ -22,10 +22,10 @@ from evaluation.quality_evidence import canonical, need, strict_json
 ROOT = Path(__file__).resolve().parents[1]
 DATA_PATH = "data/a35-nova-transfer.v1.draft.jsonl"
 REVIEW_PATH = "data/a35-nova-transfer-review.v1.json"
-DATA_SHA256 = "d8e8b606cce9e27572e8844a1518e5e46f1ae53edcb522d6006a4008469b114f"
-REVIEW_SHA256 = "1ec53a4b083a0d0b4c2d63c6aaf78a7268b06666fd6baba6f08037f616ccf293"
+DATA_SHA256 = "f6dbf2576ec091d018bcccd90a08284a4a4c2edcd0da8c474e04459052a697b8"
+REVIEW_SHA256 = "fc0e0b1cc648d1146ab5622d4a2b03c60078ab22c397f220da25600cb943a7b7"
 GROUPS = {"arithmetic", "probability", "geometry", "predicate", "increment",
-          "task_ids", "string_root", "integer_root", "boolean_root", "array_root"}
+          "task_ids", "grouped_sum", "string_root", "integer_root", "boolean_root", "array_root"}
 
 
 def reference_graph(reference):
@@ -78,7 +78,7 @@ def _validated():
          "license": "CC0-1.0", "private_customer_data": False, "private_conversations": False,
          "secrets": False, "third_party_training_text": False})
     annotations = {r["id"]: r for r in review["records"]}
-    need(len(rows) == len(annotations) == len(review["records"]) == 20)
+    need(len(rows) == len(annotations) == len(review["records"]) == 22)
     need({r["id"] for r in rows} == set(annotations))
     for row in rows:
         need(set(row) == {"id", "split", "messages"})
@@ -113,9 +113,9 @@ def _validated():
     copy_rows = copy_data.load_rows()
     copy_review = strict_json((copy_data.ROOT / copy_data.REVIEW_PATH).read_text())["records"]
     combined = old + approved + copy_rows + rows
-    need(len(combined) == 132 and len({r["id"] for r in combined}) == 132)
+    need(len(combined) == 134 and len({r["id"] for r in combined}) == 134)
     prompts = [existing.normalize(r["messages"][0]["content"]) for r in combined]
-    need(len(set(prompts)) == 132)
+    need(len(set(prompts)) == 134)
     cases = load_archived_suite()["cases"]
     need(not set(prompts) & {existing.normalize(c["prompt"]) for c in cases})
     similarity = audit(combined, old_reviews["records"] + inherited +
@@ -128,8 +128,8 @@ def _validated():
     heldout = [graph_shape(g) for g in heldout if g]
     need(all(graph_shape(g) not in heldout for g in graphs))
     need(graph_shape(graphs[0]) != graph_shape(graphs[1]))
-    return rows, {"records_validated": 20, "reference_labels_verified": 20,
-        "failure_classes": sorted(GROUPS), "new_training_records": 10, "new_validation_records": 10,
+    return rows, {"records_validated": 22, "reference_labels_verified": 22,
+        "failure_classes": sorted(GROUPS), "new_training_records": 11, "new_validation_records": 11,
         "existing_records_unchanged": 110, "copy_contrast_records": 2,
         "structural_similarity": similarity, "model_calls_made": 0,
         "quality_improvement_proved": False}

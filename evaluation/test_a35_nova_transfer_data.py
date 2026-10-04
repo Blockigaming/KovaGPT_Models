@@ -32,12 +32,34 @@ class TransferDataTests(unittest.TestCase):
 
     def test_complete_failure_class_coverage_without_quality_credit(self):
         report=data.validate()
-        self.assertEqual(set(measured.FAILURE_CLASSES.values()),data.GROUPS|{'copy'})
-        self.assertEqual(report['records_validated'],20)
-        self.assertEqual(report['reference_labels_verified'],20)
+        self.assertEqual(set(measured.FAILURE_CLASSES.values()),(data.GROUPS-{'grouped_sum'})|{'copy'})
+        self.assertEqual(report['records_validated'],22)
+        self.assertEqual(report['reference_labels_verified'],22)
         self.assertEqual(report['structural_similarity']['issues'],[])
         self.assertFalse(report['quality_improvement_proved'])
         self.assertEqual(report['model_calls_made'],0)
+
+    def test_grouped_sum_oracles_match_independent_signed_totals(self):
+        reviews=json.loads((data.ROOT/data.REVIEW_PATH).read_text())["records"]
+        refs={r["id"]:r["reference"] for r in reviews if r["group"]=="grouped_sum"}
+        expected={"train":{"harbor":19-7+4,"hill":-5+5,"field":0},
+                  "validation":[["ash",-8+3+9],["elm",12-17],["pine",5-5]]}
+        for split,answer in expected.items():
+            self.assertEqual(data.reference_answer(refs[f"a35-nova-transfer-grouped_sum-{split}"]),answer)
+
+    def test_original_twenty_transfer_records_are_byte_unchanged(self):
+        raw=(data.ROOT/data.DATA_PATH).read_bytes().splitlines(keepends=True)
+        self.assertEqual(len(raw),22)
+        self.assertEqual(hashlib.sha256(b"".join(raw[:20])).hexdigest(),
+                         "d8e8b606cce9e27572e8844a1518e5e46f1ae53edcb522d6006a4008469b114f")
+
+    def test_grouped_sum_missing_zero_or_wrong_signed_total_rejected(self):
+        for split,answer in (("train",'{"harbor":16,"hill":0}'),
+                             ("validation",'[["ash",4],["elm",5],["pine",0]]')):
+            def mutate(rows):
+                next(r for r in rows if r["id"]==f"a35-nova-transfer-grouped_sum-{split}")["messages"][1]["content"]=answer
+            with self.changed(mutate),self.assertRaises(EvidenceRejected):
+                data.load_rows()
 
     def test_ordered_probability_by_enumeration_of_distinct_counters(self):
         counters=[(color,i) for color,n in {'white':4,'black':3,'red':2}.items() for i in range(n)]
@@ -80,12 +102,13 @@ class TransferDataTests(unittest.TestCase):
                 data.reference_answer(reference)
 
     def test_every_label_mutation_is_rejected_even_after_repinned_bytes(self):
-        for index in range(20):
+        for index in range(22):
             with self.subTest(row=index),self.changed(lambda rows:rows[index]['messages'][1].update(content='null')),self.assertRaises(EvidenceRejected):
                 data.load_rows()
 
 
 EXPECTED={
+ 'grouped_sum':({'harbor':16,'hill':0,'field':0},[['ash',4],['elm',-5],['pine',0]]),
  'arithmetic':({'tiles':1456},[34,30]),'probability':({'numerator':1,'denominator':14},{'fraction':[18,35]}),
  'geometry':({'garden_area':247},[9,90]),'predicate':(['m-2','m0','n-2'],[12,5,19,12]),
  'increment':({'east':15,'west':19},[5,11,16]),'task_ids':(['k','m','q','r','z'],{'ready':['emit','lint']}),
