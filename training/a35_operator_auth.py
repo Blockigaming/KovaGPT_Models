@@ -114,9 +114,22 @@ class CliTokens:
     def _cli(self, resource):
         # Azure CLI accepts subscription OR tenant, not both. Validate the
         # returned tenant and principal independently below.
-        result = subprocess.run(["az", "account", "get-access-token", "--resource", resource,
-            "--subscription", self.subscription, "--output", "json", "--only-show-errors"],
-            capture_output=True, timeout=30)
+        # Credential acquisition is read-only. A broker timeout after completed
+        # training must not discard the evidence readback opportunity. Retry
+        # only this acquisition, never an ARM/Storage request or cloud mutation.
+        for attempt in range(1, 4):
+            try:
+                result = subprocess.run(["az", "account", "get-access-token", "--resource", resource,
+                    "--subscription", self.subscription, "--output", "json", "--only-show-errors"],
+                    capture_output=True, timeout=30)
+                break
+            except subprocess.TimeoutExpired:
+                self.observe({"event": "credential_acquisition_timeout", "resource": resource,
+                    "attempt": attempt, "maximum_attempts": 3, "timeout_seconds": 30,
+                    "resource_request_sent": False})
+                if attempt == 3:
+                    raise ValueError("pinned CLI credential acquisition timed out") from None
+                self.sleep(attempt)
         need(result.returncode == 0 and len(result.stdout) <= 65536,
              "pinned CLI credential acquisition failed")
         return json.loads(result.stdout)

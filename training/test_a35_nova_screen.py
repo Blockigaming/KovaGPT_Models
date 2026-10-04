@@ -61,9 +61,9 @@ class ScreenTests(unittest.TestCase):
         self.assertEqual(s.sha(s.encoded(shared)),
                          "fcbe8556c9587d960a531bd0f91d5b7de13fa77fd69d3aa9d62a893dcab91726")
 
-    def test_exact_sft_two_epochs_no_step_truncation(self):
+    def test_exact_sft_three_epochs_no_step_truncation(self):
         settings = s.sft_kwargs(self.plan, "/unused")
-        self.assertEqual(settings["num_train_epochs"], 2)
+        self.assertEqual(settings["num_train_epochs"], 3)
         self.assertEqual(settings["max_steps"], -1)
         self.assertEqual(settings["max_length"], 768)
         self.assertTrue(settings["completion_only_loss"])
@@ -71,7 +71,7 @@ class ScreenTests(unittest.TestCase):
         self.assertEqual(settings["eval_strategy"], "no")
 
     def test_grouped_sum_replacement_preserves_prior_rows_bounds_and_one_run(self):
-        self.assertEqual(self.plan["training"]["expected_optimizer_steps"], 20)
+        self.assertEqual(self.plan["training"]["expected_optimizer_steps"], 30)
         self.assertEqual(self.plan["training"]["maximum_seconds"], 600)
         rows = s.prepared_nova_rows(self.plan)
         self.assertEqual(s.sha(s.encoded(rows[:132])),
@@ -84,8 +84,8 @@ class ScreenTests(unittest.TestCase):
         self.assertFalse(self.plan["execution_authorized"])
 
     def test_exposure_probe_rejects_epoch_or_step_drift(self):
-        for field, value in (("epochs", 1), ("epochs", 3),
-                             ("expected_optimizer_steps", 9), ("expected_optimizer_steps", 18), ("expected_optimizer_steps", 19)):
+        for field, value in (("epochs", 1), ("epochs", 2), ("epochs", 4),
+                             ("expected_optimizer_steps", 9), ("expected_optimizer_steps", 18), ("expected_optimizer_steps", 19), ("expected_optimizer_steps", 20), ("expected_optimizer_steps", 29)):
             with self.subTest(field=field, value=value), tempfile.TemporaryDirectory() as folder:
                 plan = deepcopy(self.plan)
                 plan["training"][field] = value
@@ -94,21 +94,42 @@ class ScreenTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "training recipe drift"):
                     s.load_plan(path)
 
-    def test_replacement_receipt_binds_current_inputs_without_quality_credit(self):
+    def test_historical_replacement_receipt_preserves_original_unmeasured_binding(self):
         receipt = json.loads((s.ROOT / "evaluations/a35-nova-grouped-sum-replacement.v1.json").read_text())
         hashes = receipt["hashes"]
         self.assertEqual(hashes["pack"], s.sha(s.encoded(s.prepared_nova_rows(self.plan))))
         self.assertEqual(hashes["prompt"], s.sha(s.system_prompt(self.plan).encode()))
         for key, relative in (("dataset", "data/a35-nova-transfer.v1.draft.jsonl"),
                               ("review", "data/a35-nova-transfer-review.v1.json"),
-                              ("tokenizer", "evaluations/a35-nova-task-checks-tokenizer.v1.json"),
-                              ("plan", "config/a35-nova-screen.v1.json")):
+                              ("tokenizer", "evaluations/a35-nova-task-checks-tokenizer.v1.json")):
             self.assertEqual(hashes[key], s.sha((s.ROOT / relative).read_bytes()))
-        self.assertEqual(receipt["rejected_adapters"], list(s.MEASURED_ADAPTERS))
+        self.assertEqual(hashes["plan"], "80d635299aee3ee1d3e7393c7676436c7d0551fded3fcee3bedcca136fbd3401")
+        self.assertEqual(receipt["rejected_adapters"], list(s.MEASURED_ADAPTERS[:5]))
         self.assertEqual(len(receipt["rejected_adapters"]), 5)
         self.assertEqual(receipt["latest_measured"]["strict"], 24)
         self.assertEqual(receipt["latest_measured"]["a35"], "OPEN")
         self.assertFalse(receipt["quality_improvement_proved"] or receipt["execution_authorized"])
+
+    def test_measured_followthrough_receipt_binds_new_proposal_without_quality_credit(self):
+        receipt = json.loads((s.ROOT / "evaluations/a35-nova-grouped-sum-result.v1.json").read_text())
+        self.assertEqual(receipt["measured"]["strict"], 25)
+        self.assertEqual(receipt["measured"]["total"], 36)
+        self.assertEqual(receipt["measured"]["training"]["optimizer_steps"], 20)
+        self.assertEqual(receipt["next_proposal"]["epochs"], 3)
+        self.assertEqual(receipt["next_proposal"]["expected_optimizer_steps"], 30)
+        self.assertEqual(receipt["next_proposal"]["maximum_training_seconds"], 600)
+        self.assertEqual(receipt["next_proposal"]["new_examples"], 0)
+        self.assertEqual(receipt["next_proposal"]["status"], "UNMEASURED")
+        self.assertEqual(receipt["hashes"]["plan"], s.sha(s.PLAN.read_bytes()))
+        self.assertEqual(receipt["hashes"]["pack"], self.plan["prepared_pack_sha256"])
+        self.assertEqual(receipt["hashes"]["prompt"], s.sha(s.system_prompt(self.plan).encode()))
+        self.assertEqual(receipt["rejected_adapters"], list(s.MEASURED_ADAPTERS))
+        self.assertEqual(len(receipt["rejected_adapters"]), 6)
+        self.assertIn(receipt["measured"]["candidate_sha256"], self.plan["rejected_adapter_sha256"])
+        self.assertEqual(receipt["phase_a_verified"], 30)
+        self.assertEqual(receipt["a35"], "OPEN")
+        self.assertFalse(receipt["execution_authorized"] or receipt["quality_gate_closed"]
+                         or receipt["next_proposal"]["quality_improvement_proved"])
 
     def grant(self):
         return dict(owner_authorized=True, experiment_id=self.plan["experiment_id"],
@@ -361,13 +382,13 @@ class ScreenTests(unittest.TestCase):
             (adapter / "adapter_config.json").write_text("{}")
             receipt = dict(experiment_id=self.plan["experiment_id"], source_commit="c" * 40,
                 run_id="d" * 32, base_revision=self.plan["base_revision"],
-                prepared_pack_sha256=self.plan["prepared_pack_sha256"], optimizer_steps=20,
-                completed_epochs=2.0, training_records=73,
+                prepared_pack_sha256=self.plan["prepared_pack_sha256"], optimizer_steps=30,
+                completed_epochs=3.0, training_records=73,
                 adapter_sha256={f.name: s.sha(f.read_bytes()) for f in adapter.iterdir()})
             s.new_candidate(receipt, self.plan, "c" * 40, "d" * 32, adapter)
             for field, value in (("optimizer_steps", 7), ("optimizer_steps", 9), ("training_records", 27),
                                  ("prepared_pack_sha256", "0" * 64), ("completed_epochs", 0.5),
-                                 ("completed_epochs", 1.0)):
+                                 ("completed_epochs", 1.0), ("completed_epochs", 2.0)):
                 altered = receipt | {field: value}
                 with self.assertRaises(ValueError): s.new_candidate(altered, self.plan, "c" * 40, "d" * 32, adapter)
             old = self.plan | {"rejected_adapter_sha256": [receipt["adapter_sha256"]["adapter_model.safetensors"]]}
@@ -382,15 +403,15 @@ class ScreenTests(unittest.TestCase):
                 with self.subTest(digest=digest), patch.object(s, "sha", return_value=digest):
                     receipt = dict(experiment_id=self.plan["experiment_id"], source_commit="c" * 40,
                         run_id="d" * 32, base_revision=self.plan["base_revision"],
-                        prepared_pack_sha256=self.plan["prepared_pack_sha256"], optimizer_steps=20,
-                        completed_epochs=2.0, training_records=73,
+                        prepared_pack_sha256=self.plan["prepared_pack_sha256"], optimizer_steps=30,
+                        completed_epochs=3.0, training_records=73,
                         adapter_sha256={"adapter_model.safetensors": digest})
                     with self.assertRaisesRegex(ValueError, "unchanged/corrupt"):
                         s.new_candidate(receipt, self.plan, "c" * 40, "d" * 32, adapter)
 
     def test_plan_cannot_omit_or_replace_a_measured_adapter_binding(self):
         for rejected in (None, list(s.MEASURED_ADAPTERS[:2]),
-                         list(s.MEASURED_ADAPTERS[:3]), ["a" * 64] * 4):
+                         list(s.MEASURED_ADAPTERS[:3]), list(s.MEASURED_ADAPTERS[:5]), ["a" * 64] * 6):
             with self.subTest(rejected=rejected), tempfile.TemporaryDirectory() as folder:
                 path = Path(folder) / "plan.json"
                 path.write_text(json.dumps(self.plan | {"rejected_adapter_sha256": rejected}))

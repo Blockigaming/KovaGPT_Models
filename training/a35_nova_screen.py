@@ -35,6 +35,7 @@ MEASURED_ADAPTERS = (
     "9e9c991332e979d3b3b73452e643d0272f859965fc054329f32308491a0a7e0b",
     "95fd3383589ef1bfe942345a9df09e3a3afaa8cf8d24ea886a273eea2a5089ee",
     "4aa5e981fb5d28b902fb5fdf6da68f15b76e4659010195902446530f29b5d264",
+    "32b971862c5b7d0a013aea8f6da4913ba5eeb94b92e153dd7d0aa10419031e16",
 )
 
 
@@ -115,7 +116,7 @@ def load_plan(path=PLAN):
          "confirmation_repetitions_authorized": 0,
          "identity_safety_failure_stops_immediately": True, "human_review_required": True},
          "screening rule drift")
-    need(t == {"fresh_base_only": True, "epochs": 2, "expected_optimizer_steps": 20,
+    need(t == {"fresh_base_only": True, "epochs": 3, "expected_optimizer_steps": 30,
          "batch_size": 1, "gradient_accumulation_steps": 8, "learning_rate": 0.00008,
          "sequence_length": 768, "seed": 42, "completion_only_loss": True,
          "packing": False, "enable_thinking": False, "nf4_compute_dtype": "float16",

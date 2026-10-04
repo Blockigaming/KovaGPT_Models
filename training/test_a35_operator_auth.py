@@ -138,6 +138,75 @@ class AuthTests(AuthFixture, unittest.TestCase):
         self.assertEqual(self.tokens.cache, {})
 
 
+class CredentialAcquisitionTimeoutTests(AuthFixture, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        self.tokens.acquire = self.tokens._cli
+        self.tokens.sleep = Mock()
+
+    def timeout(self):
+        return a.subprocess.TimeoutExpired('synthetic credential command', 30,
+                                            output=b'private partial token', stderr=b'private error')
+
+    def result(self, **changes):
+        return Mock(returncode=0, stdout=json.dumps(credential(resource=a.STORAGE, **changes)).encode())
+
+    def test_measured_storage_readback_timeout_recovers_before_resource_request(self):
+        with patch.object(a.subprocess, 'run', side_effect=[self.timeout(), self.result()]) as run:
+            self.tokens.get(a.STORAGE)
+        self.assertEqual(run.call_count, 2)
+        self.assertTrue(all(call.kwargs['timeout'] == 30 for call in run.call_args_list))
+        self.tokens.sleep.assert_called_once_with(1)
+        self.assertFalse(self.receipts[0]['resource_request_sent'])
+        self.assertEqual(self.receipts[0]['resource'], a.STORAGE)
+        self.assertNotIn('private', json.dumps(self.receipts))
+
+    def test_two_retries_are_the_absolute_limit_and_no_stale_token_survives(self):
+        self.tokens.cache[a.STORAGE] = ('stale-token', 1100, 900)
+        with patch.object(a.subprocess, 'run', side_effect=self.timeout()) as run:
+            with self.assertRaisesRegex(ValueError, 'acquisition timed out'):
+                self.tokens.get(a.STORAGE)
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual([c.args[0] for c in self.tokens.sleep.call_args_list], [1, 2])
+        self.assertNotIn(a.STORAGE, self.tokens.cache)
+        self.assertEqual([r['attempt'] for r in self.receipts], [1, 2, 3])
+
+    def test_third_acquisition_can_succeed_without_replaying_an_arm_mutation(self):
+        response = Mock(status=200, headers={}, read=Mock(return_value=b'{}'))
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        opener = Mock(open=Mock(return_value=response))
+        result = Mock(returncode=0, stdout=json.dumps(credential()).encode())
+        with patch.object(a.subprocess, 'run', side_effect=[self.timeout(), self.timeout(), result]) as run:
+            a.ArmClient(self.tokens, opener=opener).request('DELETE', a.ARM+'subscriptions/'+SUB+'/resourceGroups/test?api-version=2022-09-01')
+        self.assertEqual(run.call_count, 3)
+        opener.open.assert_called_once()
+
+    def test_nonzero_exit_and_invalid_json_are_not_retried(self):
+        for result in (Mock(returncode=1, stdout=b'private'), Mock(returncode=0, stdout=b'not JSON')):
+            with self.subTest(result=result), patch.object(a.subprocess, 'run', return_value=result) as run:
+                with self.assertRaises(ValueError):
+                    self.tokens.get(a.STORAGE)
+                run.assert_called_once()
+        self.tokens.sleep.assert_not_called()
+
+    def test_recovered_credential_still_rejects_wrong_identity_and_expiry(self):
+        for changes in ({'oid': TENANT}, {'expiry': None}):
+            with self.subTest(changes=changes), patch.object(a.subprocess, 'run',
+                    side_effect=[self.timeout(), self.result(**changes)]) as run:
+                with self.assertRaises(ValueError):
+                    self.tokens.get(a.STORAGE)
+                self.assertEqual(run.call_count, 2)
+                self.assertNotIn(a.STORAGE, self.tokens.cache)
+
+    def test_storage_acquisition_failure_leaves_arm_cache_independent(self):
+        self.tokens.cache[a.ARM] = ('arm-token', 1600, 900)
+        with patch.object(a.subprocess, 'run', side_effect=self.timeout()):
+            with self.assertRaises(ValueError):
+                self.tokens.get(a.STORAGE)
+        self.assertEqual(self.tokens.cache, {a.ARM: ('arm-token', 1600, 900)})
+
+
 class PreflightRefreshTests(AuthFixture, unittest.TestCase):
     def setUp(self):
         super().setUp()
