@@ -10,6 +10,7 @@ may issue fresh cleanup requests after a failure; allocation is never retried.
 import base64
 from fnmatch import fnmatchcase
 import hashlib
+from http.client import HTTPException
 from importlib import import_module
 import json
 import re
@@ -205,6 +206,15 @@ class CredentialUnavailable(OSError):
     """Fail closed without suppressing the existing bounded cleanup loop."""
 
 
+class TransportFailure(OSError):
+    """An incomplete exchange is evidence of failure, never an ARM response."""
+
+    def __init__(self, receipt):
+        self.receipt = receipt
+        super().__init__("ARM transport failed during " + receipt["stage"] + ": " +
+                         receipt["error_type"] + " " + receipt["method"] + " " + receipt["path"])
+
+
 class ArmClient:
     def __init__(self, tokens, *, opener=None, observe=lambda _: None,
                  preserve_response=lambda receipt, raw: None):
@@ -233,15 +243,36 @@ class ArmClient:
             body = json.dumps(body, separators=(",", ":")).encode()
             headers["Content-Type"] = "application/json"
         request = Request(url, method=method, data=body, headers=headers)
+        stage, status, response_headers = "open", None, {}
         try:
-            response = self.opener.open(request, timeout=timeout)
-        except HTTPError as error:
-            response = error
-        with response as response:
-            raw = response.read(limit + 1)
-            need(len(raw) <= limit, "ARM response exceeded evidence bound")
-            status = response.status
-            response_headers = {k.lower(): v for k, v in response.headers.items()}
+            try:
+                response = self.opener.open(request, timeout=timeout)
+            except HTTPError as error:
+                response = error
+            with response as response:
+                status = response.status
+                response_headers = {k.lower(): v for k, v in response.headers.items()}
+                stage = "read"
+                raw = response.read(limit + 1)
+                need(len(raw) <= limit, "ARM response exceeded evidence bound")
+        except (OSError, HTTPException) as exc:
+            partial = getattr(exc, "partial", b"")
+            partial = partial[:limit] if type(partial) is bytes else b""
+            receipt = {"event": "arm_transport_failure", "method": method, "path": parts.path,
+                "request_url_sha256": hashlib.sha256(url.encode()).hexdigest(),
+                "stage": stage, "status": status, "error_type": type(exc).__name__,
+                "timeout_seconds": timeout, "response_complete": False,
+                "partial_body_bytes": len(partial),
+                "partial_body_sha256": hashlib.sha256(partial).hexdigest() if partial else None,
+                "request_id": response_headers.get("x-ms-request-id"),
+                "correlation_id": response_headers.get("x-ms-correlation-request-id"),
+                "failure_class": "transport", "request_replayed": False}
+            # Do not log exception text, query strings, credentials, or request
+            # bodies. Preserve known status/partial bytes without claiming a
+            # complete response. An evidence write failure also blocks admission.
+            self.preserve_response(dict(receipt), partial)
+            self.observe(dict(receipt))
+            raise TransportFailure(receipt) from None
         try:
             value = json.loads(raw) if raw else {}
         except (ValueError, UnicodeError):

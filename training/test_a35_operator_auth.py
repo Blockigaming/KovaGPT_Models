@@ -523,6 +523,77 @@ class ArmTests(AuthFixture, unittest.TestCase):
             self.client.request("GET", self.url)
         self.opener.open.assert_called_once()
 
+    def test_open_timeout_is_preserved_without_replay_or_invented_http_response(self):
+        self.opener.open.side_effect = TimeoutError("SENSITIVE-EXCEPTION-TEXT")
+        saved = []
+        self.client.preserve_response = lambda receipt, raw: saved.append((receipt, raw))
+        with self.assertRaises(a.TransportFailure) as caught:
+            self.client.request("GET", self.url + "&private_query=DO-NOT-LOG", timeout=20)
+        self.opener.open.assert_called_once()
+        receipt, raw = saved[0]
+        self.assertEqual((receipt["stage"], receipt["status"], raw), ("open", None, b""))
+        self.assertEqual(receipt["timeout_seconds"], 20)
+        self.assertFalse(receipt["response_complete"])
+        self.assertFalse(receipt["request_replayed"])
+        self.assertIsNone(receipt["partial_body_sha256"])
+        output = str(caught.exception) + json.dumps(receipt) + repr(raw) + json.dumps(self.receipts)
+        for secret in ("SENSITIVE-EXCEPTION-TEXT", "DO-NOT-LOG", self.acquire.return_value["accessToken"]):
+            self.assertNotIn(secret, output)
+
+    def test_body_timeout_preserves_known_status_and_request_id_but_never_admits(self):
+        response = Mock()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        response.status, response.headers = 200, {"x-ms-request-id": "synthetic-timeout"}
+        response.read.side_effect = TimeoutError("The read operation timed out")
+        self.opener.open.return_value = response
+        self.client.preserve_response = Mock()
+        with self.assertRaises(a.TransportFailure) as caught:
+            self.client.request("GET", self.url, timeout=20)
+        self.opener.open.assert_called_once()
+        receipt = caught.exception.receipt
+        self.assertEqual((receipt["stage"], receipt["status"], receipt["request_id"]),
+                         ("read", 200, "synthetic-timeout"))
+        self.assertFalse(receipt["response_complete"])
+        self.client.preserve_response.assert_called_once_with(receipt, b"")
+
+    def test_incomplete_body_preserves_only_bounded_partial_evidence(self):
+        from http.client import IncompleteRead
+        response = Mock()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        response.status, response.headers = 200, {}
+        response.read.side_effect = IncompleteRead(b"partial-evidence", 100)
+        self.opener.open.return_value = response
+        saved = []
+        self.client.preserve_response = lambda receipt, raw: saved.append((receipt, raw))
+        with self.assertRaises(a.TransportFailure):
+            self.client.request("GET", self.url, limit=7)
+        self.assertEqual(saved[0][1], b"partial")
+        self.assertEqual(saved[0][0]["partial_body_bytes"], 7)
+        self.assertFalse(saved[0][0]["response_complete"])
+        self.opener.open.assert_called_once()
+
+    def test_transport_evidence_write_failure_still_blocks_admission(self):
+        self.opener.open.side_effect = TimeoutError()
+        self.client.preserve_response = Mock(side_effect=OSError("evidence unavailable"))
+        with self.assertRaisesRegex(OSError, "evidence unavailable"):
+            self.client.request("PUT", self.url, {"resources": []})
+        self.opener.open.assert_called_once()
+
+    def test_transport_failure_does_not_suppress_independent_group_cleanup(self):
+        from training.a35_screen_control import cleanup
+        calls = []
+        def call(method, url):
+            calls.append(method)
+            if method == "POST":
+                raise a.TransportFailure({"stage": "open", "error_type": "TimeoutError",
+                                          "method": method, "path": "/synthetic"})
+            return (404, {}) if method == "GET" else (202, {})
+        result = cleanup(SUB, "d" * 32, call, sleep=lambda _: None)
+        self.assertTrue(result["vm_group_absent"] and result["control_group_absent"])
+        self.assertEqual(calls, ["POST", "DELETE", "GET", "DELETE", "GET"])
+
     def test_bad_destination_or_subscription_rejected_before_acquisition(self):
         for url in (self.url.replace(SUB, TENANT), self.url.replace(SUB, SUB + "1"),
                     self.url.replace("management.azure.com", "management.azure.com.evil.example"),
