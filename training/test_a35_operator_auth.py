@@ -244,6 +244,92 @@ class PreflightRefreshTests(AuthFixture, unittest.TestCase):
         self.assertNotIn(a.ARM, self.tokens.cache)
 
 
+class RuntimeArmReadRefreshTests(AuthFixture, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        self.waits = []
+        def sleep(seconds):
+            self.waits.append(seconds)
+            self.now += seconds
+        self.tokens.sleep = sleep
+        self.tokens.monotonic = lambda: self.now
+        self.opener = Mock()
+        def response(*args, **kwargs):
+            value = io.BytesIO(b'{"properties":{"provisioningState":"Succeeded"}}')
+            value.status, value.headers = 200, {'x-ms-request-id':'synthetic'}
+            return value
+        self.opener.open.side_effect = response
+        self.client = a.ArmClient(self.tokens, opener=self.opener, observe=self.receipts.append)
+        self.url = a.ARM+'subscriptions/'+SUB+'/resourceGroups/fresh/providers/Microsoft.Resources/deployments/a35-pilot-vm?api-version=2022-09-01'
+
+    def test_admitted_arm_cache_ages_during_vm_poll_then_rolls_before_get(self):
+        old, fresh = credential(1600), credential(2600)
+        self.acquire.return_value = old
+        self.tokens.get(a.ARM, force=True)
+        self.now = 1301
+        self.acquire.side_effect = [old, fresh]
+        self.assertEqual(self.client.request('GET', self.url)[0], 200)
+        self.assertEqual(sum(self.waits), 300)
+        self.opener.open.assert_called_once()
+        request = self.opener.open.call_args.args[0]
+        self.assertEqual(request.get_header('Authorization'), 'Bearer '+fresh['accessToken'])
+        self.assertNotIn(old['accessToken'], json.dumps(self.receipts))
+
+    def test_arm_299_300_301_boundaries_preserve_strict_margin(self):
+        for remaining in (299,300,301):
+            self.setUp()
+            self.acquire.side_effect = [credential(1000+remaining),credential(2600)]
+            self.client.request('GET', self.url)
+            self.assertEqual(sum(self.waits), remaining+1 if remaining<=300 else 0)
+            self.assertEqual(self.acquire.call_count, 2 if remaining<=300 else 1)
+            self.opener.open.assert_called_once()
+
+    def test_stale_or_near_expiry_replacement_blocks_get_without_fallback(self):
+        for fresh in (credential(1299),credential(1599),credential(1600)):
+            self.setUp()
+            self.acquire.side_effect = [credential(1299),fresh]
+            with self.assertRaises(a.CredentialUnavailable):self.client.request('GET',self.url)
+            self.opener.open.assert_not_called()
+            self.assertEqual(self.tokens.cache,{})
+            self.assertEqual(self.acquire.call_count,2)
+
+    def test_invalid_identity_or_missing_expiry_never_waits_or_sends(self):
+        for value in (credential(1299,oid=TENANT),credential(1299,aud=a.STORAGE),
+                      credential(1299)|{'expires_on':None}):
+            self.setUp();self.acquire.return_value=value
+            with self.assertRaises(a.CredentialUnavailable):self.client.request('GET',self.url)
+            self.assertEqual(self.waits,[])
+            self.opener.open.assert_not_called()
+
+    def test_valid_runtime_cache_is_reused_without_unnecessary_cli_call(self):
+        self.tokens.get(a.ARM)
+        self.client.request('GET',self.url)
+        self.acquire.assert_called_once()
+        self.assertEqual(self.waits,[])
+
+    def test_mutations_never_wait_or_replay_with_aging_broker_credential(self):
+        for method in ('PUT','POST','PATCH','DELETE'):
+            self.setUp();self.acquire.return_value=credential(1299)
+            with self.assertRaises(a.CredentialUnavailable):self.client.request(method,self.url,{})
+            self.opener.open.assert_not_called()
+            self.acquire.assert_called_once()
+            self.assertEqual(self.waits,[])
+
+    def test_arm_rollover_keeps_storage_cache_and_audience_independent(self):
+        storage=credential(2600,resource=a.STORAGE)
+        self.acquire.return_value=storage;self.tokens.get(a.STORAGE)
+        self.acquire.side_effect=[credential(1299),credential(2600)]
+        self.client.request('GET',self.url)
+        self.assertEqual(self.tokens.get(a.STORAGE),storage['accessToken'])
+        self.assertEqual(self.acquire.call_count,3)
+
+    def test_refresh_acquisition_failure_blocks_get_without_http_retry(self):
+        self.acquire.side_effect=[credential(1299),ValueError('acquisition failed')]
+        with self.assertRaises(a.CredentialUnavailable):self.client.request('GET',self.url)
+        self.opener.open.assert_not_called()
+        self.assertEqual(self.tokens.cache,{})
+
+
 class StorageRefreshTests(AuthFixture, unittest.TestCase):
     def setUp(self):
         super().setUp()

@@ -121,7 +121,7 @@ class CliTokens:
              "pinned CLI credential acquisition failed")
         return json.loads(result.stdout)
 
-    def get(self, resource, *, force=False):
+    def get(self, resource, *, force=False, read_only_rollover=False):
         need(resource in AUDIENCES, "unapproved token resource")
         now = self.clock()
         cached = self.cache.get(resource)
@@ -130,10 +130,12 @@ class CliTokens:
         self.cache.pop(resource, None)
         data = self.acquire(resource)
         token, expiry, issued, not_before, claims, now = self._validate(data, resource)
-        if (force or resource == STORAGE) and not sufficient_lifetime(resource, expiry, now):
+        if (force or resource == STORAGE or read_only_rollover) and not sufficient_lifetime(resource, expiry, now):
             # force bypasses OUR cache, not Cloud Shell's upstream broker cache.
-            # az has no force-refresh switch. ARM retains forced-preflight-only
-            # rollover. Storage also needs it for reads after VM provisioning.
+            # az has no force-refresh switch. ARM deployment/status GETs can
+            # outlive the preflight margin, so permit the same bounded rollover
+            # before their first request. Mutating ARM calls remain fail-closed
+            # without waiting/replay. Storage rollover remains independent.
             # Discard the aging token, wait past expiry, then acquire/validate
             # once. No HTTP request replay, allocation retry, cache deletion or
             # interactive login occurs; the other audience cache is untouched.
@@ -232,7 +234,7 @@ class ArmClient:
              "ARM credential destination/scope rejected")
         need(method in ("GET", "PUT", "POST", "DELETE", "PATCH"), "unapproved ARM method")
         try:
-            credential = self.tokens.get(ARM)
+            credential = self.tokens.get(ARM, read_only_rollover=method == "GET")
         except (ValueError, subprocess.SubprocessError) as exc:
             self.observe({"event": "credential_unavailable", "method": method,
                           "path": parts.path, "failure_class": "credential",
