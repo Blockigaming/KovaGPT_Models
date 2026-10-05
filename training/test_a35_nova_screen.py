@@ -126,7 +126,7 @@ class ScreenTests(unittest.TestCase):
         for key, relative in (("dataset", "data/a35-nova-transfer.v1.draft.jsonl"),
                               ("review", "data/a35-nova-transfer-review.v1.json")):
             self.assertEqual(receipt["hashes"][key], s.sha((s.ROOT / relative).read_bytes()))
-        self.assertEqual(receipt["rejected_adapters"], list(s.MEASURED_ADAPTERS))
+        self.assertEqual(receipt["rejected_adapters"], list(s.MEASURED_ADAPTERS[:6]))
         self.assertEqual(len(receipt["rejected_adapters"]), 6)
         self.assertIn(receipt["measured"]["candidate_sha256"], self.plan["rejected_adapter_sha256"])
         self.assertEqual(receipt["phase_a_verified"], 30)

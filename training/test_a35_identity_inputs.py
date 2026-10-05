@@ -78,27 +78,65 @@ class IdentityInputTests(unittest.TestCase):
         with self.assertRaises(PrivateCatalogError):
             load_catalog(self.plan["private_catalog_sha256"])
 
-    def test_existing_recipe_quality_and_six_rejections_remain(self):
+    def test_existing_recipe_quality_and_seven_rejections_remain(self):
         self.assertEqual(self.plan["training"]["epochs"], 3)
         self.assertEqual(self.plan["training"]["maximum_seconds"], 600)
         self.assertEqual(self.plan["training"]["expected_optimizer_steps"], 30)
         self.assertEqual(self.plan["rejected_adapter_sha256"], list(s.MEASURED_ADAPTERS))
-        self.assertEqual(len(s.MEASURED_ADAPTERS), 6)
+        self.assertEqual(len(s.MEASURED_ADAPTERS), 7)
         self.assertFalse(self.plan["execution_authorized"])
 
-    def test_new_receipt_exactly_binds_inputs_without_quality_credit(self):
+    def test_historical_identity_receipt_preserves_its_measured_input_bindings(self):
         receipt = json.loads((s.ROOT / "evaluations/a35-kovagpt-identity-receipt.v1.json").read_text())
         for key, path in (("dataset", DATA_PATH), ("review", REVIEW_PATH),
-                          ("tokenizer", "evaluations/a35-nova-task-checks-tokenizer.v1.json"),
-                          ("plan", "config/a35-nova-screen.v1.json")):
+                          ("tokenizer", "evaluations/a35-nova-task-checks-tokenizer.v1.json")):
             self.assertEqual(receipt["hashes"][key], s.sha((s.ROOT / path).read_bytes()))
-        self.assertEqual(receipt["hashes"]["pack"], self.plan["prepared_pack_sha256"])
-        self.assertEqual(receipt["hashes"]["prompt"], s.sha(s.system_prompt(self.plan).encode()))
+        self.assertEqual(receipt["hashes"]["plan"], "7d1425fb127d9382200f25a34608ad3162bdf45075e965c9ba632c515c4c7fbe")
+        self.assertEqual(receipt["hashes"]["pack"], "5a8f17cbf9ad51bc6c49e682763bdc5f1627318165d982b652c24a686d235b1c")
+        self.assertEqual(receipt["hashes"]["prompt"], "943d5b41296c2a0ce9fc26bb238c346189d0abbc7a5d0abbbc2512b7aa48b659")
         self.assertEqual(receipt["latest_measured"]["strict"], 25)
         self.assertEqual(receipt["a35"], "OPEN")
-        self.assertEqual(receipt["rejected_adapters"], list(s.MEASURED_ADAPTERS))
+        self.assertEqual(receipt["rejected_adapters"], list(s.MEASURED_ADAPTERS[:6]))
         self.assertFalse(receipt["next_proposal"]["execution_authorized"])
         self.assertFalse(receipt["source_tests_are_model_quality_evidence"])
+
+    def test_json_revision_changes_only_system_context_against_measured_identity_pack(self):
+        measured_system = ((s.ROOT / "prompts/kova-identity.v5.txt").read_text() + "\n" +
+                           (s.ROOT / "prompts/kova-nova-task-checks.v1.txt").read_text())
+        measured_rows = apply_identity_policy(self.old, measured_system, self.plan["file_sha256"])
+        self.assertEqual(s.sha(s.encoded(measured_rows)),
+                         "5a8f17cbf9ad51bc6c49e682763bdc5f1627318165d982b652c24a686d235b1c")
+        for old, new in zip(measured_rows, self.new, strict=True):
+            self.assertEqual(old[:2], new[:2])
+            self.assertEqual(old[2]["prompt"][1:], new[2]["prompt"][1:])
+            self.assertEqual(old[2]["completion"], new[2]["completion"])
+            self.assertEqual(old[2]["chat_template_kwargs"], new[2]["chat_template_kwargs"])
+        self.assertNotEqual(s.system_prompt(self.plan), measured_system)
+
+    def test_new_result_binds_failed_measurement_and_inactive_proposal(self):
+        receipt = json.loads((s.ROOT / "evaluations/a35-nova-three-epoch-result.v1.json").read_text())
+        self.assertEqual((receipt["phase_a_verified"], receipt["a35"]), (30, "OPEN"))
+        self.assertEqual((receipt["measured"]["strict"], receipt["measured"]["total"]), (23, 36))
+        self.assertEqual(receipt["measured"]["delta_from_25"], -2)
+        self.assertEqual(receipt["measured"]["adapter_sha256"], s.MEASURED_ADAPTERS[-1])
+        self.assertEqual(receipt["rejected_adapters"], list(s.MEASURED_ADAPTERS))
+        for key, path in (("dataset", DATA_PATH), ("review", REVIEW_PATH),
+                          ("tokenizer", "evaluations/a35-nova-task-checks-tokenizer.v2.json"),
+                          ("plan", "config/a35-nova-screen.v1.json")):
+            self.assertEqual(receipt["next_hashes"][key], s.sha((s.ROOT / path).read_bytes()))
+        self.assertEqual(receipt["next_hashes"]["pack"], self.plan["prepared_pack_sha256"])
+        self.assertEqual(receipt["next_hashes"]["prompt"], s.sha(s.system_prompt(self.plan).encode()))
+        self.assertEqual(receipt["next_proposal"]["status"], "UNMEASURED")
+        self.assertFalse(receipt["next_proposal"]["execution_authorized"])
+        self.assertFalse(receipt["source_tests_are_model_quality_evidence"])
+
+    def test_format_diagnostics_never_repair_raw_strict_answers(self):
+        evidence = generation_evidence([7, 9], max_new_tokens=128, eos_token_id=9)
+        for expected, raw in (("stage-z", "stage-z"), ({"median": 17}, "[17]")):
+            case = {"evaluation": {"kind": "exact_json", "expected": expected}}
+            self.assertEqual(s.score_case(case, raw, evidence), ("exact_json_fail", raw))
+            valid = json.dumps(expected)
+            self.assertEqual(s.score_case(case, valid, evidence), ("exact_json_pass", valid))
 
 
 if __name__ == "__main__":

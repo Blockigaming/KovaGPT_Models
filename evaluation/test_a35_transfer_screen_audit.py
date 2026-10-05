@@ -82,7 +82,7 @@ class TransferScreenAuditTests(unittest.TestCase):
 
     def test_latest_measured_adapter_is_rejected_by_future_recipe(self):
         self.assertIn(audit.ADAPTER, screen.load_plan()['rejected_adapter_sha256'])
-        self.assertEqual(len(screen.MEASURED_ADAPTERS), 6)
+        self.assertEqual(len(screen.MEASURED_ADAPTERS), 7)
         self.assertIn("32b971862c5b7d0a013aea8f6da4913ba5eeb94b92e153dd7d0aa10419031e16",
                       screen.load_plan()['rejected_adapter_sha256'])
 

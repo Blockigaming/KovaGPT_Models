@@ -37,6 +37,7 @@ MEASURED_ADAPTERS = (
     "95fd3383589ef1bfe942345a9df09e3a3afaa8cf8d24ea886a273eea2a5089ee",
     "4aa5e981fb5d28b902fb5fdf6da68f15b76e4659010195902446530f29b5d264",
     "32b971862c5b7d0a013aea8f6da4913ba5eeb94b92e153dd7d0aa10419031e16",
+    "9506b310dd551cfb969905fedcb8e39792e6630f69bfabb677257a5fdc765e35",
 )
 
 
@@ -55,7 +56,7 @@ def need(condition, message):
 
 def system_prompt(plan):
     """Nova-only task checks; keep the shared identity/safety policy intact."""
-    need(plan.get("task_checks_path") == "prompts/kova-nova-task-checks.v1.txt",
+    need(plan.get("task_checks_path") == "prompts/kova-nova-task-checks.v2.txt",
          "Nova task-check source required")
     return ((ROOT / "prompts/kova-identity.v5.txt").read_text() + "\n" +
             (ROOT / plan["task_checks_path"]).read_text())
@@ -65,7 +66,9 @@ def historical_nova_rows(plan):
     """Reproduce the measured parent exactly; never use it for new execution."""
     rows = prepared_revision_rows()
     base = (ROOT / "prompts/kova-identity.v4.draft.txt").read_text()
-    system = base + "\n" + (ROOT / plan["task_checks_path"]).read_text()
+    # The measured parent has its own immutable prompt; active revisions must
+    # never rewrite the historical pack used to validate identity overrides.
+    system = base + "\n" + (ROOT / "prompts/kova-nova-task-checks.v1.txt").read_text()
     for _, _, row in rows:
         message = row["prompt"][0]
         need(message["role"] == "system" and message["content"].startswith(base),

@@ -23,7 +23,11 @@ customer help, active model identity or evidence of current quality.
 ## Evidence state
 
 Phase A remains 30/40 verified (75%). A35 remains OPEN. Latest measured Nova is
-25/36; the three-epoch identity proposal is UNMEASURED. Software checks do not
+23/36, down two from the preserved 25/36 baseline. The three-epoch identity
+candidate failed strict; cleanup passed 8/8 and billing remains pending.
+The next JSON-shape prompt correction is UNMEASURED and execution is disabled.
+See [the measured result and limitations](docs/a35-nova-three-epoch-result.md).
+Software checks do not
 prove model improvement. Raw strict 36/36 is required before manual evidence
 can be generated. Manual review requires 14/14 cases and all 48 criteria, with
 zero identity, safety or grounding failures. Repetitions and other acceptance
