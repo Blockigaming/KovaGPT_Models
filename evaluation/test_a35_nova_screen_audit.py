@@ -62,7 +62,7 @@ class NovaCorrectionTests(unittest.TestCase):
                          "f6d09354b5db910288be1e4ac9e22467bfe0c4bf8b554ef576162a245955e352")
         changed = 0
         old_system = (screen.ROOT / "prompts/kova-identity.v4.draft.txt").read_text()
-        new_system = old_system + "\n" + (screen.ROOT / self.plan["task_checks_path"]).read_text()
+        new_system = old_system + "\n" + (screen.ROOT / "prompts/kova-nova-task-checks.v1.txt").read_text()
         self.assertTrue(new_system.startswith(old_system + "\n"))
         self.assertEqual(validate_prompt(new_system), 34)
         for (old_id, old_split, old), (new_id, new_split, new) in zip(before, after[:110], strict=True):
@@ -136,7 +136,11 @@ def failure_regression(case_id):
         self.assertEqual(row["completion_evidence"]["finish_reason"], "eos")
         self.assertLess(row["completion_evidence"]["generated_token_count"], 128)
         kind, _, instruction, _ = audit.FAILURES[case_id]
-        self.assertIn(instruction, screen.system_prompt(self.plan))
+        # The historical audit records the instruction proposed at that time.
+        self.assertIn(instruction, (screen.ROOT / "prompts/kova-nova-task-checks.v1.txt").read_text())
+        current_instruction = ("never replace an object with a list or wrap a scalar"
+                               if kind == "format_only" else instruction)
+        self.assertIn(current_instruction, screen.system_prompt(self.plan))
         parsed = json.loads(row["answer"])
         if kind == "format_only":
             self.assertIsInstance(parsed, dict)
