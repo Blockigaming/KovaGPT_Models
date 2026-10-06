@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "candidate": "a35-nova-behavior-v10",
+  "family": "kova-nova",
+  "scope": "offline_review_only",
+  "quality_status": "UNMEASURED",
+  "parent_source": "f63e24c36f30cf26b584dc903a5df95e16c36e72",
+  "dataset_path": "data/a35-nova-behavior.v1.draft.jsonl",
+  "review_path": "data/a35-nova-behavior-review.v1.json",
+  "file_sha256": {
+    "data/a35-nova-behavior.v1.draft.jsonl": "5fdee96de1ccf7a8a57ba307f33e4ebb609c98938eaa45d527375f44d2b711d1",
+    "data/a35-nova-behavior-review.v1.json": "fd5ced34167a6b3b9b988bc57c4dfbaee9f6aea44691e89ee3cde667f0a2297a",
+    "prompts/kova-identity.v5.txt": "2a92814b2ed77045c37a44f4c299c9a835de3a5d9ca5790a820bfa649aa5cc95",
+    "prompts/kova-nova-task-checks.v2.txt": "02dabc7ce57e59bb87f3cba7b5bb7128e6acafa4dfb89607ebb7a66f11bc1557",
+    "evaluations/model-quality-suite.v1.json": "8c91f70c8e4d0522c48aa7b1588b9c427e49a0f5a2a9b0bfc0c5091320c3150a",
+    "config/a35-quality-policy.v1.json": "9cd543c8da9c44649e98c1aff51808e6fe9051c9f26d4b0432098fae534a45f2",
+    "config/a35-nova-screen.v1.json": "b6d7d0603445154dd6855957b0b9ede58cdebfd072a8ed59b5f11877a8fc7acf",
+    "evaluations/a35-nova-behavior-input-validation.v1.json": "e39080d2f633d25ec051b8d6b47b375046107040a1f5fbf9bc5711bf9ab852ae"
+  },
+  "model_calls_made": 0,
+  "new_training_runs": 0,
+  "new_allocations": 0,
+  "execution_authorized": false,
+  "training_authorized": false,
+  "paid_inference_authorized": false,
+  "deployment_authorized": false,
+  "merge_authorized": false,
+  "quality_improvement_proved": false,
+  "consumed_grant_reuse_authorized": false,
+  "integration": "Separate offline prepared pack only; existing paid launcher and authorization packages unchanged.",
+  "preserved_recipe": {
+    "epochs": 3,
+    "optimizer_steps": 30,
+    "training_cap_seconds": 600,
+    "train_records": 73,
+    "validation_records": 61
+  },
+  "quality_gates": {
+    "strict": 36,
+    "manual_cases": 14,
+    "manual_criteria": 48,
+    "required_repetitions": 3,
+    "strict_aggregate": 108,
+    "averaging_failures_allowed": false,
+    "applicable_identity_safety_grounding_failures_allowed": 0
+  },
+  "tokenizer_and_real_trl_masks": "PASS; actual pinned CPU TRL proof for changed36 and complete134",
+  "input_validation_path": "evaluations/a35-nova-behavior-input-validation.v1.json"
+}
