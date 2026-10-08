@@ -6,6 +6,7 @@ from itertools import permutations
 import json
 from math import ceil
 from pathlib import Path
+import re
 import socket
 import subprocess
 import sys
@@ -14,6 +15,7 @@ import unittest
 from unittest.mock import patch
 
 from evaluation import a35_nova_behavior_data as data
+from evaluation.a35_correction_data import arithmetic
 from evaluation.quality_evidence import canonical, strict_json
 
 
@@ -27,6 +29,79 @@ class BehaviorInputs(unittest.TestCase):
             with self.subTest(row=row["id"]):
                 expected = data.reference_answer(self.review[row["id"]]["reference"])
                 self.assertEqual(canonical(strict_json(row["messages"][1]["content"])), canonical(expected))
+
+    def assert_prompt_code_matches_reference(self, row, annotation):
+        # The oracle and leakage audit read review metadata, while the model
+        # reads the prompt. A freshly re-pinned prompt can otherwise disagree.
+        prompt = row["messages"][0]["content"]
+        prefix, marker, tail = prompt.partition("\nPython 3:\n")
+        source, suffix, trailing = tail.rpartition("\nSerialize result as exactly one JSON value.")
+        self.assertTrue(prefix and marker and suffix)
+        self.assertEqual(trailing, "")
+        self.assertEqual(source, annotation["reference"]["inputs"]["source"])
+
+    def test_model_visible_python_matches_review_including_json_root(self):
+        checked = 0
+        for row in self.rows:
+            annotation = self.review[row["id"]]
+            if annotation["reference"]["operation"] != "python_trace":
+                continue
+            with self.subTest(row=row["id"]):
+                self.assert_prompt_code_matches_reference(row, annotation)
+                checked += 1
+        self.assertEqual(checked, 20)
+        # Keep valid metadata and targets; simulate prompt-only drift after
+        # re-pinning. These are source mutants, never model/evaluation outputs.
+        mutants = [
+            ("predicate-0-train", "row['n']%2==0", "row['n']%2!=0"),
+            ("median-1-train", "result={'median':values[len(values)//2]}",
+             "result=[values[len(values)//2]]"),
+        ]
+        for name, before, after in mutants:
+            row = deepcopy(next(r for r in self.rows if r["id"] == "a35-nova-behavior-"+name))
+            self.assertIn(before, row["messages"][0]["content"])
+            row["messages"][0]["content"] = row["messages"][0]["content"].replace(before, after)
+            with self.subTest(mutant=name), self.assertRaises(AssertionError):
+                self.assert_prompt_code_matches_reference(row, self.review[row["id"]])
+
+    def assert_written_equation_label(self, row, variable, left, right, separator):
+        # Independently transcribed from the authored questions, not from the
+        # builder's expanded coefficients or reference_answer's root formula.
+        prompt = row["messages"][0]["content"].replace(" ", "")
+        self.assertIn(left+separator+right, prompt)
+        answer = strict_json(row["messages"][1]["content"])
+        root = answer[variable]
+        self.assertIs(type(root), int)
+
+        def substitute(expression, value):
+            explicit = re.sub(r"(?<=\d)(?=[a-z(])", "*", expression)
+            return arithmetic(explicit.replace(variable, "("+str(value)+")"))
+
+        lhs, rhs = substitute(left, root), substitute(right, root)
+        self.assertEqual(lhs, rhs)
+        self.assertNotEqual(substitute(left, root+1), substitute(right, root+1))
+        self.assertEqual(set(answer), {variable, "left", "right"} if "left" in answer else {variable})
+        if "left" in answer:
+            self.assertEqual(answer["left"], lhs)
+            self.assertEqual(answer["right"], rhs)
+
+    def test_equation_labels_satisfy_the_written_expressions(self):
+        equations = [
+            ("0-train", "u", "4(u-3)", "2u+18", "="),
+            ("1-train", "t", "7(t+2)-5", "3t+45", "and"),
+            ("0-validation", "v", "5-3v", "2(v+5)", "="),
+            ("1-validation", "q", "2(3q-4)+7", "4q+17", "="),
+        ]
+        for name, variable, left, right, separator in equations:
+            row = next(r for r in self.rows if r["id"] == "a35-nova-behavior-equation-"+name)
+            with self.subTest(row=row["id"]):
+                self.assert_written_equation_label(row, variable, left, right, separator)
+                mutant = deepcopy(row)
+                answer = strict_json(mutant["messages"][1]["content"])
+                answer[variable] += 1
+                mutant["messages"][1]["content"] = json.dumps(answer)
+                with self.assertRaises(AssertionError):
+                    self.assert_written_equation_label(mutant, variable, left, right, separator)
 
     def test_probability_labels_by_physical_ordered_outcome_enumeration(self):
         for row in self.rows:
