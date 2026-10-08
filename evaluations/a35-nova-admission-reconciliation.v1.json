@@ -1,0 +1,86 @@
+{
+  "a35": "OPEN",
+  "a35_verified_by_this_change": false,
+  "admission_policy": {
+    "backoff_seconds": [
+      2,
+      4
+    ],
+    "blind_mutation_replay": false,
+    "deterministic_4xx_retry": false,
+    "get_transient_retries_maximum": 2,
+    "lost_mutation_response": "Reconcile the exact intended identity; continue only on verified matching state; ambiguous absence stops without replay.",
+    "transient_statuses": [
+      429,
+      500,
+      502,
+      503,
+      504
+    ]
+  },
+  "attempt_id": "26b93c4251d54fb09b605e775d08d390",
+  "billing": "PENDING; no missing row is interpreted as zero",
+  "cleanup": {
+    "attempt_resource_groups": "removed; inventories absent",
+    "gpu": "never requested; absence verified",
+    "independent_checks_passed": 8,
+    "independent_checks_total": 8,
+    "reader": "removed",
+    "watchdog": "removed; independently verified absence",
+    "writer": "never created; absence verified"
+  },
+  "executed_source_head": "34cba0c63dedf580256c2cdaa84dd3f4e373e910",
+  "latest_measured_nova": {
+    "attempt_id": "3a58d36c0c6e4e5296127a4976aeef74",
+    "strict": 24,
+    "total": 36
+  },
+  "model_input_hashes": {
+    "dataset": "f6dbf2576ec091d018bcccd90a08284a4a4c2edcd0da8c474e04459052a697b8",
+    "pack": "d670792ddf8f38896ee9adcac338268a7677cd4b2c60079a33d80a018cdccdf8",
+    "plan": "80d635299aee3ee1d3e7393c7676436c7d0551fded3fcee3bedcca136fbd3401",
+    "prompt": "258b48ccdc670cfd32312983de0ca4e71b136de1e71aa4ef97fb88d026e554d8",
+    "review": "fc0e0b1cc648d1146ab5622d4a2b03c60078ab22c397f220da25600cb943a7b7",
+    "tokenizer": "68446fbb94a6d020a214cf7ac399865de57f0812a739a06c7a2ee8230009be09"
+  },
+  "new_attempt": {
+    "authorization_consumed": true,
+    "candidate_sha256": null,
+    "consumption_reason": "Scoped Reader creation independently confirmed; the new rule does not consume read-only failures.",
+    "gpu_allocation_requests": 0,
+    "manual": "NOT RUN",
+    "strict": "NOT RUN",
+    "training": "NOT RUN"
+  },
+  "paid_execution_remaining": false,
+  "phase_a": "30/40 verified (75%)",
+  "quality_standards_unchanged": true,
+  "raw_reports_and_account_identifiers": "private; not included",
+  "schema_version": 1,
+  "stop": {
+    "corrective_scope": "Resolve the pinned template parameters, require exact types/values/identity/mode/state, and reject unknown expressions or missing/extra evidence. No watchdog definition, model input, grader or quality threshold changed.",
+    "get_status": 200,
+    "masked_parameter_followthrough": "The compiled VM template uses the existing secure SSH-public-key parameter. Preserve masking; accept its masked readback only with the complete authenticated successful PUT response matching deployment identity, correlation, template hash and every returned parameter. A lost PUT acknowledgement still fails closed; no write replay. No secure-template declaration changed.",
+    "observed_provisioning_state": "Running",
+    "put_status": 201,
+    "root_cause": "The new private operator compared request parameter dictionaries directly with Azure typed/default-expanded response parameters. Azure included type fields and the source-defined East US location default.",
+    "stage": "watchdog deployment readback"
+  },
+  "verification": {
+    "preserved_actual_vm_masked_parameter_replay": "PASS; complete PUT acknowledgement required; lost acknowledgement rejected",
+    "preserved_authenticated_response_replay": "PASS",
+    "private_changed_launcher_checks": {
+      "passed": 7,
+      "total": 7
+    },
+    "private_writer_checks": {
+      "passed": 3,
+      "total": 3
+    },
+    "public_admission_regressions": {
+      "passed": 33,
+      "total": 33
+    },
+    "unchanged_verify_baseline": 659
+  }
+}

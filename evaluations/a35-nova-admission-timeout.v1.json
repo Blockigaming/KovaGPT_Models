@@ -1,0 +1,59 @@
+{
+  "a35": "OPEN",
+  "affected_regressions": {
+    "new_transport_cases": 5,
+    "passed": 56,
+    "total": 56
+  },
+  "attempt_id": "2659b6345a7b40ebb6e54c51d4870373",
+  "authorization_consumed": true,
+  "billing": "PENDING",
+  "candidate_sha256": null,
+  "correction": {
+    "authentication_guards_unchanged": true,
+    "model_inputs_unchanged": true,
+    "no_request_replay": true,
+    "quality_improvement_demonstrated": false,
+    "scope": "Preserve bounded ARM transport failure receipts before propagating failure",
+    "timeouts_unchanged": true
+  },
+  "executed_head": "ce5a5019dd506166fd40bfc1f6d433020d2c15f9",
+  "gpu_allocated": false,
+  "immutable_inputs": {
+    "dataset": "f6dbf2576ec091d018bcccd90a08284a4a4c2edcd0da8c474e04459052a697b8",
+    "pack": "d670792ddf8f38896ee9adcac338268a7677cd4b2c60079a33d80a018cdccdf8",
+    "plan": "80d635299aee3ee1d3e7393c7676436c7d0551fded3fcee3bedcca136fbd3401",
+    "prompt": "258b48ccdc670cfd32312983de0ca4e71b136de1e71aa4ef97fb88d026e554d8",
+    "review": "fc0e0b1cc648d1146ab5622d4a2b03c60078ab22c397f220da25600cb943a7b7",
+    "tokenizer": "68446fbb94a6d020a214cf7ac399865de57f0812a739a06c7a2ee8230009be09"
+  },
+  "independent_cleanup": "8/8 PASS",
+  "latest_measured_attempt": "3a58d36c0c6e4e5296127a4976aeef74",
+  "latest_measured_strict": "24/36",
+  "manual": "NOT RUN",
+  "next_action": "Fresh live prerequisites and a separate owner-authorized screen remain required.",
+  "observed_failure": {
+    "last_preserved_arm_response": "SKU inventory HTTP200; pinned EastUS T4 present; no nextLink",
+    "limitation": "Failed exchange had no per-request transport receipt; endpoint inferred from preserved response sequence and exact source, not from an HTTP error response.",
+    "message": "The read operation timed out",
+    "next_sequential_operation": "Pinned Ubuntu image metadata GET",
+    "type": "TimeoutError"
+  },
+  "paid_scope": "No second allocation, training, screen or repetition authorized",
+  "phase_a": "30/40 verified (75%)",
+  "read_only_diagnostic": {
+    "allocation_requests": 0,
+    "elapsed_seconds": 0.727,
+    "image_get_http_status": 200,
+    "image_state": "Active",
+    "interpretation": "Read succeeds now; the original transient transport cause remains unproven. No authentication/RBAC or image contract defect demonstrated.",
+    "model_calls": 0
+  },
+  "reader_removal": "PASS",
+  "result": "STOPPED_BEFORE_RESOURCES",
+  "retry_performed": false,
+  "schema_version": 1,
+  "strict": "NOT RUN",
+  "training": "NOT RUN",
+  "writer_created": false
+}

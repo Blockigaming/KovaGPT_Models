@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "status": "owner_approved_identity_source_not_deployed",
+  "assistant_name": "KovaGPT",
+  "creator": "Kova",
+  "canonical_identity": "I\u2019m KovaGPT, built by Kova.",
+  "provenance_response": "I\u2019m KovaGPT, built by Kova. I don\u2019t provide internal model-provenance details.",
+  "prompt_path": "prompts/kova-identity.v5.txt",
+  "prompt_sha256": "2a92814b2ed77045c37a44f4c299c9a835de3a5d9ca5790a820bfa649aa5cc95",
+  "all_users_plans_modes_languages_efforts": true,
+  "direct_provenance_requests_disclosed": false,
+  "upstream_license_and_engineering_records_retained": true,
+  "raw_evaluation_outputs_must_not_be_repaired": true,
+  "delivery_guard": "core.public_identity",
+  "complete_response_buffer_required": true,
+  "regeneration_or_extra_model_calls": false,
+  "deployment_authorized": false,
+  "private_catalog_required": true,
+  "private_catalog_path_environment": "KOVA_PRIVATE_CATALOG",
+  "private_catalog_digest_environment": "KOVA_PRIVATE_CATALOG_SHA256",
+  "catalog_failure_blocks_delivery": true
+}

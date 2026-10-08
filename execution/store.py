@@ -22,6 +22,7 @@ from execution.contracts import (
     ExecutionInterrupted, ExecutionSpec, canonical, identifier, positive_integer, require,
 )
 from worker.handler import sanitize_engine_response
+from core.public_identity import contains_prohibited, public_answer_payload, PROVENANCE_REFUSAL
 
 
 TERMINAL = frozenset(("succeeded", "failed", "cancelled", "expired", "interrupted", "waiting_tools"))
@@ -35,7 +36,7 @@ MAX_FRAGMENT_BYTES = 32768
 MAX_FRAGMENTS_PER_JOB = 4096
 MAX_PUBLIC_ANSWER_CHARS = 250_000
 FORBIDDEN_PUBLIC_MARKERS = ("<think", "</think>")
-PUBLIC_MARKER_TAIL_CHARS = max(map(len, FORBIDDEN_PUBLIC_MARKERS)) - 1
+PUBLIC_MARKER_TAIL_CHARS = 256
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
  id TEXT PRIMARY KEY, owner TEXT NOT NULL, idem TEXT NOT NULL,
@@ -220,6 +221,7 @@ class LocalJobStore:
                            for row in reversed(previous))[-PUBLIC_MARKER_TAIL_CHARS:]
             require(not any(marker in (tail + fragment).lower() for marker in FORBIDDEN_PUBLIC_MARKERS),
                     "invalid public answer fragment")
+            require(not contains_prohibited(tail + fragment), "KovaGPT response policy rejected output")
             sequence = self._event(db, job_id, "answer_fragment", stage_id)
             payload = self._seal_fragment(grant.owner_id, job_id, sequence, encoded)
             db.execute("INSERT INTO answer_fragments VALUES (?,?,?,?,?,?,?)",
@@ -306,13 +308,22 @@ class LocalJobStore:
                                                   for index, row in enumerate(rows)):
                 raise ExecutionIntegrityError("event journal sequence gap")
             events = []
+            # Reconnect/history is a delivery boundary too. Inspect the complete
+            # persisted answer, including identifiers split across old fragments.
+            answer_rows = db.execute("SELECT sequence,stage FROM answer_fragments WHERE job=? "
+                                     "ORDER BY sequence", (job_id,)).fetchall()
+            blocked = contains_prohibited("".join(self._replay_fragment(db, owner, job_id, r)
+                                                   for r in answer_rows))
+            first_answer = answer_rows[0]["sequence"] if answer_rows else None
             for row in rows:
                 if row["type"] == "answer_fragment":
                     require(row["stage"] == spec.stages[-1].id and spec.stages[-1].public,
                             "invalid public answer stage")
+                    if blocked and row["sequence"] != first_answer:
+                        continue
                     events.append({"job_id": job_id, "sequence": row["sequence"], "type": row["type"],
                                    "stage_id": row["stage"], "occurred_ms": row["occurred_ms"],
-                                   "content": self._replay_fragment(db, owner, job_id, row), "provisional": True})
+                                   "content": PROVENANCE_REFUSAL if blocked else self._replay_fragment(db, owner, job_id, row), "provisional": True})
                 elif row["stage"] is None or activity[row["stage"]]:
                     events.append({"job_id": job_id, "sequence": row["sequence"], "type": row["type"],
                                    "stage_id": row["stage"], "occurred_ms": row["occurred_ms"]})
@@ -329,7 +340,7 @@ class LocalJobStore:
             row = db.execute("SELECT * FROM stages WHERE job=? AND id=?", (job_id, spec.stages[-1].id)).fetchone()
             value = self._result(row)
             # No intermediate drafts, judge notes, provider metadata or credentials.
-            return {"content": value["content"], "tool_calls": value["tool_calls"]}
+            return public_answer_payload(value)
 
     @staticmethod
     def _result(row):

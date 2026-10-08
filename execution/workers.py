@@ -195,13 +195,16 @@ class ModelStageWorker:
             normalized, finished_ns = consume_engine_response(
                 response, expect_stream=stage.public, clock_ns=self.clock_ns,
                 started_ns=started_ns, timing_state=timing, on_public_delta=public_delta,
+                user_messages=request["messages"] if stage.public else None,
             )
-            result = sanitize_engine_response(plan["request_id"], normalized)
+            result = sanitize_engine_response(plan["request_id"], normalized,
+                                              user_messages=request["messages"] if stage.public else None)
         except BaseException as error:
             failure = error
         if finished_ns is None:
             finished_ns = self.clock_ns()
-        outcome = "success" if failure is None else "failed"
+        outcome = ("failed" if failure is not None else
+                   "quarantined" if result.get("identity_guard_blocked") else "success")
         try:
             after = validate_runtime_probe(lambda phase: self.runtime_probe(stage.id, phase), "after", candidate)
             require(all(before[key] == after[key] for key in RUNTIME_IDENTITY_FIELDS), "Ultra runtime identity changed")

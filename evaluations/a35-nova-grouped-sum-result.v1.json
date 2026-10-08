@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "status": "measured_grouped_sum_screen_followthrough",
+  "phase_a_verified": 30,
+  "phase_a_total": 40,
+  "a35": "OPEN",
+  "measured": {
+    "attempt_id": "99ede663f6fa4d79ad9047475ce40a26",
+    "source_head": "2bd530c3f9d6666184b926b4706aab9fec17fd24",
+    "plan_sha256": "80d635299aee3ee1d3e7393c7676436c7d0551fded3fcee3bedcca136fbd3401",
+    "candidate_sha256": "32b971862c5b7d0a013aea8f6da4913ba5eeb94b92e153dd7d0aa10419031e16",
+    "report_sha256": "3c61b3b7f8ab9ad1d8b0d1cf1397af88e9a1a91b97162f7210ab176ca011a0ea",
+    "training": {
+      "status": "PASS",
+      "epochs": 2,
+      "optimizer_steps": 20,
+      "seconds": 284.825
+    },
+    "strict": 25,
+    "total": 36,
+    "categories": {
+      "math": {
+        "pass": 6,
+        "total": 10
+      },
+      "code_reading": {
+        "pass": 2,
+        "total": 8
+      },
+      "reasoning": {
+        "pass": 5,
+        "total": 6
+      },
+      "data_analysis": {
+        "pass": 6,
+        "total": 6
+      },
+      "instruction_following": {
+        "pass": 6,
+        "total": 6
+      }
+    },
+    "runtime_identity_safety_grounding_stops": 0,
+    "manual": "NOT RUN",
+    "manual_packet": "independently absent",
+    "outputs_complete": true,
+    "generated_token_range": [
+      2,
+      21
+    ],
+    "cleanup": "8/8 independent absence checks PASS",
+    "reader_writer": "removed",
+    "billing": "PENDING; authenticated HTTP 200 with no posted rows"
+  },
+  "comparison": {
+    "previous_strict": 24,
+    "recovered": [
+      "data-01"
+    ],
+    "newly_regressed": [],
+    "persistent_failures": 11,
+    "content_failures": 10,
+    "format_only_failures": 1,
+    "baselines": {
+      "latest_24": {
+        "retained_pass": 24,
+        "persistent_failure": 11,
+        "recovered": 1
+      },
+      "latest_23": {
+        "retained_pass": 23,
+        "persistent_failure": 11,
+        "recovered": 2
+      },
+      "preceding_21": {
+        "retained_pass": 21,
+        "persistent_failure": 11,
+        "recovered": 4
+      },
+      "historical_23": {
+        "retained_pass": 22,
+        "persistent_failure": 10,
+        "newly_regressed": 1,
+        "recovered": 3
+      }
+    },
+    "model_internal_cause": "Not isolated by observed outputs; no truncation, missing task prompt, changed decoder or target defect demonstrated."
+  },
+  "next_proposal": {
+    "status": "UNMEASURED",
+    "hypothesis": "Test whether one additional complete epoch improves transfer of already-correct examples while holding the dataset, prompt, decoder, seed, learning rate and adapter settings fixed.",
+    "epochs": 3,
+    "expected_optimizer_steps": 30,
+    "maximum_training_seconds": 600,
+    "measured_two_epoch_seconds": 284.825,
+    "linear_three_epoch_seconds_estimate": 427.238,
+    "runtime_estimate_is_not_a_guarantee": true,
+    "new_examples": 0,
+    "quality_improvement_proved": false
+  },
+  "correction": {
+    "credential_acquisition": "At most two read-only retries after a 30-second CLI acquisition timeout; all returned identity/audience/expiry checks remain mandatory; no resource-request replay.",
+    "partial_secret_output_retained": false
+  },
+  "hashes": {
+    "dataset": "f6dbf2576ec091d018bcccd90a08284a4a4c2edcd0da8c474e04459052a697b8",
+    "review": "fc0e0b1cc648d1146ab5622d4a2b03c60078ab22c397f220da25600cb943a7b7",
+    "pack": "d670792ddf8f38896ee9adcac338268a7677cd4b2c60079a33d80a018cdccdf8",
+    "prompt": "258b48ccdc670cfd32312983de0ca4e71b136de1e71aa4ef97fb88d026e554d8",
+    "tokenizer": "2933f590d75bebc0660cb7acfed481f00bd9290f91097fb37107372ed5db762b",
+    "plan": "166bf0e6cace6c558f8d4793157185f1afd6c5afcbec90c4636a6784d8b554d5"
+  },
+  "rejected_adapters": [
+    "f6d09354b5db910288be1e4ac9e22467bfe0c4bf8b554ef576162a245955e352",
+    "95470d46db4a430ce6f5e5d53f5dc322dcb4a04aec824b69b922dbe9b1d71213",
+    "9e9c991332e979d3b3b73452e643d0272f859965fc054329f32308491a0a7e0b",
+    "95fd3383589ef1bfe942345a9df09e3a3afaa8cf8d24ea886a273eea2a5089ee",
+    "4aa5e981fb5d28b902fb5fdf6da68f15b76e4659010195902446530f29b5d264",
+    "32b971862c5b7d0a013aea8f6da4913ba5eeb94b92e153dd7d0aa10419031e16"
+  ],
+  "execution_authorized": false,
+  "paid_authorization_consumed": true,
+  "further_allocation_training_inference_authorized": false,
+  "quality_gate_closed": false,
+  "raw_reports_public": false,
+  "remaining_gates": [
+    "strict 36/36 on every required repetition",
+    "manual 14/14 and 48/48 only after strict 36/36, with human review",
+    "authenticated routes",
+    "provenance",
+    "latency",
+    "final cost",
+    "serving/runtime"
+  ]
+}

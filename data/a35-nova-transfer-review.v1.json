@@ -1,0 +1,359 @@
+{
+  "schema_version": 1,
+  "status": "owner_delegated_policy_conformance_review",
+  "scope": "nova_only_additive_draft",
+  "provenance": {
+    "source": "project_authored_synthetic_transfer_examples",
+    "license": "CC0-1.0",
+    "private_customer_data": false,
+    "private_conversations": false,
+    "secrets": false,
+    "third_party_training_text": false
+  },
+  "rationale": "One independent training and held-out validation scenario per observed failure class supplements sparse single-example supervision. This tests a coverage/generalization hypothesis, not a proven model-internal cause or quality improvement. No existing target is changed.",
+  "model_calls_made": 0,
+  "records": [
+    {
+      "id": "a35-nova-transfer-arithmetic-train",
+      "group": "arithmetic",
+      "structure": "a35-nova-transfer-arithmetic-train",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "crates=387-149\ntiles=crates*6\ntiles+=28\nresult={'tiles':tiles}"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-arithmetic-validation",
+      "group": "arithmetic",
+      "structure": "a35-nova-transfer-arithmetic-validation",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "stock=[264,178]\nkit=sum(stock)//13\nresult=[kit,kit-4]"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-probability-train",
+      "group": "probability",
+      "structure": "a35-nova-transfer-probability-train",
+      "reference": {
+        "operation": "ordered_draws",
+        "inputs": {
+          "counts": {
+            "white": 4,
+            "black": 3,
+            "red": 2
+          },
+          "sequence": [
+            "white",
+            "black",
+            "white"
+          ]
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-probability-validation",
+      "group": "probability",
+      "structure": "a35-nova-transfer-probability-validation",
+      "reference": {
+        "operation": "unordered_hits",
+        "inputs": {
+          "eligible": 3,
+          "total": 7,
+          "draws": 4,
+          "hits": 2
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-geometry-train",
+      "group": "geometry",
+      "structure": "a35-nova-transfer-geometry-train",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "half_perimeter=64//2\nshort=(half_perimeter-6)//2\nlong=short+6\nresult={'garden_area':short*long}"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-geometry-validation",
+      "group": "geometry",
+      "structure": "a35-nova-transfer-geometry-validation",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "height=5\njoined_width=46//2-height\none_width=joined_width//2\nresult=[one_width,joined_width*height]"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-predicate-train",
+      "group": "predicate",
+      "structure": "a35-nova-transfer-predicate-train",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "records=[('m',-6),('n',5),('m',0),('q',9),('n',-6)]\nresult=[tag+str(value//3) for tag,value in records if value%3==0 and value<=0]"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-predicate-validation",
+      "group": "predicate",
+      "structure": "a35-nova-transfer-predicate-validation",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "values=[14,7,0,21,14]\nout=[]\nfor value in values:\n    if value==0 or value%7!=0: continue\n    out.append(value-2)\nresult=out"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-increment-train",
+      "group": "increment",
+      "structure": "a35-nova-transfer-increment-train",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "stock={'east':11,'west':4}\nfor source,target in [('west','east'),('east','west')]:\n    stock[target] += stock[source]\nresult=stock"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-increment-validation",
+      "group": "increment",
+      "structure": "a35-nova-transfer-increment-validation",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "levels=[3,8,5]\nlevels[1]+=levels[0]\nlevels[0]=levels[2]\nlevels[2]+=levels[1]\nresult=levels"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-task_ids-train",
+      "group": "task_ids",
+      "structure": "a35-nova-transfer-task_ids-train",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "deps={'q':['m'],'m':['k'],'z':['k','r'],'k':[],'r':[]}\ndone=[]\nfor step in range(len(deps)):\n    ready=sorted(name for name,needs in deps.items() if name not in done and all(n in done for n in needs))\n    done.append(ready[0])\nresult=done"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-task_ids-validation",
+      "group": "task_ids",
+      "structure": "a35-nova-transfer-task_ids-validation",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "deps={'seed':[],'parse':['seed'],'lint':['seed'],'emit':['parse'],'pack':['emit','lint']}\ndone=['seed','parse']\nresult={'ready':sorted(name for name,needs in deps.items() if name not in done and all(n in done for n in needs))}"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-string_root-train",
+      "group": "string_root",
+      "structure": "a35-nova-transfer-string_root-train",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "record={'mode':'quiet','enabled':True}\nresult=record['mode']"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-string_root-validation",
+      "group": "string_root",
+      "structure": "a35-nova-transfer-string_root-validation",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "words=['maple','cedar','birch']\nresult=sorted(words)[1]"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-integer_root-train",
+      "group": "integer_root",
+      "structure": "a35-nova-transfer-integer_root-train",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "groups=[[4,8],[],[2,9,6]]\nresult=sum(len(group) for group in groups)"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-integer_root-validation",
+      "group": "integer_root",
+      "structure": "a35-nova-transfer-integer_root-validation",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "hour=22\nfor tick in range(9):\n    hour=(hour+1)%24\nresult=hour"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-boolean_root-train",
+      "group": "boolean_root",
+      "structure": "a35-nova-transfer-boolean_root-train",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "values=[12,18,25]\nresult=all(value%6==0 for value in values)"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-boolean_root-validation",
+      "group": "boolean_root",
+      "structure": "a35-nova-transfer-boolean_root-validation",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "status='ready'\nattempts=1\nlimit=3\nresult=(status=='ready' and attempts<limit)"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-array_root-train",
+      "group": "array_root",
+      "structure": "a35-nova-transfer-array_root-train",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "rows=[{'name':'mauve','seen':4},{'name':'aqua','seen':1},{'name':'coral','seen':2}]\nresult=sorted({row['name'] for row in rows if row['seen']>1})"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-array_root-validation",
+      "group": "array_root",
+      "structure": "a35-nova-transfer-array_root-validation",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "records=[{'name':'Elm','active':True},{'name':'ash','active':False},{'name':'ELM','active':True},{'name':'oak','active':True}]\nresult=sorted(set(row['name'].lower() for row in records if row['active']))"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-grouped_sum-train",
+      "group": "grouped_sum",
+      "structure": "a35-nova-transfer-grouped_sum-train",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "adjustments=[('harbor',19),('hill',-5),('harbor',-7),('field',0),('hill',5),('harbor',4)]\ntotals={}\nfor depot,change in adjustments:\n    totals[depot]=totals.get(depot,0)+change\nresult=totals"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    },
+    {
+      "id": "a35-nova-transfer-grouped_sum-validation",
+      "group": "grouped_sum",
+      "structure": "a35-nova-transfer-grouped_sum-validation",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "ledger=[('elm',12),('ash',-8),('pine',5),('elm',-17),('ash',3),('pine',-5),('ash',9)]\nlabels=sorted(set(label for label,value in ledger))\nresult=[[label,sum(value for key,value in ledger if key==label)] for label in labels]"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "policy_review": "conformant",
+      "provenance": "project_authored_synthetic"
+    }
+  ]
+}

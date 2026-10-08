@@ -1,0 +1,791 @@
+{
+  "schema_version": 1,
+  "status": "owner_delegated_policy_conformance_review",
+  "provenance": {
+    "source": "project_authored_synthetic",
+    "license": "CC0-1.0",
+    "third_party_training_text": false,
+    "customer_data": false,
+    "secrets": false
+  },
+  "model_calls_made": 0,
+  "quality_improvement_proved": false,
+  "records": [
+    {
+      "id": "a35-nova-behavior-arithmetic-0-train",
+      "split": "train",
+      "group": "arithmetic",
+      "replaces": "a35-arithmetic-train",
+      "structure": "grouped_subtotals_two_product_ledger_audit",
+      "reference": {
+        "operation": "ledger",
+        "inputs": {
+          "opening": 86,
+          "groups": [
+            [
+              7,
+              8,
+              5
+            ],
+            [
+              4,
+              2,
+              4
+            ]
+          ],
+          "removals": [
+            18,
+            9
+          ],
+          "checked": true
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-arithmetic-1-train",
+      "split": "train",
+      "group": "arithmetic",
+      "replaces": "a35-nova-transfer-arithmetic-train",
+      "structure": "two_kind_packet_inventory_adjustment",
+      "reference": {
+        "operation": "ledger",
+        "inputs": {
+          "opening": 41,
+          "groups": [
+            [
+              8,
+              15,
+              2
+            ],
+            [
+              3,
+              6,
+              3
+            ]
+          ],
+          "removals": [
+            26
+          ],
+          "checked": false,
+          "key": "usable"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-arithmetic-0-validation",
+      "split": "validation",
+      "group": "arithmetic",
+      "replaces": "a35-arithmetic-validation",
+      "structure": "base_bonus_package_reconciliation",
+      "reference": {
+        "operation": "ledger",
+        "inputs": {
+          "opening": 37,
+          "groups": [
+            [
+              12,
+              7,
+              4
+            ],
+            [
+              5,
+              9,
+              5
+            ]
+          ],
+          "removals": [
+            39,
+            16
+          ],
+          "checked": true
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-arithmetic-1-validation",
+      "split": "validation",
+      "group": "arithmetic",
+      "replaces": "a35-nova-transfer-arithmetic-validation",
+      "structure": "mixed_seating_grouped_product_removals",
+      "reference": {
+        "operation": "ledger",
+        "inputs": {
+          "opening": 58,
+          "groups": [
+            [
+              6,
+              16,
+              7
+            ],
+            [
+              2,
+              8,
+              11
+            ]
+          ],
+          "removals": [
+            47,
+            13
+          ],
+          "checked": false,
+          "key": "available"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-probability-0-train",
+      "split": "train",
+      "group": "probability",
+      "replaces": "a35-probability-train",
+      "structure": "three_color_ordered_count_audit",
+      "reference": {
+        "operation": "ordered_probability",
+        "inputs": {
+          "counts": {
+            "amber": 4,
+            "violet": 5,
+            "silver": 2
+          },
+          "sequence": [
+            "amber",
+            "violet",
+            "silver"
+          ],
+          "checked": true
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-probability-1-train",
+      "split": "train",
+      "group": "probability",
+      "replaces": "a35-nova-transfer-probability-train",
+      "structure": "nonadjacent_repeated_color",
+      "reference": {
+        "operation": "ordered_probability",
+        "inputs": {
+          "counts": {
+            "copper": 6,
+            "white": 3,
+            "black": 2
+          },
+          "sequence": [
+            "white",
+            "copper",
+            "white"
+          ],
+          "checked": false
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-probability-0-validation",
+      "split": "validation",
+      "group": "probability",
+      "replaces": "a35-probability-validation",
+      "structure": "adjacent_repetition_three_labels",
+      "reference": {
+        "operation": "ordered_probability",
+        "inputs": {
+          "counts": {
+            "north": 5,
+            "south": 2,
+            "east": 4
+          },
+          "sequence": [
+            "east",
+            "east",
+            "south"
+          ],
+          "checked": true
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-probability-1-validation",
+      "split": "validation",
+      "group": "probability",
+      "replaces": "a35-nova-transfer-probability-validation",
+      "structure": "four_step_three_species_event",
+      "reference": {
+        "operation": "ordered_probability",
+        "inputs": {
+          "counts": {
+            "maple": 2,
+            "pine": 4,
+            "oak": 3
+          },
+          "sequence": [
+            "oak",
+            "maple",
+            "pine",
+            "oak"
+          ],
+          "checked": false
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-geometry-0-train",
+      "split": "train",
+      "group": "geometry",
+      "replaces": "a35-rectangle-train",
+      "structure": "gate_boundary_dimension_area_check",
+      "reference": {
+        "operation": "geometry",
+        "inputs": {
+          "fence": 52,
+          "gate": 4,
+          "length": 21,
+          "cutout": [
+            4,
+            3
+          ],
+          "checked": true
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-geometry-1-train",
+      "split": "train",
+      "group": "geometry",
+      "replaces": "a35-nova-transfer-geometry-train",
+      "structure": "enclosure_access_gap_with_pad",
+      "reference": {
+        "operation": "geometry",
+        "inputs": {
+          "fence": 66,
+          "gate": 6,
+          "length": 25,
+          "cutout": [
+            3,
+            5
+          ],
+          "checked": false
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-geometry-0-validation",
+      "split": "validation",
+      "group": "geometry",
+      "replaces": "a35-rectangle-validation",
+      "structure": "ratio_plot_two_openings",
+      "reference": {
+        "operation": "geometry",
+        "inputs": {
+          "fence": 72,
+          "gate": 8,
+          "ratio": [
+            5,
+            3
+          ],
+          "cutout": [
+            2,
+            7
+          ],
+          "checked": true
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-geometry-1-validation",
+      "split": "validation",
+      "group": "geometry",
+      "replaces": "a35-nova-transfer-geometry-validation",
+      "structure": "scaled_exhibit_ratio_kiosk",
+      "reference": {
+        "operation": "geometry",
+        "inputs": {
+          "fence": 55,
+          "gate": 5,
+          "ratio": [
+            4,
+            1
+          ],
+          "cutout": [
+            5,
+            2
+          ],
+          "checked": false
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-equation-0-train",
+      "split": "train",
+      "group": "equation",
+      "replaces": "a35-equation-train",
+      "structure": "distributed_unknown_both_sides_substitution",
+      "reference": {
+        "operation": "equation",
+        "inputs": {
+          "a": 4,
+          "b": -12,
+          "c": 2,
+          "d": 18,
+          "key": "u",
+          "checked": true
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-equation-1-train",
+      "split": "train",
+      "group": "equation",
+      "replaces": "a35-nova-transfer-integer_root-train",
+      "structure": "ticket_formula_balance",
+      "reference": {
+        "operation": "equation",
+        "inputs": {
+          "a": 7,
+          "b": 9,
+          "c": 3,
+          "d": 45,
+          "key": "t",
+          "checked": false
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-equation-0-validation",
+      "split": "validation",
+      "group": "equation",
+      "replaces": "a35-equation-validation",
+      "structure": "negative_coefficient_balance_check",
+      "reference": {
+        "operation": "equation",
+        "inputs": {
+          "a": -3,
+          "b": 5,
+          "c": 2,
+          "d": 10,
+          "key": "v",
+          "checked": true
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-equation-1-validation",
+      "split": "validation",
+      "group": "equation",
+      "replaces": "a35-nova-transfer-integer_root-validation",
+      "structure": "nested_calibration_distribution",
+      "reference": {
+        "operation": "equation",
+        "inputs": {
+          "a": 6,
+          "b": -1,
+          "c": 4,
+          "d": 17,
+          "key": "q",
+          "checked": false
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-predicate-0-train",
+      "split": "train",
+      "group": "predicate",
+      "replaces": "a35-even-filter-train",
+      "structure": "record_flags_even_loop_original_predicate",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "records=[{'n':-4,'ok':True},{'n':3,'ok':True},{'n':0,'ok':True},{'n':-4,'ok':True},{'n':8,'ok':False}]\nkept=[]\noutputs=[]\nfor index,row in enumerate(records):\n    if row['ok'] and row['n']%2==0:\n        kept.append(index)\n        outputs.append(row['n']+3)\nresult={'indices':kept,'outputs':outputs}"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-predicate-1-train",
+      "split": "train",
+      "group": "predicate",
+      "replaces": "a35-modulo-filter-train",
+      "structure": "continue_nonmultiple_square_transform",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "readings=[-6,4,0,9,-6,5]\nresult=[]\nfor value in readings:\n    if value%3!=0:\n        continue\n    result.append(value*value-2)"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-predicate-0-validation",
+      "split": "validation",
+      "group": "predicate",
+      "replaces": "a35-even-filter-validation",
+      "structure": "zip_flags_nonzero_remainder_pairs",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "samples=[5,0,-8,5,6]\nflags=[True,False,True,True,True]\nresult=[[i,n-1] for i,(n,flag) in enumerate(zip(samples,flags)) if flag and n%4==1]"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-predicate-1-validation",
+      "split": "validation",
+      "group": "predicate",
+      "replaces": "a35-modulo-filter-validation",
+      "structure": "record_comprehension_compound_filter",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "packets=[{'units':-9},{'units':4},{'units':-9},{'units':0},{'units':12}]\nresult=[row['units']//3+1 for row in packets if row['units']%3==0 and row['units']<1]"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-copy-0-train",
+      "split": "train",
+      "group": "copy",
+      "replaces": "a35-copy-train",
+      "structure": "nested_outer_copy_shared_element_audit",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "original=[['r'],['s']]\nduplicate=original.copy()\nduplicate.append(['u'])\nduplicate[0].append('t')\nresult={'original':original,'duplicate':duplicate}"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-copy-1-train",
+      "split": "train",
+      "group": "copy",
+      "replaces": "a35-nova-copy-isolation-train",
+      "structure": "outer_pop_inner_append_original_view",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "original=[[4,5],[8]]\nmirror=original.copy()\nmirror.pop()\nmirror[0].append(6)\nresult=original"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-copy-0-validation",
+      "split": "validation",
+      "group": "copy",
+      "replaces": "a35-copy-validation",
+      "structure": "dict_constructor_copy_shared_payload",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "original={'items':[7],'label':'old'}\nreplica=dict(original)\nreplica['label']='new'\nreplica['items'].extend([2,9])\nresult={'original':original,'replica':replica}"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-copy-1-validation",
+      "split": "validation",
+      "group": "copy",
+      "replaces": "a35-nova-copy-isolation-validation",
+      "structure": "mapping_alias_mutation_then_rebinding",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "source={'values':[3,8]}\nalias=source\nalias['values'].pop()\nalias={'values':[20]}\nresult=source"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-increment-0-train",
+      "split": "train",
+      "group": "increment",
+      "replaces": "a35-increment-train",
+      "structure": "signed_repeated_event_accumulator_trace",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "stock={'left':6,'right':4}\nchanges=[('left',-2),('right',3),('left',5)]\ntrace=[]\nfor key,delta in changes:\n    before=stock[key]\n    stock[key]+=delta\n    trace.append([before,stock[key]])\nresult={'trace':trace,'stock':stock}"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-increment-1-train",
+      "split": "train",
+      "group": "increment",
+      "replaces": "a35-nova-transfer-increment-train",
+      "structure": "cross_key_ordered_compound_updates",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "totals={'red':8,'blue':5}\nfor key,other in [('red','blue'),('blue','red')]:\n    totals[key]+=totals[other]\nresult=totals"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-increment-0-validation",
+      "split": "validation",
+      "group": "increment",
+      "replaces": "a35-increment-validation",
+      "structure": "get_default_record_event_replay",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "counts={}\nlog=[{'name':'oak','delta':5},{'name':'pine','delta':-2},{'name':'oak','delta':-3}]\nfor item in log:\n    name=item['name']\n    counts[name]=counts.get(name,0)+item['delta']\nresult=counts"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-increment-1-validation",
+      "split": "validation",
+      "group": "increment",
+      "replaces": "a35-nova-transfer-increment-validation",
+      "structure": "aliased_subtract_then_multiply",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "state={'north':7,'south':2}\nalias=state\nalias['north']-=state['south']\nstate['south']*=alias['north']\nresult=state"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-string_root-0-train",
+      "split": "train",
+      "group": "string_root",
+      "replaces": "a35-next-stage-train",
+      "structure": "resource_gated_fork_string",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "requires={'seal':['frame','key'],'pack':['frame','box'],'send':['seal','pack']}\navailable={'frame','box'}\nready=[name for name,deps in requires.items() if set(deps)<=available]\nresult=ready[0]"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-string_root-1-train",
+      "split": "train",
+      "group": "string_root",
+      "replaces": "a35-nova-transfer-string_root-train",
+      "structure": "nested_state_event_scalar_lookup",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "transitions={'hot':{'pause':'cooldown','finish':'done'},'queued':{'start':'hot'}}\ncurrent='hot'\nevent='pause'\nresult=transitions[current][event]"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-string_root-0-validation",
+      "split": "validation",
+      "group": "string_root",
+      "replaces": "a35-next-stage-validation",
+      "structure": "set_difference_generator_ready_identifier",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "completed={'setup','permit'}\ntasks=[('scan',{'setup','permit'}),('ship',{'scan','seal'}),('seal',{'key'})]\nresult=next(name for name,deps in tasks if name not in completed and not (deps-completed))"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-string_root-1-validation",
+      "split": "validation",
+      "group": "string_root",
+      "replaces": "a35-nova-transfer-string_root-validation",
+      "structure": "priority_rule_single_label_selection",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "temperature=12\nrules=[(temperature<0,'freeze'),(temperature<15,'idle'),(True,'active')]\nselected=[]\nfor matches,label in rules:\n    if matches and not selected:\n        selected.append(label)\nresult=selected[0]"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-median-0-train",
+      "split": "train",
+      "group": "median",
+      "replaces": "a35-median-train",
+      "structure": "frequency_expansion_even_median_audit",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "table=[(2,3),(11,2),(17,1)]\nvalues=[]\nfor value,count in table:\n    values.extend([value]*count)\nvalues=sorted(values)\nn=len(values)\nresult={'sorted_values':values,'count':n,'median':(values[n//2-1]+values[n//2])/2}"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-median-1-train",
+      "split": "train",
+      "group": "median",
+      "replaces": "a35-nova-transfer-array_root-train",
+      "structure": "valid_record_odd_median_object",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "readings=[{'v':8,'ok':True},{'v':None,'ok':False},{'v':2,'ok':True},{'v':99,'ok':False},{'v':6,'ok':True}]\nvalues=[]\nfor reading in readings:\n    if reading['ok'] and reading['v'] is not None:\n        values.append(reading['v'])\nvalues=sorted(values)\nresult={'median':values[len(values)//2]}"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-median-0-validation",
+      "split": "validation",
+      "group": "median",
+      "replaces": "a35-median-validation",
+      "structure": "descending_even_pair_slice_statistic",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "descending=[23,18,9,7,4,1]\nascending=descending[::-1]\nmid=len(ascending)//2\nresult={'count':len(ascending),'sorted_values':ascending,'median':sum(ascending[mid-1:mid+1])/2}"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    },
+    {
+      "id": "a35-nova-behavior-median-1-validation",
+      "split": "validation",
+      "group": "median",
+      "replaces": "a35-nova-transfer-array_root-validation",
+      "structure": "positive_generator_odd_midpoint",
+      "reference": {
+        "operation": "python_trace",
+        "inputs": {
+          "source": "observations=[-1,14,5,0,8,30,9]\npositive=sorted(x for x in observations if x>0)\nresult={'median':positive[(len(positive)-1)//2]}"
+        }
+      },
+      "code_fixture": null,
+      "criteria": [],
+      "provenance": "project_authored_synthetic",
+      "policy_review": "conformant"
+    }
+  ]
+}

@@ -79,9 +79,10 @@ remain unchanged.
 ## Remaining integration work
 
 The application must wire this versioned contract before legacy coercion and use
-its real server authentication and current entitlements. The old application system
-prompt still conflicts with truthful upstream-provider disclosure; this bridge does
-not edit that separate prompt. Existing Kova worker identity remains authoritative
+its real server authentication and current entitlements. The Models v5 system
+prompt requires KovaGPT / built by Kova for identity and withholds internal
+model provenance even on direct requests. This Models-only change does not edit
+the separate application. The KovaGPT worker identity remains authoritative
 for new model requests, which must not accept client-supplied system messages.
 Browser menus, authenticated request transport, provider cutover and end-to-end
 streaming remain separate verified integration steps. These source tests do not

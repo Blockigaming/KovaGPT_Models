@@ -88,21 +88,21 @@ class SourcePolicyDriftTests(unittest.TestCase):
         path.write_text(original)
 
     def test_runtime_identity_prompt_must_match_owner_approved_bytes(self):
-        path = self.root / "prompts/kova-identity.v3.txt"
+        path = self.root / "prompts/kova-identity.v5.txt"
         path.write_bytes(path.read_bytes() + b"\n")
         with self.assertRaisesRegex(ValueError, "approved_runtime_identity_prompt_drift"):
             validate(self.root)
 
     def test_runtime_identity_prompt_must_be_available(self):
-        (self.root / "prompts/kova-identity.v3.txt").unlink()
+        (self.root / "prompts/kova-identity.v5.txt").unlink()
         with self.assertRaisesRegex(ValueError, "approved_runtime_identity_prompt_unavailable"):
             validate(self.root)
 
     def test_runtime_identity_loader_must_point_to_approved_prompt(self):
         path = self.root / "core/identity.py"
         source = path.read_text()
-        self.assertIn('"kova-identity.v3.txt"', source)
-        path.write_text(source.replace('"kova-identity.v3.txt"', '"kova-identity.v2.txt"'))
+        self.assertIn('"kova-identity.v5.txt"', source)
+        path.write_text(source.replace('"kova-identity.v5.txt"', '"kova-identity.v2.txt"'))
         with self.assertRaisesRegex(ValueError, "runtime_identity_loader_drift"):
             validate(self.root)
 
@@ -137,7 +137,7 @@ class SourcePolicyDriftTests(unittest.TestCase):
 
     def test_public_upstream_name_fails(self):
         path = self.root / "router/policy.py"
-        path.write_text(path.read_text() + "\n# Qwen/private\n")
+        path.write_text(path.read_text() + "\n# PRIVATE_MODEL_SOURCE/private\n")
         with self.assertRaisesRegex(ValueError, "private_upstream_leak"):
             validate(self.root)
 

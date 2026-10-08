@@ -250,11 +250,11 @@ class HandlerTests(unittest.TestCase):
         self.assertIsNone(records[0]["time_to_first_token_ms"])
         self.assertEqual(public_fragments, [])
 
-    def test_public_answer_reaches_sink_before_provider_stream_finishes(self):
+    def test_public_answer_waits_for_complete_guard_before_sink(self):
         received = []
         def chunks():
             yield {"choices": [{"delta": {"content": "First "}}]}
-            self.assertEqual(received, ["First "])
+            self.assertEqual(received, [])
             yield {"choices": [{"delta": {"content": "answer"}, "finish_reason": "stop"}]}
             yield {"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 2}}
 
@@ -274,7 +274,7 @@ class HandlerTests(unittest.TestCase):
                 clock_ns=Clock(0, 5_000_000, 10_000_000),
                 attempt_id_factory=lambda: "hidden-attempt", public_delta_sink=received.append,
             )
-        self.assertEqual(received, ["safe "])
+        self.assertEqual(received, [])
         self.assertEqual(records[0]["outcome"], "failed")
 
     def test_incomplete_stream_does_not_flush_a_pending_marker_prefix(self):
@@ -297,8 +297,7 @@ class HandlerTests(unittest.TestCase):
         records = []
         def chunks():
             try:
-                yield {"choices": [{"delta": {"content": "answer"}}]}
-                raise AssertionError("provider should not be read after sink failure")
+                yield from self.stream_response("answer")
             finally:
                 closed.append(True)
         def rejected(_fragment):
@@ -431,7 +430,7 @@ class HandlerTests(unittest.TestCase):
         self.assertEqual(records[0]["inference_ms"], 25)
         self.assertIsNone(records[0]["time_to_first_token_ms"])
 
-    def test_stream_failure_preserves_first_token_measurement(self):
+    def test_stream_failure_has_no_user_visible_first_token(self):
         records = []
 
         def disconnecting_stream():
@@ -447,8 +446,8 @@ class HandlerTests(unittest.TestCase):
                 attempt_id_factory=lambda: "failed-stream-attempt",
             )
         self.assertEqual(records[0]["outcome"], "failed")
-        self.assertEqual(records[0]["time_to_first_token_ms"], 10)
-        self.assertEqual(records[0]["inference_ms"], 50)
+        self.assertIsNone(records[0]["time_to_first_token_ms"])
+        self.assertEqual(records[0]["inference_ms"], 10)
 
     def test_postflight_failure_quarantines_paid_attempt_without_losing_it(self):
         records = []

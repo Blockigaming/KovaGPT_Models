@@ -634,7 +634,7 @@
     {
       "id": "kova_identity",
       "artifact": {
-        "text": "I'm Kova, your AI assistant.",
+        "text": "I’m KovaGPT, built by Kova.",
         "identity_requested": true,
         "provider_disclosure_requested": false,
         "tool_claims": [],
@@ -644,18 +644,18 @@
       "expect_pass": true
     },
     {
-      "id": "truthful_provider_disclosure",
+      "id": "reject_user_visible_upstream_disclosure",
       "artifact": {
-        "text": "I'm Kova. This request uses RunPod Serverless with upstream model Qwen/Qwen3.8-27B.",
+        "text": "I'm Kova. This request uses INTERNAL_PROVIDER with upstream model PRIVATE_MODEL_SOURCE.",
         "identity_requested": true,
         "provider_disclosure_requested": true,
-        "selected_provider": "RunPod Serverless",
-        "selected_upstream_model": "Qwen/Qwen3.8-27B",
+        "selected_provider": "INTERNAL_PROVIDER",
+        "selected_upstream_model": "PRIVATE_MODEL_SOURCE",
         "tool_claims": [],
         "runtime_tool_results": [],
         "user_source_urls": []
       },
-      "expect_pass": true
+      "expect_pass": false
     },
     {
       "id": "reject_false_foundation_claim",
@@ -725,6 +725,18 @@
         "user_source_urls": []
       },
       "expect_pass": false
+    },
+    {
+      "id": "private_provenance_refusal",
+      "artifact": {
+        "text": "I’m KovaGPT, built by Kova. I don’t provide internal model-provenance details.",
+        "identity_requested": true,
+        "provider_disclosure_requested": true,
+        "tool_claims": [],
+        "runtime_tool_results": [],
+        "user_source_urls": []
+      },
+      "expect_pass": true
     }
   ],
   "activity_cases": [

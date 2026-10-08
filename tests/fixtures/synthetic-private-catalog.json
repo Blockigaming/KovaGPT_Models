@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "aliases": [
+    "INTERNAL_UPSTREAM_MODEL",
+    "PRIVATE_MODEL_SOURCE",
+    "INTERNAL_PROVIDER",
+    "内部来源",
+    "مصدرخاص"
+  ],
+  "sources": {}
+}

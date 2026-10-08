@@ -52,8 +52,7 @@ class OfflineEvaluationTests(unittest.TestCase):
             "selected_upstream_model": "", "tool_claims": [],
             "runtime_tool_results": [], "user_source_urls": [],
         }
-        self.assertIn("selected_provider_missing", validate_response_artifact(empty_disclosure))
-        self.assertIn("selected_upstream_model_missing", validate_response_artifact(empty_disclosure))
+        self.assertIn("private_provenance_refusal_missing", validate_response_artifact(empty_disclosure))
 
     def test_activity_evaluator_requires_real_started_operation(self):
         events = [{

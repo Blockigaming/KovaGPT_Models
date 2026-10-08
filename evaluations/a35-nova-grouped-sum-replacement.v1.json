@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "status": "unmeasured_replacement_inputs",
+  "parent_commit": "b9541159fc0620c1648c4a1a215ae218d393378e",
+  "latest_measured": {
+    "attempt_id": "3a58d36c0c6e4e5296127a4976aeef74",
+    "strict": 24,
+    "total": 36,
+    "categories": {
+      "math": 6,
+      "code": 2,
+      "reasoning": 5,
+      "data": 5,
+      "instruction": 6
+    },
+    "manual": "NOT RUN",
+    "phase_a_verified": 30,
+    "phase_a_total": 40,
+    "a35": "OPEN",
+    "cleanup": "8/8 PASS preserved",
+    "reader_writer": "removed, preserved",
+    "billing": "PENDING"
+  },
+  "replacement": {
+    "records_added": {
+      "train": 1,
+      "validation": 1
+    },
+    "existing_prepared_rows_unchanged": 132,
+    "total_train": 73,
+    "total_validation": 61,
+    "hypothesis": "A distinct grouped-sum pair addresses a demonstrated coverage gap; quality improvement is unmeasured.",
+    "supersedes_unrecoverable_proposed_pack": "6a8ca5b355bb7d55bfa5992b0f2836c7275c2b59e9fb4dafc1b58be961646696",
+    "recovered_source": false
+  },
+  "hashes": {
+    "dataset": "f6dbf2576ec091d018bcccd90a08284a4a4c2edcd0da8c474e04459052a697b8",
+    "review": "fc0e0b1cc648d1146ab5622d4a2b03c60078ab22c397f220da25600cb943a7b7",
+    "pack": "d670792ddf8f38896ee9adcac338268a7677cd4b2c60079a33d80a018cdccdf8",
+    "prompt": "258b48ccdc670cfd32312983de0ca4e71b136de1e71aa4ef97fb88d026e554d8",
+    "tokenizer": "68446fbb94a6d020a214cf7ac399865de57f0812a739a06c7a2ee8230009be09",
+    "plan": "80d635299aee3ee1d3e7393c7676436c7d0551fded3fcee3bedcca136fbd3401"
+  },
+  "rejected_adapters": [
+    "f6d09354b5db910288be1e4ac9e22467bfe0c4bf8b554ef576162a245955e352",
+    "95470d46db4a430ce6f5e5d53f5dc322dcb4a04aec824b69b922dbe9b1d71213",
+    "9e9c991332e979d3b3b73452e643d0272f859965fc054329f32308491a0a7e0b",
+    "95fd3383589ef1bfe942345a9df09e3a3afaa8cf8d24ea886a273eea2a5089ee",
+    "4aa5e981fb5d28b902fb5fdf6da68f15b76e4659010195902446530f29b5d264"
+  ],
+  "execution_authorized": false,
+  "quality_improvement_proved": false
+}

@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "phase_a_verified": 30,
+  "phase_a_total": 40,
+  "a35": "OPEN",
+  "measured": {
+    "source_head": "fc83f054df40e9f6f591d7166bfe1524d26a6556",
+    "attempt_id": "5d4f68aa6d0a4560b50873ca8beef278",
+    "strict": 23,
+    "total": 36,
+    "previous_strict": 25,
+    "delta_from_25": -2,
+    "status": "STRICT_FAILED_MANUAL_SKIPPED",
+    "report_sha256": "daec3380cd734215433cca684648d64e906e6b013cd999a9b6fec7c379a1d80c",
+    "adapter_sha256": "9506b310dd551cfb969905fedcb8e39792e6630f69bfabb677257a5fdc765e35",
+    "training": {
+      "epochs": 3.0,
+      "optimizer_steps": 30,
+      "elapsed_seconds": 445.738,
+      "maximum_seconds": 600
+    },
+    "raw_training_receipt_sha256": "5786f750745991ee3471c40af229302771b149f9d2693b4e34428db8bd727cc4",
+    "run_claim_sha256": "f140893f29196d28945a3254a4b2a42611ead342beb5832b74c8761b77c218bc",
+    "categories": {
+      "code_reading": {
+        "exact_json_fail": 6,
+        "exact_json_pass": 2
+      },
+      "data_analysis": {
+        "exact_json_fail": 1,
+        "exact_json_pass": 5
+      },
+      "instruction_following": {
+        "exact_json_pass": 6
+      },
+      "math": {
+        "exact_json_fail": 5,
+        "exact_json_pass": 5
+      },
+      "reasoning": {
+        "exact_json_fail": 1,
+        "exact_json_pass": 5
+      }
+    },
+    "all_36_outputs_verified_complete": true,
+    "runtime_identity_safety_grounding_stops": 0,
+    "manual_identity_safety_grounding": "NOT_RUN_STRICT_GATE_FAILED",
+    "manual_generated": 0,
+    "manual_file_verified_absent": true
+  },
+  "measured_hashes": {
+    "dataset": "a81ad878e22b7fc13708320cd538ca920551a5b07c35cbdcc1679c44e71942b8",
+    "review": "281059b854ec0628131ab86f7e437a290eda04f73ecd238d9e5d4f1d76471405",
+    "tokenizer": "a82423d6341427e05695276866fb2c95a9e7351de48f574697d9a3a779a954f6",
+    "plan": "7d1425fb127d9382200f25a34608ad3162bdf45075e965c9ba632c515c4c7fbe",
+    "pack": "5a8f17cbf9ad51bc6c49e682763bdc5f1627318165d982b652c24a686d235b1c",
+    "prompt": "943d5b41296c2a0ce9fc26bb238c346189d0abbc7a5d0abbbc2512b7aa48b659",
+    "identity_prompt": "2a92814b2ed77045c37a44f4c299c9a835de3a5d9ca5790a820bfa649aa5cc95"
+  },
+  "comparison": {
+    "baseline_report_sha256": "3c61b3b7f8ab9ad1d8b0d1cf1397af88e9a1a91b97162f7210ab176ca011a0ea",
+    "private_comparison_sha256": "3c674166d084a6ede6cdc2501e522f237f9d6a06b57099117b1b7cb5881046bc",
+    "all_cases_compared": 36,
+    "classifications": {
+      "pass": 23,
+      "content": 10,
+      "content_and_format": 1,
+      "format_only": 2
+    },
+    "transitions": {
+      "latest_25": {
+        "retained_pass": 23,
+        "persistent_failure": 11,
+        "newly_regressed": 2
+      },
+      "latest_24": {
+        "retained_pass": 22,
+        "persistent_failure": 11,
+        "newly_regressed": 2,
+        "recovered": 1
+      },
+      "latest_23": {
+        "retained_pass": 21,
+        "persistent_failure": 11,
+        "newly_regressed": 2,
+        "recovered": 2
+      },
+      "preceding_21": {
+        "retained_pass": 19,
+        "persistent_failure": 11,
+        "newly_regressed": 2,
+        "recovered": 4
+      },
+      "historical_23": {
+        "retained_pass": 20,
+        "persistent_failure": 10,
+        "newly_regressed": 3,
+        "recovered": 3
+      }
+    },
+    "causal_limit": "Relative to the25/36 baseline, exposure, identity input pack and effective system prompt differ. This comparison cannot isolate the internal cause or attribute the regressions to epochs alone.",
+    "strict_grades_changed": false
+  },
+  "cleanup": {
+    "status": "PASS",
+    "checks_passed": 8,
+    "checks_total": 8,
+    "utc": "2026-10-05T21:52:16.627968+00:00",
+    "receipt_sha256": "2db64e476b3ca8c23801482ab0f30a0ed5c50679561cff8cbe40498416f3c250",
+    "original_clock_anchor_utc": "2026-10-05T21:25:24Z",
+    "clock_reset": false
+  },
+  "recovery": {
+    "guest_command_replayed": false,
+    "original_ephemeral_operator_ledger_recovered": false,
+    "gap": "Cloud Shell recovery lost original ephemeral files after the sole guest command was accepted; authenticated activity and guest artifacts were reconciled. Replacement readbacks are retained as replacement evidence.",
+    "recovered_text_files": 253,
+    "control_bundle_sha256": "c43a15eb9f999585f0e596a1774c8408a4e2ae5e5155bc137ba0e7b9509a9dd0"
+  },
+  "billing": {
+    "status": "PENDING",
+    "authenticated_query_http": 200,
+    "posted_rows": 0,
+    "missing_rows_are_not_zero": true,
+    "final_all_in_ceiling_proved": false,
+    "response_sha256": "b85d79f2dd83a454264769f58a43b6c6601c7a5031bc29d6cc3a2694619e00d8"
+  },
+  "next_proposal": {
+    "experiment_id": "a35-nova-json-shape-v9",
+    "status": "UNMEASURED",
+    "change": "Generic JSON root/key preservation and double-quoted string instructions only.",
+    "questions_targets_splits_unchanged": 134,
+    "new_examples": 0,
+    "identity_policy_unchanged": true,
+    "epochs": 3,
+    "expected_optimizer_steps": 30,
+    "maximum_training_seconds": 600,
+    "execution_authorized": false,
+    "quality_improvement_proved": false
+  },
+  "next_hashes": {
+    "dataset": "a81ad878e22b7fc13708320cd538ca920551a5b07c35cbdcc1679c44e71942b8",
+    "review": "281059b854ec0628131ab86f7e437a290eda04f73ecd238d9e5d4f1d76471405",
+    "tokenizer": "6e1abbc031cbb4b07462e05ed54ef2bf1db9234d8ffb5684b065a1b7caa64224",
+    "plan": "b6d7d0603445154dd6855957b0b9ede58cdebfd072a8ed59b5f11877a8fc7acf",
+    "identity_prompt": "2a92814b2ed77045c37a44f4c299c9a835de3a5d9ca5790a820bfa649aa5cc95",
+    "pack": "d17d59b04e8ac7e8c24d0f4f324324eee1f9c152da669dba2de40a9dde321873",
+    "prompt": "3608d804d2a1c1f021d927eaaa89b60cc90e9b0b6e4689227a0649ab1b3fb26b"
+  },
+  "tokenizer": {
+    "candidate": "a35-nova-json-shape-v9",
+    "inference_calls": 0,
+    "manual_output_budget": 2048,
+    "maximum_evaluation_prompt_tokens": 629,
+    "maximum_reference_completion_tokens": 153,
+    "maximum_tokens": {
+      "train": 749,
+      "validation": 727
+    },
+    "prepared_pack_sha256": "d17d59b04e8ac7e8c24d0f4f324324eee1f9c152da669dba2de40a9dde321873",
+    "records": 134,
+    "status": "pass",
+    "system_prompt_sha256": "3608d804d2a1c1f021d927eaaa89b60cc90e9b0b6e4689227a0649ab1b3fb26b",
+    "training_model_calls": 0
+  },
+  "rejected_adapters": [
+    "f6d09354b5db910288be1e4ac9e22467bfe0c4bf8b554ef576162a245955e352",
+    "95470d46db4a430ce6f5e5d53f5dc322dcb4a04aec824b69b922dbe9b1d71213",
+    "9e9c991332e979d3b3b73452e643d0272f859965fc054329f32308491a0a7e0b",
+    "95fd3383589ef1bfe942345a9df09e3a3afaa8cf8d24ea886a273eea2a5089ee",
+    "4aa5e981fb5d28b902fb5fdf6da68f15b76e4659010195902446530f29b5d264",
+    "32b971862c5b7d0a013aea8f6da4913ba5eeb94b92e153dd7d0aa10419031e16",
+    "9506b310dd551cfb969905fedcb8e39792e6630f69bfabb677257a5fdc765e35"
+  ],
+  "previous_grant_consumed": true,
+  "unpaid_followthrough_model_calls": 0,
+  "source_tests_are_model_quality_evidence": false,
+  "quality_gate_closed": false,
+  "deployment_authorized": false,
+  "merge_authorized": false
+}

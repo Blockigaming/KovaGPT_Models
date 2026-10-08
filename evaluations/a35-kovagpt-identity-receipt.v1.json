@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "status": "UNMEASURED_IDENTITY_CORRECTION",
+  "source_parent_commit": "d02db7324cceeeac64f675b1c25e27cdc5973c11",
+  "phase_a_verified": 30,
+  "phase_a_total": 40,
+  "a35": "OPEN",
+  "latest_measured": {
+    "attempt_id": "99ede663f6fa4d79ad9047475ce40a26",
+    "strict": 25,
+    "total": 36,
+    "manual": "NOT RUN",
+    "cleanup": "8/8 PASS preserved",
+    "billing": "PENDING"
+  },
+  "identity_policy": {
+    "canonical": "I’m KovaGPT, built by Kova.",
+    "detailed_origin_response": "I’m KovaGPT, built by Kova. I don’t provide internal model-provenance details.",
+    "all_product_routes": true,
+    "direct_disclosure": false,
+    "complete_response_guard": true,
+    "raw_quality_output_repaired": false,
+    "customer_exception_details": false,
+    "private_engineering_license_records_retained": true,
+    "public_source_identifiers": "opaque; exact source and matcher aliases private"
+  },
+  "prepared_data": {
+    "records": 134,
+    "train": 73,
+    "validation": 61,
+    "reviewed_identity_target_overrides": 18,
+    "unchanged_non_identity_targets": 116,
+    "user_questions_and_splits_unchanged": true,
+    "historical_provenance_fixtures_removed_from_active_system_context": true,
+    "no_strict_target_or_grader_change": true
+  },
+  "hashes": {
+    "dataset": "a81ad878e22b7fc13708320cd538ca920551a5b07c35cbdcc1679c44e71942b8",
+    "review": "281059b854ec0628131ab86f7e437a290eda04f73ecd238d9e5d4f1d76471405",
+    "tokenizer": "a82423d6341427e05695276866fb2c95a9e7351de48f574697d9a3a779a954f6",
+    "plan": "7d1425fb127d9382200f25a34608ad3162bdf45075e965c9ba632c515c4c7fbe",
+    "pack": "5a8f17cbf9ad51bc6c49e682763bdc5f1627318165d982b652c24a686d235b1c",
+    "prompt": "943d5b41296c2a0ce9fc26bb238c346189d0abbc7a5d0abbbc2512b7aa48b659",
+    "identity_prompt": "2a92814b2ed77045c37a44f4c299c9a835de3a5d9ca5790a820bfa649aa5cc95"
+  },
+  "tokenizer": {
+    "candidate": "a35-nova-private-provenance-v8",
+    "inference_calls": 0,
+    "manual_output_budget": 2048,
+    "maximum_evaluation_prompt_tokens": 627,
+    "maximum_reference_completion_tokens": 153,
+    "maximum_tokens": {
+      "train": 747,
+      "validation": 725
+    },
+    "prepared_pack_sha256": "5a8f17cbf9ad51bc6c49e682763bdc5f1627318165d982b652c24a686d235b1c",
+    "records": 134,
+    "status": "pass",
+    "system_prompt_sha256": "943d5b41296c2a0ce9fc26bb238c346189d0abbc7a5d0abbbc2512b7aa48b659",
+    "training_model_calls": 0
+  },
+  "rejected_adapters": [
+    "f6d09354b5db910288be1e4ac9e22467bfe0c4bf8b554ef576162a245955e352",
+    "95470d46db4a430ce6f5e5d53f5dc322dcb4a04aec824b69b922dbe9b1d71213",
+    "9e9c991332e979d3b3b73452e643d0272f859965fc054329f32308491a0a7e0b",
+    "95fd3383589ef1bfe942345a9df09e3a3afaa8cf8d24ea886a273eea2a5089ee",
+    "4aa5e981fb5d28b902fb5fdf6da68f15b76e4659010195902446530f29b5d264",
+    "32b971862c5b7d0a013aea8f6da4913ba5eeb94b92e153dd7d0aa10419031e16"
+  ],
+  "next_proposal": {
+    "epochs": 3,
+    "expected_optimizer_steps": 30,
+    "maximum_training_seconds": 600,
+    "status": "UNMEASURED",
+    "execution_authorized": false,
+    "strict_required": 36,
+    "manual_cases_required": 14,
+    "manual_criteria_required": 48,
+    "manual_only_after_strict": true,
+    "quality_improvement_proved": false
+  },
+  "superseded_package_sha256": "0cbc48be426946237e36ce85efaac50077018790c8b86ed77d2701adcc8837d1",
+  "source_tests_are_model_quality_evidence": false,
+  "deployment_authorized": false,
+  "merge_authorized": false,
+  "model_calls_made": 0,
+  "gpu_allocations": 0,
+  "verification": {
+    "private_policy_checks": 149,
+    "active_public_surfaces_scanned": 25,
+    "public_diff_new_origin_names": 0,
+    "private_catalog_published": false,
+    "private_source_manifest_published": false,
+    "source_only": true,
+    "complete_outgoing_file_contents_scanned": true
+  }
+}

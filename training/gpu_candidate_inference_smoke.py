@@ -240,7 +240,7 @@ def generate(family: str, archive_path: Path, snapshot: Path, output: Path,
         model = PeftModel.from_pretrained(base, str(adapter), is_trainable=False,
                                           local_files_only=True)
         model.eval()
-        system = (ROOT / "prompts/kova-identity.v3.txt").read_text()
+        system = (ROOT / "prompts/kova-identity.v5.txt").read_text()
         generation_config = GenerationConfig(
             do_sample=False, num_beams=1, num_return_sequences=1,
             eos_token_id=tokenizer.eos_token_id, pad_token_id=tokenizer.eos_token_id)
